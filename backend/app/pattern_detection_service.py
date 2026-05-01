@@ -467,8 +467,7 @@ Respond as JSON:
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
-                max_tokens=500,
-                temperature=0.7,
+                max_completion_tokens=500,
                 timeout=REQUEST_TIMEOUT,
             )
         except Exception as e:

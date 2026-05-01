@@ -1,285 +1,202 @@
 """
-Azure OpenAI Provider for Foresight Application.
+OpenAI Provider for Foresight Application.
 
-This module provides a centralized Azure OpenAI client configuration
-with proper API versioning for different model types (chat vs embeddings).
+Centralized commercial OpenAI client configuration. Public symbol names are
+preserved from the previous Azure-flavored implementation so existing callers
+(`azure_openai_client`, `get_chat_deployment`, etc.) keep working without edits.
 
-Azure Configuration:
-- Endpoint: https://aph-cognitive-sandbox-openai-eastus2.openai.azure.com
-- Chat Completions (gpt-41, gpt-41-mini): API version 2025-01-01-preview
-- Embeddings (text-embedding-ada-002): API version 2023-05-15
-
-Environment Variables Required:
-- AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-- AZURE_OPENAI_KEY: Azure OpenAI API key
-- AZURE_OPENAI_API_VERSION: API version for chat completions (default: 2025-01-01-preview)
-- AZURE_OPENAI_EMBEDDING_API_VERSION: API version for embeddings (default: 2023-05-15)
-- AZURE_OPENAI_DEPLOYMENT_CHAT: Deployment name for main chat model (default: gpt-41)
-- AZURE_OPENAI_DEPLOYMENT_CHAT_MINI: Deployment name for fast/cheap chat model (default: gpt-41-mini)
-- AZURE_OPENAI_DEPLOYMENT_EMBEDDING: Deployment name for embeddings (default: text-embedding-ada-002)
-
-Usage:
-    from app.openai_provider import (
-        azure_openai_client,
-        azure_openai_async_client,
-        get_chat_deployment,
-        get_chat_mini_deployment,
-        get_embedding_deployment,
-    )
+Environment Variables:
+- OPENAI_API_KEY (required): Commercial OpenAI API key
+- OPENAI_CHAT_MODEL: Premium chat model (default: gpt-5.5-2026-04-23)
+- OPENAI_CHAT_AGENT_MODEL: Agentic-work model (default: gpt-5.4-2026-03-05)
+- OPENAI_CHAT_MINI_MODEL: High-volume / fast model (default: gpt-5.4-mini-2026-03-17)
+- OPENAI_EMBEDDING_MODEL: Embedding model (default: text-embedding-ada-002 — kept
+  for pgvector compatibility with existing 1536-dim card embeddings)
+- OPENAI_BASE_URL (optional): Override base URL for OpenAI-compatible endpoints
 """
 
 import os
 import logging
-from openai import AzureOpenAI, AsyncAzureOpenAI
+from openai import OpenAI, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration Loading
-# =============================================================================
-
 def _get_required_env(name: str) -> str:
-    """Get a required environment variable or raise an error."""
     if value := os.getenv(name):
         return value
-    else:
-        raise ValueError(
-            f"Missing required environment variable: {name}. "
-            f"Azure OpenAI configuration is required for this application."
-        )
+    raise ValueError(
+        f"Missing required environment variable: {name}. "
+        f"OpenAI configuration is required for this application."
+    )
 
 
 def _get_optional_env(name: str, default: str) -> str:
-    """Get an optional environment variable with a default value."""
     return os.getenv(name, default)
 
 
-# =============================================================================
-# Azure OpenAI Configuration
-# =============================================================================
-
-class AzureOpenAIConfig:
-    """Azure OpenAI configuration container."""
+class OpenAIConfig:
+    """Commercial OpenAI configuration container."""
 
     def __init__(self):
-        """Load configuration from environment variables."""
-        # Required configuration
-        self.endpoint = _get_required_env("AZURE_OPENAI_ENDPOINT")
-        self.api_key = _get_required_env("AZURE_OPENAI_KEY")
+        self.api_key = _get_required_env("OPENAI_API_KEY")
+        self.base_url = os.getenv("OPENAI_BASE_URL") or None
 
-        # API versions (different for chat vs embeddings)
-        self.chat_api_version = _get_optional_env(
-            "AZURE_OPENAI_API_VERSION",
-            "2024-12-01-preview"
+        # Model names (real OpenAI model IDs, not Azure deployment names)
+        self.model_chat = _get_optional_env(
+            "OPENAI_CHAT_MODEL", "gpt-5.5-2026-04-23"
         )
-        self.embedding_api_version = _get_optional_env(
-            "AZURE_OPENAI_EMBEDDING_API_VERSION",
-            "2023-05-15"
+        self.model_chat_agent = _get_optional_env(
+            "OPENAI_CHAT_AGENT_MODEL", "gpt-5.4-2026-03-05"
         )
-
-        # Deployment names (Azure-specific model deployment names)
-        self.deployment_chat = _get_optional_env(
-            "AZURE_OPENAI_DEPLOYMENT_CHAT",
-            "gpt-4.1"
+        self.model_chat_mini = _get_optional_env(
+            "OPENAI_CHAT_MINI_MODEL", "gpt-5.4-mini-2026-03-17"
         )
-        self.deployment_chat_mini = _get_optional_env(
-            "AZURE_OPENAI_DEPLOYMENT_CHAT_MINI",
-            "gpt-4.1-mini"
-        )
-        self.deployment_embedding = _get_optional_env(
-            "AZURE_OPENAI_DEPLOYMENT_EMBEDDING",
-            "text-embedding-ada-002"
+        self.model_embedding = _get_optional_env(
+            "OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"
         )
 
     def log_configuration(self):
-        """Log the current configuration (without sensitive data)."""
-        logger.info("Azure OpenAI Configuration:")
-        logger.info(f"  Endpoint: {self.endpoint}")
-        logger.info(f"  Chat API Version: {self.chat_api_version}")
-        logger.info(f"  Embedding API Version: {self.embedding_api_version}")
-        logger.info(f"  Chat Deployment: {self.deployment_chat}")
-        logger.info(f"  Chat Mini Deployment: {self.deployment_chat_mini}")
-        logger.info(f"  Embedding Deployment: {self.deployment_embedding}")
+        logger.info("OpenAI Configuration:")
+        logger.info(f"  Base URL: {self.base_url or 'default (api.openai.com)'}")
+        logger.info(f"  Chat Model: {self.model_chat}")
+        logger.info(f"  Chat Agent Model: {self.model_chat_agent}")
+        logger.info(f"  Chat Mini Model: {self.model_chat_mini}")
+        logger.info(f"  Embedding Model: {self.model_embedding}")
 
 
-# =============================================================================
-# Model Name Mapping
-# =============================================================================
-
-# Map from OpenAI model names to Azure deployment names
-# This allows existing code using OpenAI model names to work with Azure
-_MODEL_TO_DEPLOYMENT: dict = {}
+# Map legacy / alternate model name aliases to our configured model IDs.
+_MODEL_ALIASES: dict = {}
 
 
-def _initialize_model_mapping(config: AzureOpenAIConfig):
-    """Initialize the model name to deployment name mapping."""
-    global _MODEL_TO_DEPLOYMENT
-    _MODEL_TO_DEPLOYMENT = {
-        # Chat models
-        "gpt-4o": config.deployment_chat,
-        "gpt-4o-mini": config.deployment_chat_mini,
-        "gpt-4": config.deployment_chat,  # Fallback for gpt-4 references
-        "gpt-4-turbo": config.deployment_chat,  # Fallback
-        # Embedding models
-        "text-embedding-ada-002": config.deployment_embedding,
-        "text-embedding-3-small": config.deployment_embedding,  # Fallback
-        "text-embedding-3-large": config.deployment_embedding,  # Fallback
+def _initialize_model_mapping(config: OpenAIConfig):
+    global _MODEL_ALIASES
+    _MODEL_ALIASES = {
+        # Legacy chat aliases that older code may still pass in
+        "gpt-4o": config.model_chat,
+        "gpt-4o-mini": config.model_chat_mini,
+        "gpt-4": config.model_chat,
+        "gpt-4-turbo": config.model_chat,
+        "gpt-4.1": config.model_chat,
+        "gpt-4.1-mini": config.model_chat_mini,
+        # Embedding aliases
+        "text-embedding-ada-002": config.model_embedding,
+        "text-embedding-3-small": config.model_embedding,
+        "text-embedding-3-large": config.model_embedding,
     }
 
 
 def get_deployment_name(model_name: str) -> str:
+    """Resolve a model alias to the configured OpenAI model ID.
+
+    Kept under the legacy 'deployment' name so existing callers compile.
     """
-    Get the Azure deployment name for a given OpenAI model name.
-
-    Args:
-        model_name: OpenAI model name (e.g., 'gpt-4o', 'text-embedding-ada-002')
-
-    Returns:
-        Azure deployment name
-
-    Raises:
-        ValueError: If model name is not mapped
-    """
-    if model_name in _MODEL_TO_DEPLOYMENT:
-        return _MODEL_TO_DEPLOYMENT[model_name]
-
-    # If the model name is already a deployment name, return it
-    if model_name in [_config.deployment_chat, _config.deployment_chat_mini, _config.deployment_embedding]:
+    if model_name in _MODEL_ALIASES:
+        return _MODEL_ALIASES[model_name]
+    # Already a valid configured model? Pass through.
+    if model_name in {
+        _config.model_chat,
+        _config.model_chat_agent,
+        _config.model_chat_mini,
+        _config.model_embedding,
+    }:
         return model_name
+    # Unknown — pass through; OpenAI will reject if truly invalid.
+    return model_name
 
-    raise ValueError(
-        f"Unknown model name: {model_name}. "
-        f"Available mappings: {list(_MODEL_TO_DEPLOYMENT.keys())}"
-    )
-
-
-# =============================================================================
-# Convenience Functions for Deployment Names
-# =============================================================================
 
 def get_chat_deployment() -> str:
-    """Get the main chat model deployment name (gpt-41)."""
-    return _config.deployment_chat
+    """Premium chat model (user-facing chat, briefs)."""
+    return _config.model_chat
+
+
+def get_chat_agent_deployment() -> str:
+    """Agentic-work model (signal agent, multi-step tool use)."""
+    return _config.model_chat_agent
 
 
 def get_chat_mini_deployment() -> str:
-    """Get the fast/cheap chat model deployment name (gpt-41-mini)."""
-    return _config.deployment_chat_mini
+    """High-volume / fast model (titles, suggestions, reranking, query expansion)."""
+    return _config.model_chat_mini
 
 
 def get_embedding_deployment() -> str:
-    """Get the embedding model deployment name (text-embedding-ada-002)."""
-    return _config.deployment_embedding
+    """Embedding model (kept on ada-002 for pgvector compatibility)."""
+    return _config.model_embedding
+
+
+def get_reasoning_effort() -> str:
+    """Reasoning effort for GPT-5 chat models (minimal | low | medium | high).
+
+    Default 'medium' balances answer quality against reasoning-token spend.
+    Override per-deployment via OPENAI_REASONING_EFFORT.
+    """
+    return os.getenv("OPENAI_REASONING_EFFORT", "medium")
 
 
 def get_chat_api_version() -> str:
-    """Get the API version for chat completions."""
-    return _config.chat_api_version
+    """Legacy API. Commercial OpenAI does not use api_version; returns ''."""
+    return ""
 
 
 def get_embedding_api_version() -> str:
-    """Get the API version for embeddings."""
-    return _config.embedding_api_version
+    """Legacy API. Commercial OpenAI does not use api_version; returns ''."""
+    return ""
 
 
-# =============================================================================
-# Client Initialization
-# =============================================================================
-
-def _create_sync_client(config: AzureOpenAIConfig) -> AzureOpenAI:
-    """Create a synchronous Azure OpenAI client."""
-    return AzureOpenAI(
-        api_key=config.api_key,
-        api_version=config.chat_api_version,
-        azure_endpoint=config.endpoint,
-    )
+def _create_sync_client(config: OpenAIConfig) -> OpenAI:
+    kwargs = {"api_key": config.api_key}
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    return OpenAI(**kwargs)
 
 
-def _create_async_client(config: AzureOpenAIConfig) -> AsyncAzureOpenAI:
-    """Create an asynchronous Azure OpenAI client."""
-    return AsyncAzureOpenAI(
-        api_key=config.api_key,
-        api_version=config.chat_api_version,
-        azure_endpoint=config.endpoint,
-    )
+def _create_async_client(config: OpenAIConfig) -> AsyncOpenAI:
+    kwargs = {"api_key": config.api_key}
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    return AsyncOpenAI(**kwargs)
 
 
-def _create_embedding_client(config: AzureOpenAIConfig) -> AzureOpenAI:
-    """
-    Create a synchronous Azure OpenAI client specifically for embeddings.
-    Uses the embedding-specific API version.
-    """
-    return AzureOpenAI(
-        api_key=config.api_key,
-        api_version=config.embedding_api_version,
-        azure_endpoint=config.endpoint,
-    )
-
-
-def _create_async_embedding_client(config: AzureOpenAIConfig) -> AsyncAzureOpenAI:
-    """
-    Create an asynchronous Azure OpenAI client specifically for embeddings.
-    Uses the embedding-specific API version.
-    """
-    return AsyncAzureOpenAI(
-        api_key=config.api_key,
-        api_version=config.embedding_api_version,
-        azure_endpoint=config.endpoint,
-    )
-
-
-# =============================================================================
-# Module Initialization (Fail Fast)
-# =============================================================================
-
-# Initialize configuration - this will raise if required env vars are missing
 try:
-    _config = AzureOpenAIConfig()
+    _config = OpenAIConfig()
     _initialize_model_mapping(_config)
 
-    # Create clients
-    azure_openai_client = _create_sync_client(_config)
-    azure_openai_async_client = _create_async_client(_config)
-    azure_openai_embedding_client = _create_embedding_client(_config)
-    azure_openai_async_embedding_client = _create_async_embedding_client(_config)
+    # Single client per (sync/async) — commercial OpenAI does not need a
+    # separate embedding client (no per-resource api_version).
+    _sync_client = _create_sync_client(_config)
+    _async_client = _create_async_client(_config)
 
-    # Log configuration at startup
+    # Public symbols — names retained from the Azure-era for caller compatibility.
+    azure_openai_client = _sync_client
+    azure_openai_async_client = _async_client
+    azure_openai_embedding_client = _sync_client
+    azure_openai_async_embedding_client = _async_client
+
+    # Also expose under non-Azure names for new code.
+    openai_client = _sync_client
+    openai_async_client = _async_client
+
     _config.log_configuration()
-    logger.info("Azure OpenAI clients initialized successfully")
+    logger.info("OpenAI clients initialized successfully")
 
 except ValueError as e:
-    # Re-raise with clear error message for fail-fast behavior
-    logger.critical(f"Failed to initialize Azure OpenAI: {e}")
+    logger.critical(f"Failed to initialize OpenAI: {e}")
     raise
 
 
-# =============================================================================
-# Validation Function
-# =============================================================================
-
 async def validate_azure_connection() -> dict:
-    """
-    Validate the Azure OpenAI connection by making a simple API call.
-
-    Returns:
-        Dict with validation status and details
-
-    Raises:
-        Exception if connection fails
-    """
+    """Validate the OpenAI connection. Name kept for legacy callers."""
     try:
-        # Test chat completion
         response = azure_openai_client.chat.completions.create(
-            model=_config.deployment_chat_mini,
+            model=_config.model_chat_mini,
             messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=5,
+            max_completion_tokens=5,
         )
         chat_ok = response.choices[0].message.content is not None
 
-        # Test embeddings
         embed_response = azure_openai_embedding_client.embeddings.create(
-            model=_config.deployment_embedding,
+            model=_config.model_embedding,
             input="test",
         )
         embedding_ok = len(embed_response.data[0].embedding) > 0
@@ -288,35 +205,41 @@ async def validate_azure_connection() -> dict:
             "status": "healthy" if (chat_ok and embedding_ok) else "degraded",
             "chat_completion": "ok" if chat_ok else "failed",
             "embeddings": "ok" if embedding_ok else "failed",
-            "endpoint": _config.endpoint,
+            "endpoint": _config.base_url or "https://api.openai.com",
             "deployments": {
-                "chat": _config.deployment_chat,
-                "chat_mini": _config.deployment_chat_mini,
-                "embedding": _config.deployment_embedding,
-            }
+                "chat": _config.model_chat,
+                "chat_agent": _config.model_chat_agent,
+                "chat_mini": _config.model_chat_mini,
+                "embedding": _config.model_embedding,
+            },
         }
     except Exception as e:
-        logger.error(f"Azure OpenAI validation failed: {e}")
+        logger.error(f"OpenAI validation failed: {e}")
         raise
 
 
-# =============================================================================
-# Exports
-# =============================================================================
+validate_openai_connection = validate_azure_connection
+
 
 __all__ = [
-    # Clients
+    # Clients (legacy Azure-prefixed names, retained for caller compatibility)
     "azure_openai_client",
     "azure_openai_async_client",
     "azure_openai_embedding_client",
     "azure_openai_async_embedding_client",
-    # Deployment name helpers
+    # Clients (new names)
+    "openai_client",
+    "openai_async_client",
+    # Model name helpers
     "get_deployment_name",
     "get_chat_deployment",
+    "get_chat_agent_deployment",
     "get_chat_mini_deployment",
     "get_embedding_deployment",
     "get_chat_api_version",
     "get_embedding_api_version",
+    "get_reasoning_effort",
     # Validation
     "validate_azure_connection",
+    "validate_openai_connection",
 ]

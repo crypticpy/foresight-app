@@ -145,8 +145,7 @@ class RAGEngine:
                     },
                     {"role": "user", "content": f"Original: {query}"},
                 ],
-                max_tokens=100,
-                temperature=0.3,
+                max_completion_tokens=100,
                 timeout=10,
             )
             raw = (response.choices[0].message.content or "").strip()
@@ -584,8 +583,7 @@ class RAGEngine:
                         "content": f"Query: {query}\n\nResults:\n{numbered}",
                     },
                 ],
-                max_tokens=300,
-                temperature=0,
+                max_completion_tokens=300,
                 timeout=15,
             )
 

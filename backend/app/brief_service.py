@@ -835,8 +835,7 @@ class ExecutiveBriefService:
                 },
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=4000,
-            temperature=0.7,
+            max_completion_tokens=4000,
             timeout=REQUEST_TIMEOUT
         )
 
@@ -1060,8 +1059,7 @@ Respond with ONLY the JSON object, no markdown formatting or explanation."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7,
-            max_tokens=4500,  # Increased for expanded synthesis fields
+            max_completion_tokens=4500,  # Increased for expanded synthesis fields
             timeout=REQUEST_TIMEOUT
         )
         

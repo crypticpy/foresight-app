@@ -651,7 +651,7 @@ class AIService:
             model=get_chat_mini_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=200,
+            max_completion_tokens=200,
             timeout=REQUEST_TIMEOUT,
         )
 
@@ -699,7 +699,7 @@ Respond with ONLY the title text, nothing else."""
             response = self.client.chat.completions.create(
                 model=get_chat_mini_deployment(),
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
+                max_completion_tokens=50,
                 timeout=15,
             )
             title = response.choices[0].message.content.strip().strip('"').strip("'")
@@ -737,7 +737,7 @@ Respond with ONLY the title text, nothing else."""
             model=get_chat_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=1500,
+            max_completion_tokens=1500,
             timeout=REQUEST_TIMEOUT * 2,  # Longer timeout for full analysis
         )
 
@@ -879,7 +879,7 @@ Respond with ONLY the title text, nothing else."""
             model=get_chat_mini_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=800,
+            max_completion_tokens=800,
             timeout=REQUEST_TIMEOUT,
         )
 
@@ -953,7 +953,7 @@ Respond with JSON:
             model=get_chat_mini_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=300,
+            max_completion_tokens=300,
             timeout=REQUEST_TIMEOUT,
         )
 
@@ -1062,7 +1062,7 @@ Respond with JSON:
             model=get_chat_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
             timeout=REQUEST_TIMEOUT,
         )
 
@@ -1148,7 +1148,7 @@ Respond with JSON:
             response = self.client.chat.completions.create(
                 model=get_chat_deployment(),
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
+                max_completion_tokens=2000,
                 timeout=REQUEST_TIMEOUT * 2,
             )
             profile = response.choices[0].message.content.strip()
@@ -1216,8 +1216,7 @@ Respond with ONLY the single word classification (accelerating, stable, emerging
             response = self.client.chat.completions.create(
                 model=get_chat_mini_deployment(),
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0,
+                max_completion_tokens=10,
                 timeout=REQUEST_TIMEOUT,
             )
             result = response.choices[0].message.content.strip().lower()
@@ -1283,8 +1282,7 @@ Respond as a JSON object:
                 model=get_chat_mini_deployment(),
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=500,
-                temperature=0.3,
+                max_completion_tokens=500,
                 timeout=REQUEST_TIMEOUT,
             )
             result = json.loads(response.choices[0].message.content)
@@ -1365,8 +1363,7 @@ Respond as JSON:
                 model=get_chat_mini_deployment(),
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=1500,
-                temperature=0,
+                max_completion_tokens=1500,
                 timeout=REQUEST_TIMEOUT * 2,
             )
             result = json.loads(response.choices[0].message.content)
@@ -1487,7 +1484,7 @@ Respond as JSON:
         response = self.client.chat.completions.create(
             model=get_chat_deployment(),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=16384,  # Max output for GPT-4o to ensure complete report with sources
+            max_completion_tokens=16384,  # Max output for GPT-4o to ensure complete report with sources
             timeout=REQUEST_TIMEOUT * 3,  # Extended timeout for long report
         )
 

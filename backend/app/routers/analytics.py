@@ -587,7 +587,7 @@ async def get_analytics_insights(
                 model=get_chat_mini_deployment(),
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=1000,
+                max_completion_tokens=1000,
                 timeout=30,
             )
 

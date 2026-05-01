@@ -321,9 +321,24 @@ function parseMarkdown(
     // 7. Numbered list item: 1. or 1) (existing)
     if (/^\s*\d+[.)]\s/.test(line)) {
       const listItems: string[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s/.test(lines[i]!)) {
-        listItems.push(lines[i]!.replace(/^\s*\d+[.)]\s/, ""));
-        i++;
+      while (i < lines.length) {
+        const cur = lines[i]!;
+        if (/^\s*\d+[.)]\s/.test(cur)) {
+          listItems.push(cur.replace(/^\s*\d+[.)]\s/, ""));
+          i++;
+          continue;
+        }
+        // Allow blank lines between numbered items, but only if a numbered
+        // item follows. Otherwise the blanks belong to whatever comes next.
+        if (cur.trim() === "") {
+          let j = i + 1;
+          while (j < lines.length && lines[j]!.trim() === "") j++;
+          if (j < lines.length && /^\s*\d+[.)]\s/.test(lines[j]!)) {
+            i = j;
+            continue;
+          }
+        }
+        break;
       }
       nodes.push(
         <ol key={`ol-${i}`} className="my-1.5 ml-4 space-y-0.5 list-decimal">

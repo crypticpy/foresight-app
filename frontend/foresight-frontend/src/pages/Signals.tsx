@@ -117,19 +117,27 @@ async function togglePin(cardId: string, pin: boolean): Promise<void> {
   } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not authenticated");
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/me/signals/${cardId}/pin`,
-    {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  // Star = pin AND follow. Pinning surfaces the card in the personal hub;
+  // following counts toward the "following" stat and powers digests/related-trends.
+  const [pinRes, followRes] = await Promise.all([
+    fetch(`${API_BASE_URL}/api/v1/me/signals/${cardId}/pin`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({ pinned: pin }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error("Failed to update pin status");
+    }),
+    fetch(`${API_BASE_URL}/api/v1/cards/${cardId}/follow`, {
+      method: pin ? "POST" : "DELETE",
+      headers,
+    }),
+  ]);
+  if (!pinRes.ok) throw new Error("Failed to update pin status");
+  // Follow may 409 on duplicate insert; that's fine.
+  if (!followRes.ok && followRes.status !== 409) {
+    throw new Error("Failed to update follow status");
   }
 }
 
@@ -236,24 +244,64 @@ const Signals: React.FC = () => {
 
   const handleTogglePin = useCallback(
     async (cardId: string, currentlyPinned: boolean) => {
-      // Optimistic update
+      // Optimistic update — togglePin also follows/unfollows, so reflect both
+      // is_followed and the followed_count stat alongside is_pinned.
+      const wasFollowed = signals.find((s) => s.id === cardId)?.is_followed;
       setSignals((prev) =>
         prev.map((s) =>
-          s.id === cardId ? { ...s, is_pinned: !currentlyPinned } : s,
+          s.id === cardId
+            ? {
+                ...s,
+                is_pinned: !currentlyPinned,
+                is_followed: !currentlyPinned,
+              }
+            : s,
         ),
       );
+      setStats((prev) => {
+        const delta = !currentlyPinned
+          ? wasFollowed
+            ? 0
+            : 1
+          : wasFollowed
+            ? -1
+            : 0;
+        return delta === 0
+          ? prev
+          : {
+              ...prev,
+              followed_count: Math.max(0, prev.followed_count + delta),
+            };
+      });
       try {
         await togglePin(cardId, !currentlyPinned);
       } catch {
         // Revert on failure
         setSignals((prev) =>
           prev.map((s) =>
-            s.id === cardId ? { ...s, is_pinned: currentlyPinned } : s,
+            s.id === cardId
+              ? { ...s, is_pinned: currentlyPinned, is_followed: !!wasFollowed }
+              : s,
           ),
         );
+        setStats((prev) => {
+          const delta = !currentlyPinned
+            ? wasFollowed
+              ? 0
+              : -1
+            : wasFollowed
+              ? 1
+              : 0;
+          return delta === 0
+            ? prev
+            : {
+                ...prev,
+                followed_count: Math.max(0, prev.followed_count + delta),
+              };
+        });
       }
     },
-    [],
+    [signals],
   );
 
   // -------------------------------------------

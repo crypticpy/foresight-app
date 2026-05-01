@@ -25,6 +25,7 @@ from app.openai_provider import (
     azure_openai_async_client,
     get_chat_deployment,
     get_chat_mini_deployment,
+    get_reasoning_effort,
 )
 
 logger = logging.getLogger(__name__)
@@ -320,8 +321,7 @@ async def _get_or_create_conversation(
                 },
                 {"role": "user", "content": first_message[:500]},
             ],
-            max_tokens=30,
-            temperature=0.5,
+            max_completion_tokens=30,
         )
         if generated_title := title_response.choices[0].message.content.strip():
             title = generated_title[:100]
@@ -550,8 +550,8 @@ async def chat(
                 model=model_used,
                 messages=messages,
                 stream=True,
-                temperature=0.7,
-                max_tokens=8192,
+                max_completion_tokens=8192,
+                reasoning_effort=get_reasoning_effort(),
                 **tool_kwargs,
             )
 
@@ -734,8 +734,8 @@ async def chat(
                                     model=model_used,
                                     messages=messages,
                                     stream=True,
-                                    temperature=0.7,
-                                    max_tokens=8192,
+                                    max_completion_tokens=8192,
+                                    reasoning_effort=get_reasoning_effort(),
                                     **restream_kwargs,
                                 )
                             )
@@ -881,8 +881,7 @@ Example: ["What are the implementation costs?", "Which cities have adopted this?
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_tokens=200,
-            temperature=0.8,
+            max_completion_tokens=200,
         )
 
         content = response.choices[0].message.content.strip()
@@ -982,8 +981,7 @@ async def generate_suggestions(
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_tokens=200,
-            temperature=0.8,
+            max_completion_tokens=200,
         )
 
         content = response.choices[0].message.content.strip()

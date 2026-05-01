@@ -130,6 +130,13 @@ function scopeLabel(scope: Conversation["scope"]): string {
 export default function AskForesight() {
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Arriving with ?q=... (e.g. from "Explore" on a pattern card) means the
+  // user wants a fresh chat seeded with that query — not a resumed conversation.
+  // Compute this once at module load so the useState initializers can branch on it.
+  const arrivedWithQuery =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("q");
+
   // Scope state
   const [selectedScope, setSelectedScope] = useState<ScopeOption>({
     label: "All Signals",
@@ -139,11 +146,13 @@ export default function AskForesight() {
   const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
 
   // Conversation state — restore from sessionStorage so navigating away and
-  // back doesn't lose the active conversation.
+  // back doesn't lose the active conversation. Skip restore when arriving with
+  // a ?q= query param so "Explore" links always open a fresh chat.
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<
     string | null
   >(() => {
+    if (arrivedWithQuery) return null;
     try {
       return sessionStorage.getItem("foresight:ask:activeConversationId");
     } catch {
@@ -153,6 +162,7 @@ export default function AskForesight() {
   const [activeConversationScope, setActiveConversationScope] = useState<
     "global" | "signal" | "workstream"
   >(() => {
+    if (arrivedWithQuery) return "global";
     try {
       return (
         (sessionStorage.getItem("foresight:ask:activeScope") as
@@ -167,6 +177,7 @@ export default function AskForesight() {
   const [activeConversationScopeId, setActiveConversationScopeId] = useState<
     string | undefined
   >(() => {
+    if (arrivedWithQuery) return undefined;
     try {
       return sessionStorage.getItem("foresight:ask:activeScopeId") || undefined;
     } catch {
@@ -174,7 +185,9 @@ export default function AskForesight() {
     }
   });
   // When true, ChatPanel should start fresh (not auto-restore)
-  const [forceNewChat, setForceNewChat] = useState(false);
+  const [forceNewChat, setForceNewChat] = useState<boolean>(
+    () => !!arrivedWithQuery,
+  );
 
   // Mobile sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -240,6 +253,20 @@ export default function AskForesight() {
     loadConversations();
     loadWorkstreams();
   }, [loadConversations, loadWorkstreams]);
+
+  // After ChatPanel consumes the ?q= seed on mount, strip it from the URL so a
+  // refresh or back-navigation doesn't keep re-firing the same query into a new
+  // conversation. ChatPanel has a ref guard (initialQuerySentRef) that prevents
+  // the change to initialQuery=undefined from re-triggering anything.
+  const seedClearedRef = useRef(false);
+  useEffect(() => {
+    if (!seedClearedRef.current && searchParams.get("q")) {
+      seedClearedRef.current = true;
+      const next = new URLSearchParams(searchParams);
+      next.delete("q");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   // Persist active conversation to sessionStorage
   useEffect(() => {

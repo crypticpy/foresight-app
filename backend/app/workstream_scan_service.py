@@ -503,8 +503,7 @@ Example: ["query 1", "query 2", ...]"""
             response = self.openai_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.9,
-                max_tokens=1000,
+                max_completion_tokens=1000,
             )
 
             raw_text = response.choices[0].message.content.strip()

@@ -1,5 +1,5 @@
-import React from 'react';
-import { RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
+import React from "react";
+import { RefreshCw, AlertCircle, WifiOff } from "lucide-react";
 
 /**
  * Props for the ErrorBoundary component
@@ -25,8 +25,8 @@ interface ErrorBoundaryState {
  * Serialize an error for display
  */
 const serializeError = (error: Error | null): string => {
-  if (!error) return 'Unknown error';
-  return error.message + '\n' + (error.stack || '');
+  if (!error) return "Unknown error";
+  return error.message + "\n" + (error.stack || "");
 };
 
 /**
@@ -36,44 +36,50 @@ const serializeError = (error: Error | null): string => {
 const isChunkLoadError = (error: Error | null): boolean => {
   if (!error) return false;
 
-  const errorMessage = error.message?.toLowerCase() || '';
-  const errorName = error.name?.toLowerCase() || '';
+  const errorMessage = error.message?.toLowerCase() || "";
+  const errorName = error.name?.toLowerCase() || "";
 
   // Common chunk load error patterns
   return (
-    errorMessage.includes('loading chunk') ||
-    errorMessage.includes('loading css chunk') ||
-    errorMessage.includes('failed to fetch dynamically imported module') ||
-    errorMessage.includes('failed to load module script') ||
-    errorName.includes('chunkloaderror') ||
+    errorMessage.includes("loading chunk") ||
+    errorMessage.includes("loading css chunk") ||
+    errorMessage.includes("failed to fetch dynamically imported module") ||
+    errorMessage.includes("failed to load module script") ||
+    errorName.includes("chunkloaderror") ||
     // Vite dynamic import errors
-    errorMessage.includes('failed to fetch') && errorMessage.includes('.js') ||
+    (errorMessage.includes("failed to fetch") &&
+      errorMessage.includes(".js")) ||
     // Network errors during module loading
-    (error.name === 'TypeError' && errorMessage.includes('failed to fetch'))
+    (error.name === "TypeError" && errorMessage.includes("failed to fetch"))
   );
 };
 
 /**
  * Get user-friendly error message based on error type
  */
-const getUserFriendlyMessage = (error: Error | null, customMessage?: string): { title: string; description: string } => {
+const getUserFriendlyMessage = (
+  error: Error | null,
+  customMessage?: string,
+): { title: string; description: string } => {
   if (customMessage) {
     return {
-      title: 'Something went wrong',
+      title: "Something went wrong",
       description: customMessage,
     };
   }
 
   if (isChunkLoadError(error)) {
     return {
-      title: 'Failed to load page',
-      description: 'There was a network problem loading this page. Please check your connection and try again.',
+      title: "Failed to load page",
+      description:
+        "There was a network problem loading this page. Please check your connection and try again.",
     };
   }
 
   return {
-    title: 'Something went wrong',
-    description: 'An unexpected error occurred. Please try refreshing the page.',
+    title: "Something went wrong",
+    description:
+      "An unexpected error occurred. Please try refreshing the page.",
   };
 };
 
@@ -98,7 +104,10 @@ const getUserFriendlyMessage = (error: Error | null, customMessage?: string): { 
  *   </Suspense>
  * </ErrorBoundary>
  */
-export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends React.Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, isRetrying: false };
@@ -110,7 +119,20 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     // Log error to console for debugging
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+
+    // Stale chunk after deploy: bundle hashes change, lazy imports 404 → SPA
+    // returns index.html → MIME mismatch. Auto-reload once per minute to pick
+    // up the new build. The 60s guard prevents loops if the chunk really is
+    // unreachable (e.g. genuine network failure).
+    if (isChunkLoadError(error)) {
+      const KEY = "chunk-reload-at";
+      const last = Number(sessionStorage.getItem(KEY) || 0);
+      if (Date.now() - last > 60_000) {
+        sessionStorage.setItem(KEY, String(Date.now()));
+        window.location.reload();
+      }
+    }
   }
 
   /**
@@ -139,7 +161,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       }
 
       const isChunkError = isChunkLoadError(error);
-      const { title, description } = getUserFriendlyMessage(error, errorMessage);
+      const { title, description } = getUserFriendlyMessage(
+        error,
+        errorMessage,
+      );
       const Icon = isChunkError ? WifiOff : AlertCircle;
 
       return (
@@ -163,13 +188,15 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                   disabled={isRetrying}
                   className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
-                  {isRetrying ? 'Retrying...' : 'Try Again'}
+                  <RefreshCw
+                    className={`h-4 w-4 ${isRetrying ? "animate-spin" : ""}`}
+                  />
+                  {isRetrying ? "Retrying..." : "Try Again"}
                 </button>
               )}
 
               {/* Technical details - collapsed by default in production */}
-              {process.env.NODE_ENV === 'development' && (
+              {process.env.NODE_ENV === "development" && (
                 <details className="mt-4">
                   <summary className="text-xs text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
                     Technical details

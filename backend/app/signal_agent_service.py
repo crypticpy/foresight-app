@@ -833,8 +833,7 @@ class SignalAgentService:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.2,
-                    max_tokens=4096,
+                    max_completion_tokens=4096,
                 )
             except Exception as e:
                 logger.error(

@@ -28,8 +28,8 @@ async def health_check():
     capabilities = []
     degraded = []
 
-    # Core: Azure OpenAI (required for AI features)
-    if os.getenv("AZURE_OPENAI_API_KEY"):
+    # Core: OpenAI (required for AI features)
+    if os.getenv("OPENAI_API_KEY"):
         capabilities.append("ai_analysis")
     else:
         degraded.append("ai_analysis")
@@ -135,8 +135,7 @@ async def debug_gpt_researcher():
                 llm = AzureChatOpenAI(
                     azure_deployment=deployment,
                     api_version=os.getenv("OPENAI_API_VERSION", "2024-05-01-preview"),
-                    temperature=0,
-                    max_tokens=10,
+                    max_completion_tokens=10,
                 )
 
                 response = llm.invoke("Say 'hello' in one word")
@@ -179,8 +178,7 @@ async def debug_gpt_researcher():
             llm_provider=cfg.smart_llm_provider,
             llm_kwargs=cfg.llm_kwargs,
             messages=[{"role": "user", "content": "Reply with exactly: ok"}],
-            temperature=0,
-            max_tokens=8,
+            max_completion_tokens=8,
         )
         gptr_llm_test["status"] = "success"
         gptr_llm_test["response"] = resp

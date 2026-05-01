@@ -641,8 +641,7 @@ Example:
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_tokens=400,
-            temperature=0.8,
+            max_completion_tokens=400,
         )
 
         content = response.choices[0].message.content.strip()

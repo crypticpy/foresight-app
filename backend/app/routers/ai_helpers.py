@@ -218,8 +218,7 @@ async def suggest_keywords(
                     "content": f"Suggest municipal-relevant search keywords for: {topic}",
                 },
             ],
-            temperature=0.7,
-            max_tokens=300,
+            max_completion_tokens=300,
         )
 
         try:
@@ -290,8 +289,7 @@ async def suggest_description(
                     "content": user_prompt,
                 },
             ],
-            temperature=0.7,
-            max_tokens=150,
+            max_completion_tokens=150,
         )
 
         description = (response.choices[0].message.content or "").strip() or f"Tracks emerging signals related to {body.name}."
