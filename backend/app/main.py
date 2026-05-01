@@ -107,9 +107,19 @@ def _build_allowed_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Manage application lifecycle -- startup and shutdown."""
+    truthy = ("1", "true", "yes", "y", "on")
+    demo_freeze = os.getenv("FORESIGHT_DEMO_FREEZE", "false").strip().lower() in truthy
     enable_scheduler = os.getenv(
         "FORESIGHT_ENABLE_SCHEDULER", "false"
-    ).strip().lower() in ("1", "true", "yes", "y", "on")
+    ).strip().lower() in truthy
+
+    if demo_freeze:
+        logger.warning(
+            "FORESIGHT_DEMO_FREEZE=true — APScheduler nightly/weekly jobs and "
+            "embedded worker auto-fires (RSS triage, scheduled discovery) are "
+            "suppressed. User-initiated jobs still process."
+        )
+        enable_scheduler = False
 
     if enable_scheduler:
         start_scheduler()

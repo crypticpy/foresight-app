@@ -99,6 +99,13 @@ class ForesightWorker:
         self.enable_scheduler = _truthy(
             os.getenv("FORESIGHT_ENABLE_SCHEDULER", "false")
         )
+        # Demo freeze: when truthy, suppress all *automatic, periodic* fires
+        # that would spend money on external APIs (RSS triage, scheduled
+        # discovery, APScheduler nightly/weekly jobs). User-initiated jobs
+        # (research, briefs, discovery runs from the UI) still process.
+        self.demo_freeze = _truthy(os.getenv("FORESIGHT_DEMO_FREEZE", "false"))
+        if self.demo_freeze:
+            self.enable_scheduler = False
         self._stop_event = asyncio.Event()
         self._current_interval = self.poll_interval_seconds
         self._last_rss_check: Optional[datetime] = None
@@ -114,8 +121,16 @@ class ForesightWorker:
                 "poll_interval_seconds": self.poll_interval_seconds,
                 "max_poll_interval_seconds": self.max_poll_interval_seconds,
                 "enable_scheduler": self.enable_scheduler,
+                "demo_freeze": self.demo_freeze,
             },
         )
+
+        if self.demo_freeze:
+            logger.warning(
+                "FORESIGHT_DEMO_FREEZE=true — automatic fires disabled "
+                "(no RSS auto-triage, no scheduled discovery, no APScheduler "
+                "nightly/weekly jobs). User-initiated jobs still process."
+            )
 
         if self.enable_scheduler:
             try:
@@ -131,8 +146,9 @@ class ForesightWorker:
                 did_work = await self._process_one_brief() or did_work
                 did_work = await self._process_one_discovery_run() or did_work
                 did_work = await self._process_one_workstream_scan() or did_work
-                did_work = await self._check_rss_feeds() or did_work
-                did_work = await self._run_scheduled_discovery() or did_work
+                if not self.demo_freeze:
+                    did_work = await self._check_rss_feeds() or did_work
+                    did_work = await self._run_scheduled_discovery() or did_work
             except Exception as e:
                 logger.exception(f"Worker loop error: {e}")
 
