@@ -334,21 +334,57 @@ function Section({
 function TechNote({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-6 max-w-3xl">
+    <div className="mt-8 max-w-3xl">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-brand-blue dark:text-gray-400 dark:hover:text-brand-blue transition-colors"
+        aria-expanded={open}
+        className={cn(
+          "group inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full border transition-all duration-200",
+          open
+            ? "border-brand-blue text-brand-blue bg-brand-blue/5"
+            : "border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-brand-blue hover:text-brand-blue",
+        )}
       >
-        <ChevronDown
-          className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
-        />
+        <Wand2 className="h-3.5 w-3.5" />
         Under the hood
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
       </button>
-      {open && (
-        <div className="mt-3 p-4 rounded-lg bg-gray-100 dark:bg-dark-surface-deep border-l-2 border-brand-blue text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-mono">
-          {children}
+      <div
+        className={cn(
+          "grid transition-all duration-300 ease-out",
+          open
+            ? "grid-rows-[1fr] opacity-100 mt-3"
+            : "grid-rows-[0fr] opacity-0 mt-0",
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="rounded-xl bg-gray-900 dark:bg-black/40 border border-gray-800 dark:border-gray-700 shadow-lg overflow-hidden">
+            {/* Terminal chrome */}
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-800/80 dark:bg-black/60 border-b border-gray-700/60">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
+                <span className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
+              </div>
+              <div className="ml-2 text-[10px] font-mono uppercase tracking-wider text-gray-400">
+                tech-detail.md
+              </div>
+              <div className="ml-auto flex items-center gap-1 text-[10px] font-mono text-gray-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-brand-green animate-pulse" />
+                live
+              </div>
+            </div>
+            <div className="p-5 text-sm text-gray-200 leading-relaxed font-mono border-l-2 border-brand-blue">
+              {children}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -765,95 +801,249 @@ function CardAnatomy() {
 // ---------------------------------------------------------------------------
 
 function ClusterScatter() {
-  // Three illustrative clusters; not real data
+  // Three illustrative clusters; not real data. Coords in a 600x400 canvas
+  // with 40px padding so labels and glows stay inside the viewBox.
   const clusters = useMemo<
-    Array<{ color: string; label: string; points: Array<[number, number]> }>
+    Array<{
+      color: string;
+      label: string;
+      labelPos: [number, number];
+      points: Array<[number, number]>;
+    }>
   >(
     () => [
       {
         color: "#44499C",
         label: "Mobility",
+        labelPos: [140, 60],
         points: [
-          [120, 110],
-          [135, 130],
-          [110, 140],
-          [150, 120],
-          [125, 155],
-          [142, 100],
+          [130, 130],
+          [150, 150],
+          [115, 155],
+          [165, 135],
+          [135, 175],
+          [160, 115],
         ],
       },
       {
         color: "#009F4D",
-        label: "Climate",
+        label: "Climate & Energy",
+        labelPos: [445, 60],
         points: [
-          [320, 90],
-          [340, 110],
-          [310, 130],
-          [355, 95],
-          [330, 145],
-          [365, 130],
+          [430, 105],
+          [455, 125],
+          [415, 140],
+          [475, 115],
+          [445, 165],
+          [485, 145],
         ],
       },
       {
         color: "#7C4DFF",
         label: "Civic AI",
+        labelPos: [285, 360],
         points: [
-          [220, 220],
-          [240, 235],
-          [205, 240],
-          [255, 215],
-          [230, 260],
-          [195, 215],
+          [275, 270],
+          [300, 290],
+          [255, 295],
+          [320, 265],
+          [285, 320],
+          [240, 275],
         ],
       },
     ],
     [],
   );
 
+  // Highlight a single "candidate" point near the Mobility cluster — shows
+  // the 0.92 similarity ring so it gets merged in as another source.
+  const candidate: [number, number] = [180, 170];
+  const dedupTarget: [number, number] = [150, 150];
+
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface p-6">
-      <svg viewBox="0 0 480 320" className="w-full h-auto">
+      <svg
+        viewBox="0 0 600 400"
+        className="w-full h-auto"
+        role="img"
+        aria-label="Semantic similarity cluster scatter plot"
+      >
         <defs>
           <radialGradient id="clusterGlow">
-            <stop offset="0%" stopColor="currentColor" stopOpacity="0.18" />
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
             <stop offset="70%" stopColor="currentColor" stopOpacity="0" />
           </radialGradient>
+          <pattern
+            id="grid"
+            width="40"
+            height="40"
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d="M 40 0 L 0 0 0 40"
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.08"
+              strokeWidth="1"
+            />
+          </pattern>
         </defs>
+        {/* Faint grid + axis labels, suggesting "vector space" */}
+        <rect
+          x="0"
+          y="0"
+          width="600"
+          height="400"
+          fill="url(#grid)"
+          className="text-gray-400 dark:text-gray-600"
+        />
+        <text
+          x="20"
+          y="20"
+          fill="currentColor"
+          className="text-gray-400 dark:text-gray-500"
+          fontSize="10"
+          fontFamily="ui-monospace, monospace"
+        >
+          dim_1
+        </text>
+        <text
+          x="580"
+          y="390"
+          fill="currentColor"
+          textAnchor="end"
+          className="text-gray-400 dark:text-gray-500"
+          fontSize="10"
+          fontFamily="ui-monospace, monospace"
+        >
+          dim_2 · 1,536-dim space (projected to 2D)
+        </text>
+
+        {/* Clusters */}
         {clusters.map((c) => {
           const cx = c.points.reduce((s, p) => s + p[0], 0) / c.points.length;
           const cy = c.points.reduce((s, p) => s + p[1], 0) / c.points.length;
           return (
             <g key={c.label} style={{ color: c.color }}>
-              <circle cx={cx} cy={cy} r={70} fill="url(#clusterGlow)" />
+              <circle cx={cx} cy={cy} r={80} fill="url(#clusterGlow)" />
               {c.points.map((p, i) => (
                 <circle
                   key={i}
                   cx={p[0]}
                   cy={p[1]}
-                  r={6}
+                  r={7}
                   fill={c.color}
+                  stroke="white"
+                  strokeWidth="1.5"
                   className="animate-[fadeIn_600ms_ease-out_both]"
-                  style={{ animationDelay: `${i * 60}ms` }}
+                  style={{ animationDelay: `${i * 70}ms` }}
                 />
               ))}
               <text
-                x={cx}
-                y={cy + 95}
+                x={c.labelPos[0]}
+                y={c.labelPos[1]}
                 textAnchor="middle"
                 fill={c.color}
-                className="text-[12px] font-semibold"
+                fontSize="14"
+                fontWeight="700"
               >
                 {c.label}
               </text>
             </g>
           );
         })}
+
+        {/* Candidate / dedup demonstration */}
+        <g
+          className="animate-[fadeIn_600ms_ease-out_both]"
+          style={{ animationDelay: "700ms" }}
+        >
+          <line
+            x1={candidate[0]}
+            y1={candidate[1]}
+            x2={dedupTarget[0]}
+            y2={dedupTarget[1]}
+            stroke="#44499C"
+            strokeWidth="1.5"
+            strokeDasharray="4 3"
+            opacity="0.6"
+          />
+          <circle
+            cx={candidate[0]}
+            cy={candidate[1]}
+            r="22"
+            fill="none"
+            stroke="#44499C"
+            strokeWidth="1.5"
+            strokeDasharray="3 3"
+            opacity="0.55"
+          />
+          <circle
+            cx={candidate[0]}
+            cy={candidate[1]}
+            r="7"
+            fill="white"
+            stroke="#44499C"
+            strokeWidth="2"
+          />
+          <text
+            x={candidate[0] + 30}
+            y={candidate[1] - 4}
+            fill="#44499C"
+            fontSize="11"
+            fontWeight="600"
+          >
+            new article
+          </text>
+          <text
+            x={candidate[0] + 30}
+            y={candidate[1] + 10}
+            fill="#44499C"
+            fontSize="10"
+            opacity="0.75"
+          >
+            cosine 0.94 → dedup
+          </text>
+        </g>
       </svg>
+
+      <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-dark-surface-deep">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#44499C]" />
+          <span className="font-semibold text-gray-900 dark:text-white">
+            Mobility
+          </span>
+          <span className="text-gray-500 dark:text-gray-400 ml-auto">
+            ~6 cards
+          </span>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-dark-surface-deep">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#009F4D]" />
+          <span className="font-semibold text-gray-900 dark:text-white">
+            Climate &amp; Energy
+          </span>
+          <span className="text-gray-500 dark:text-gray-400 ml-auto">
+            ~6 cards
+          </span>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-dark-surface-deep">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#7C4DFF]" />
+          <span className="font-semibold text-gray-900 dark:text-white">
+            Civic AI
+          </span>
+          <span className="text-gray-500 dark:text-gray-400 ml-auto">
+            ~6 cards
+          </span>
+        </div>
+      </div>
+
       <p className="text-sm text-gray-600 dark:text-gray-400 mt-4 leading-relaxed">
-        Cards near each other in this 1,536-dimensional space share meaning —
-        not just keywords. That's why an article about{" "}
-        <em>"low-speed shuttles"</em> dedups with one about{" "}
-        <em>"autonomous transit pilots"</em> even though no words overlap.
+        Cards near each other in this 1,536-dimensional space share{" "}
+        <em>meaning</em> — not just keywords. The dashed ring shows the dedup
+        threshold: when a new article lands within{" "}
+        <span className="font-semibold text-brand-blue">cosine 0.92</span> of an
+        existing card, it gets merged in as another source instead of creating a
+        duplicate.
       </p>
     </div>
   );
