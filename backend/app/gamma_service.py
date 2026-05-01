@@ -1011,7 +1011,7 @@ CONTENT APPROACH:
         if include_images:
             request["imageOptions"] = {
                 "source": "aiGenerated",
-                "model": "imagen-4-pro",
+                "model": "gpt-image-2",
                 # style: max 500 chars - using full budget for precise visual direction
                 "style": "professional photography, clean modern corporate design, sophisticated minimalist aesthetic, high-quality editorial imagery, suitable for government executive presentations, contemporary urban planning visuals, technology and innovation themes, civic infrastructure, blue and green color accents matching City of Austin brand",
             }
@@ -1676,7 +1676,7 @@ Create a presentation that a City Manager would proudly share with Council."""
         if include_images:
             request["imageOptions"] = {
                 "source": "aiGenerated",
-                "model": "imagen-4-pro",  # Highest quality model
+                "model": "gpt-image-2",
                 "style": "premium executive photography, clean minimalist corporate design, municipal government imagery, smart city technology, urban innovation, professional blue and green color palette, editorial quality, strategic planning visuals, data visualization aesthetics, modern Austin Texas cityscape",
             }
         else:

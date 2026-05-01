@@ -307,10 +307,7 @@ export const ExportProgressModal: React.FC<ExportProgressModalProps> = ({
           {/* Status Icon & Animation */}
           <div className="flex flex-col items-center text-center">
             <div
-              className={cn(
-                "relative w-20 h-20 rounded-full flex items-center justify-center mb-4",
-                isInProgress && "animate-pulse",
-              )}
+              className="relative w-20 h-20 rounded-full flex items-center justify-center mb-4"
               style={{
                 backgroundColor:
                   status === "completed"
