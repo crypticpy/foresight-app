@@ -30,7 +30,6 @@ from app.openai_provider import (
 from app.chat_tools import (
     MAX_TOOL_CALLS_PER_MESSAGE,
     MAX_WEB_SEARCHES_PER_MESSAGE,
-    WEB_SEARCH_TOOL,
     dispatch_tool,
     get_all_tools,
     progress_label,
@@ -53,6 +52,29 @@ STREAM_TIMEOUT = 120  # seconds
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
+
+
+def _to_responses_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert chat.completions tool schemas to Responses API tool schemas.
+
+    chat.completions: {"type": "function", "function": {"name", "description", "parameters"}}
+    responses:        {"type": "function", "name", "description", "parameters"}
+    """
+    out: List[Dict[str, Any]] = []
+    for t in tools or []:
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            fn = t["function"]
+            out.append(
+                {
+                    "type": "function",
+                    "name": fn.get("name"),
+                    "description": fn.get("description"),
+                    "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        else:
+            out.append(t)
+    return out
 
 
 def _sse_event(event_type: str, data: Any) -> str:
@@ -507,22 +529,28 @@ async def chat(
             },
         )
 
-        # 4. Build messages for the LLM
+        # 4. Build input items for the Responses API
         system_prompt = _build_system_prompt(scope, context_text, scope_metadata)
 
         # Get conversation history (for multi-turn context)
         history = await _get_conversation_history(supabase_client, conv_id)
 
-        # Build the messages array
-        messages = [{"role": "system", "content": system_prompt}]
+        # Build input items list. The Responses API takes `instructions` for
+        # the system prompt separately from the `input` items list.
+        input_items: List[Dict[str, Any]] = []
 
         # Include recent history (skip the last user message since we'll add it fresh)
         if history:
-            # Only include prior messages, not the one we just stored
             prior = history[:-1] if history else []
-            # Limit history to keep within token budget
-            messages.extend(iter(prior[-20:]))
-        messages.append({"role": "user", "content": message})
+            for h in prior[-20:]:
+                # History rows are stored chat-completions style. Strip any
+                # role we can't replay (system) and pass user/assistant
+                # through as plain message items.
+                if h.get("role") in ("user", "assistant") and h.get("content"):
+                    input_items.append(
+                        {"role": h["role"], "content": h["content"]}
+                    )
+        input_items.append({"role": "user", "content": message})
 
         yield _sse_event(
             "progress",
@@ -538,261 +566,319 @@ async def chat(
         model_used = get_chat_deployment()
 
         try:
-            tool_kwargs: Dict[str, Any] = {}
             available_tools = get_all_tools()
-            if available_tools:
-                tool_kwargs["tools"] = available_tools
-                tool_kwargs["tool_choice"] = "auto"
+            responses_tools = _to_responses_tools(available_tools)
 
-            stream = await azure_openai_async_client.chat.completions.create(
-                model=model_used,
-                messages=messages,
-                stream=True,
-                max_completion_tokens=8192,
-                reasoning_effort=get_reasoning_effort(),
-                **tool_kwargs,
+            base_kwargs: Dict[str, Any] = {
+                "model": model_used,
+                "stream": True,
+                "max_output_tokens": 8192,
+                "instructions": system_prompt,
+                "reasoning": {"effort": get_reasoning_effort()},
+            }
+            if responses_tools:
+                base_kwargs["tools"] = responses_tools
+                base_kwargs["tool_choice"] = "auto"
+
+            stream = await azure_openai_async_client.responses.create(
+                input=input_items,
+                **base_kwargs,
             )
 
             tool_call_count = 0
             web_search_count = 0
+            tools_disabled = False  # set when budget is exhausted
 
-            # Outer loop allows re-streaming after tool calls.
-            # The async for binds to the iterator at entry; reassigning
-            # `stream` inside does not redirect iteration.  Instead we
-            # `break` out, reassign, and let the while loop re-enter.
+            # Outer loop allows re-streaming after tool calls. We rebind
+            # `stream` and re-enter; the inner async-for is bound at entry.
             while True:
-                accumulated_tool_calls: Dict[int, Dict[str, str]] = {}
+                # Per-stream accumulators keyed by output item_id
+                fc_items: Dict[str, Dict[str, str]] = {}
 
-                async for chunk in stream:
-                    if not chunk.choices:
-                        if hasattr(chunk, "usage") and chunk.usage:
-                            total_tokens = getattr(chunk.usage, "total_tokens", 0)
+                async for event in stream:
+                    etype = getattr(event, "type", "")
+
+                    # Plain text deltas → stream to client
+                    if etype == "response.output_text.delta":
+                        delta_text = getattr(event, "delta", "") or ""
+                        if delta_text:
+                            full_response += delta_text
+                            yield _sse_token(delta_text)
                         continue
-                    delta = chunk.choices[0].delta
-                    finish_reason = chunk.choices[0].finish_reason
 
-                    # Handle content tokens (normal streaming)
-                    if delta.content:
-                        full_response += delta.content
-                        yield _sse_token(delta.content)
+                    # A new output item is emitted (could be reasoning,
+                    # message, or function_call). We capture function_call
+                    # items so we can both replay them in the next request
+                    # and dispatch their tool result.
+                    if etype == "response.output_item.added":
+                        item = getattr(event, "item", None)
+                        if item is not None and getattr(item, "type", "") == "function_call":
+                            fc_items[item.id] = {
+                                "item_id": item.id,
+                                "call_id": getattr(item, "call_id", "") or "",
+                                "name": getattr(item, "name", "") or "",
+                                "arguments": getattr(item, "arguments", "") or "",
+                            }
+                        continue
 
-                    # Handle tool call chunks (accumulate arguments)
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            idx = tc.index
-                            if idx not in accumulated_tool_calls:
-                                accumulated_tool_calls[idx] = {
-                                    "id": tc.id or "",
-                                    "name": (
-                                        tc.function.name
-                                        if tc.function and tc.function.name
-                                        else ""
-                                    ),
+                    # Function-call argument deltas accumulate into the item
+                    if etype == "response.function_call_arguments.delta":
+                        item_id = getattr(event, "item_id", "")
+                        delta_args = getattr(event, "delta", "") or ""
+                        if item_id in fc_items and delta_args:
+                            fc_items[item_id]["arguments"] += delta_args
+                        continue
+
+                    # Final args for a function call (snapshot)
+                    if etype == "response.function_call_arguments.done":
+                        item_id = getattr(event, "item_id", "")
+                        final_args = getattr(event, "arguments", "") or ""
+                        if item_id in fc_items and final_args:
+                            fc_items[item_id]["arguments"] = final_args
+                        continue
+
+                    # When an output item finishes, ensure we have the most
+                    # complete snapshot for function_call items (name, call_id).
+                    if etype == "response.output_item.done":
+                        item = getattr(event, "item", None)
+                        if item is not None and getattr(item, "type", "") == "function_call":
+                            entry = fc_items.setdefault(
+                                item.id,
+                                {
+                                    "item_id": item.id,
+                                    "call_id": "",
+                                    "name": "",
                                     "arguments": "",
-                                }
-                            if tc.id:
-                                accumulated_tool_calls[idx]["id"] = tc.id
-                            if tc.function and tc.function.name:
-                                accumulated_tool_calls[idx]["name"] = tc.function.name
-                            if tc.function and tc.function.arguments:
-                                accumulated_tool_calls[idx][
-                                    "arguments"
-                                ] += tc.function.arguments
-
-                    # When the model finishes with tool_calls, execute them
-                    if finish_reason == "tool_calls" and accumulated_tool_calls:
-                        tool_messages: List[Dict[str, Any]] = []
-                        restream_kwargs = dict(**tool_kwargs)
-                        budget_exhausted = False
-
-                        for t_idx in sorted(accumulated_tool_calls.keys()):
-                            tc_data = accumulated_tool_calls[t_idx]
-
-                            tool_messages.append(
-                                {
-                                    "role": "assistant",
-                                    "tool_calls": [
-                                        {
-                                            "id": tc_data["id"],
-                                            "type": "function",
-                                            "function": {
-                                                "name": tc_data["name"],
-                                                "arguments": tc_data["arguments"],
-                                            },
-                                        }
-                                    ],
-                                }
-                            )
-
-                            tool_name = tc_data["name"]
-                            try:
-                                args = json.loads(tc_data["arguments"] or "{}")
-                            except json.JSONDecodeError:
-                                args = {}
-
-                            # Per-message budgets
-                            if tool_call_count >= MAX_TOOL_CALLS_PER_MESSAGE:
-                                tool_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tc_data["id"],
-                                        "content": json.dumps(
-                                            {
-                                                "error": (
-                                                    "Tool call budget reached "
-                                                    "for this message. Answer "
-                                                    "with the information you "
-                                                    "already have."
-                                                )
-                                            }
-                                        ),
-                                    }
-                                )
-                                budget_exhausted = True
-                                continue
-                            if (
-                                tool_name == "web_search"
-                                and web_search_count >= MAX_WEB_SEARCHES_PER_MESSAGE
-                            ):
-                                tool_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tc_data["id"],
-                                        "content": json.dumps(
-                                            {
-                                                "error": (
-                                                    "Web search limit reached. "
-                                                    "Use other tools or answer "
-                                                    "with what you have."
-                                                )
-                                            }
-                                        ),
-                                    }
-                                )
-                                continue
-
-                            tool_call_count += 1
-                            if tool_name == "web_search":
-                                web_search_count += 1
-
-                            # Surface activity to the UI
-                            yield _sse_event(
-                                "progress",
-                                {
-                                    "step": "tool_call",
-                                    "tool": tool_name,
-                                    "detail": progress_label(tool_name, args),
                                 },
                             )
-
-                            # Web search has its own integration with source_map
-                            if tool_name == "web_search":
-                                search_query = (args.get("query") or "").strip()
-                                if not search_query:
-                                    tool_messages.append(
-                                        {
-                                            "role": "tool",
-                                            "tool_call_id": tc_data["id"],
-                                            "content": json.dumps(
-                                                {"error": "Empty search query."}
-                                            ),
-                                        }
-                                    )
-                                    continue
-                                try:
-                                    web_results = await asyncio.wait_for(
-                                        RAGEngine.web_search(
-                                            search_query, max_results=5
-                                        ),
-                                        timeout=10.0,
-                                    )
-                                except asyncio.TimeoutError:
-                                    web_results = []
-                                    logger.warning(
-                                        "Web search timed out for: %s",
-                                        search_query,
-                                    )
-
-                                base_idx = max(source_map.keys(), default=0) + 1
-                                for i, wr in enumerate(web_results):
-                                    source_map[base_idx + i] = {
-                                        "title": wr.get("title", "Web Result"),
-                                        "url": wr.get("url", ""),
-                                        "excerpt": (wr.get("content", ""))[:500],
-                                        "source_type": "web_search",
-                                    }
-
-                                if web_results:
-                                    result_text = (
-                                        "Web search results for "
-                                        f"'{search_query}':\n\n"
-                                    )
-                                    for i, wr in enumerate(web_results):
-                                        result_text += (
-                                            f"[{base_idx + i}] "
-                                            f"{wr.get('title', 'Untitled')}\n"
-                                        )
-                                        result_text += (
-                                            f"URL: {wr.get('url', '')}\n"
-                                        )
-                                        result_text += (
-                                            f"{(wr.get('content', ''))[:800]}"
-                                            "\n\n"
-                                        )
-                                else:
-                                    result_text = "No web results found."
-
-                                tool_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tc_data["id"],
-                                        "content": result_text,
-                                    }
-                                )
-                                continue
-
-                            # All other tools route through the dispatcher
-                            tool_result = await dispatch_tool(
-                                tool_name,
-                                args,
-                                supabase=supabase_client,
-                                user_id=user_id,
-                                chat_scope=scope,
-                                chat_scope_id=scope_id,
+                            entry["call_id"] = (
+                                getattr(item, "call_id", "") or entry["call_id"]
                             )
-                            tool_messages.append(
+                            entry["name"] = (
+                                getattr(item, "name", "") or entry["name"]
+                            )
+                            entry["arguments"] = (
+                                getattr(item, "arguments", "") or entry["arguments"]
+                            )
+                        continue
+
+                    if etype == "response.completed":
+                        resp = getattr(event, "response", None)
+                        if resp is not None:
+                            usage = getattr(resp, "usage", None)
+                            if usage is not None:
+                                total_tokens = (
+                                    getattr(usage, "total_tokens", 0)
+                                    or total_tokens
+                                )
+                        continue
+
+                    if etype in ("response.failed", "response.error"):
+                        err = getattr(event, "error", None) or getattr(
+                            event, "response", None
+                        )
+                        logger.error(
+                            "Responses API stream error: %s", err
+                        )
+                        raise RuntimeError(
+                            f"Responses API stream failed: {err}"
+                        )
+
+                # Stream exhausted. If the model emitted function calls,
+                # dispatch them and re-issue with their outputs appended.
+                if not fc_items:
+                    break  # done — no tool calls
+
+                # Order tool calls by item_id stability (insertion order is
+                # preserved in dicts since 3.7).
+                pending = list(fc_items.values())
+                budget_exhausted = False
+                next_input_appendix: List[Dict[str, Any]] = []
+
+                for fc in pending:
+                    tool_name = fc["name"]
+                    call_id = fc["call_id"]
+
+                    # Replay the assistant's function_call item so the next
+                    # request has the full conversation context.
+                    next_input_appendix.append(
+                        {
+                            "type": "function_call",
+                            "name": tool_name,
+                            "call_id": call_id,
+                            "arguments": fc["arguments"] or "{}",
+                        }
+                    )
+
+                    try:
+                        args = json.loads(fc["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+
+                    # Per-message budgets
+                    if tool_call_count >= MAX_TOOL_CALLS_PER_MESSAGE:
+                        next_input_appendix.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": json.dumps(
+                                    {
+                                        "error": (
+                                            "Tool call budget reached "
+                                            "for this message. Answer "
+                                            "with the information you "
+                                            "already have."
+                                        )
+                                    }
+                                ),
+                            }
+                        )
+                        budget_exhausted = True
+                        continue
+                    if (
+                        tool_name == "web_search"
+                        and web_search_count >= MAX_WEB_SEARCHES_PER_MESSAGE
+                    ):
+                        next_input_appendix.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": json.dumps(
+                                    {
+                                        "error": (
+                                            "Web search limit reached. "
+                                            "Use other tools or answer "
+                                            "with what you have."
+                                        )
+                                    }
+                                ),
+                            }
+                        )
+                        continue
+
+                    tool_call_count += 1
+                    if tool_name == "web_search":
+                        web_search_count += 1
+
+                    # Surface activity to the UI
+                    yield _sse_event(
+                        "progress",
+                        {
+                            "step": "tool_call",
+                            "tool": tool_name,
+                            "detail": progress_label(tool_name, args),
+                        },
+                    )
+
+                    # Web search has its own integration with source_map
+                    if tool_name == "web_search":
+                        search_query = (args.get("query") or "").strip()
+                        if not search_query:
+                            next_input_appendix.append(
                                 {
-                                    "role": "tool",
-                                    "tool_call_id": tc_data["id"],
-                                    "content": tool_result,
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps(
+                                        {"error": "Empty search query."}
+                                    ),
                                 }
                             )
-
-                        if budget_exhausted:
-                            restream_kwargs = {}  # drop tools so model wraps up
-
-                        # Re-invoke the model with tool results
-                        if tool_messages:
-                            messages.extend(tool_messages)
-
-                            stream = (
-                                await azure_openai_async_client.chat.completions.create(
-                                    model=model_used,
-                                    messages=messages,
-                                    stream=True,
-                                    max_completion_tokens=8192,
-                                    reasoning_effort=get_reasoning_effort(),
-                                    **restream_kwargs,
-                                )
+                            continue
+                        try:
+                            web_results = await asyncio.wait_for(
+                                RAGEngine.web_search(
+                                    search_query, max_results=5
+                                ),
+                                timeout=10.0,
                             )
-                            break  # break async for → re-enter while loop with new stream
+                        except asyncio.TimeoutError:
+                            web_results = []
+                            logger.warning(
+                                "Web search timed out for: %s",
+                                search_query,
+                            )
 
-                    # Track usage if available
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        total_tokens = getattr(chunk.usage, "total_tokens", 0)
-                else:
-                    # async for completed without break → stream exhausted normally
-                    break  # exit while loop
+                        base_idx = max(source_map.keys(), default=0) + 1
+                        for i, wr in enumerate(web_results):
+                            source_map[base_idx + i] = {
+                                "title": wr.get("title", "Web Result"),
+                                "url": wr.get("url", ""),
+                                "excerpt": (wr.get("content", ""))[:500],
+                                "source_type": "web_search",
+                            }
+
+                        if web_results:
+                            result_text = (
+                                "Web search results for "
+                                f"'{search_query}':\n\n"
+                            )
+                            for i, wr in enumerate(web_results):
+                                result_text += (
+                                    f"[{base_idx + i}] "
+                                    f"{wr.get('title', 'Untitled')}\n"
+                                )
+                                result_text += (
+                                    f"URL: {wr.get('url', '')}\n"
+                                )
+                                result_text += (
+                                    f"{(wr.get('content', ''))[:800]}"
+                                    "\n\n"
+                                )
+                        else:
+                            result_text = "No web results found."
+
+                        next_input_appendix.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": result_text,
+                            }
+                        )
+                        continue
+
+                    # All other tools route through the dispatcher
+                    tool_result = await dispatch_tool(
+                        tool_name,
+                        args,
+                        supabase=supabase_client,
+                        user_id=user_id,
+                        chat_scope=scope,
+                        chat_scope_id=scope_id,
+                    )
+                    next_input_appendix.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": tool_result,
+                        }
+                    )
+
+                # Append the function calls + their outputs to the input,
+                # then re-issue the request. We use stateless mode (full
+                # input list) rather than previous_response_id so that
+                # everything is reproducible and we don't need to persist
+                # response IDs across turns.
+                input_items.extend(next_input_appendix)
+
+                if budget_exhausted:
+                    tools_disabled = True
+
+                restream_kwargs: Dict[str, Any] = {
+                    "model": model_used,
+                    "stream": True,
+                    "max_output_tokens": 8192,
+                    "instructions": system_prompt,
+                    "reasoning": {"effort": get_reasoning_effort()},
+                }
+                if responses_tools and not tools_disabled:
+                    restream_kwargs["tools"] = responses_tools
+                    restream_kwargs["tool_choice"] = "auto"
+
+                stream = await azure_openai_async_client.responses.create(
+                    input=input_items,
+                    **restream_kwargs,
+                )
+                # Re-enter while loop with new stream
 
         except Exception as e:
             error_type = type(e).__name__

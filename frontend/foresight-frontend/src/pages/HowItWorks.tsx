@@ -182,7 +182,7 @@ function StatStrip() {
         const [statsRes, patternsRes] = await Promise.all([
           fetch(`${API_BASE_URL}/api/v1/analytics/system-stats`, { headers }),
           fetch(
-            `${API_BASE_URL}/api/v1/pattern-insights?status=active&limit=200`,
+            `${API_BASE_URL}/api/v1/pattern-insights?status=active&limit=50`,
             { headers },
           ),
         ]);
