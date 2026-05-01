@@ -275,7 +275,7 @@ const Signals: React.FC = () => {
       });
       try {
         await togglePin(cardId, !currentlyPinned);
-      } catch {
+      } catch (err) {
         // Revert on failure
         setSignals((prev) =>
           prev.map((s) =>
@@ -299,6 +299,13 @@ const Signals: React.FC = () => {
                 followed_count: Math.max(0, prev.followed_count + delta),
               };
         });
+        setError(
+          err instanceof Error
+            ? err.message
+            : currentlyPinned
+              ? "Failed to unpin signal"
+              : "Failed to pin signal",
+        );
       }
     },
     [signals],

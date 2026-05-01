@@ -279,10 +279,20 @@ function InvalidParamsState() {
       <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
         Select Two Signals to Compare
       </h2>
-      <p className="text-gray-600 dark:text-gray-300 max-w-md mb-4">
-        Please select exactly two signals to compare their trends and metrics
-        side-by-side.
+      <p className="text-gray-600 dark:text-gray-300 max-w-md mb-2">
+        Compare trends, scores, and timelines side-by-side.
       </p>
+      <ol className="text-sm text-gray-500 dark:text-gray-400 max-w-md mb-5 text-left list-decimal list-inside space-y-1">
+        <li>Open the Discover page</li>
+        <li>
+          Click <span className="font-semibold">Compare</span> to enter
+          selection mode
+        </li>
+        <li>
+          Pick two signals, then choose{" "}
+          <span className="font-semibold">Compare selected</span>
+        </li>
+      </ol>
       <Link
         to="/discover"
         className="inline-flex items-center px-4 py-2 bg-brand-blue text-white rounded-lg hover:bg-brand-dark-blue transition-colors"

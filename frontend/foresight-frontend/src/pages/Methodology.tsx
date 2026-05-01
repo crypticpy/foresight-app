@@ -393,10 +393,10 @@ const Methodology: React.FC = () => {
               </AccordionTrigger>
               <AccordionContent>
                 <p className="mb-4">
-                  We use GPT-4 to classify content across multiple dimensions
-                  including strategic pillar alignment, maturity stage, time
-                  horizon, and multi-factor scoring for impact, relevance,
-                  velocity, novelty, opportunity, and risk.
+                  We use GPT-5.4-mini to classify content across multiple
+                  dimensions including strategic pillar alignment, maturity
+                  stage, time horizon, and multi-factor scoring for impact,
+                  relevance, velocity, novelty, opportunity, and risk.
                 </p>
 
                 <div className="grid sm:grid-cols-2 gap-6">
@@ -593,9 +593,13 @@ const Methodology: React.FC = () => {
           {/* Footer note */}
           <p className="mt-10 text-sm text-gray-400 dark:text-gray-500 text-center no-print">
             Questions about our methodology?{" "}
-            <span className="text-brand-blue dark:text-brand-light-blue">
-              Reach out to the Foresight team.
-            </span>
+            <a
+              href="mailto:contact-foresight@austintexas.gov?subject=Foresight%20methodology%20question"
+              className="text-brand-blue dark:text-brand-light-blue hover:underline"
+            >
+              Reach out to the Foresight team
+            </a>
+            .
           </p>
         </div>
       </div>

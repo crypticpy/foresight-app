@@ -1,23 +1,24 @@
-import React, { useState } from 'react';
-import { useAuthContext } from '../hooks/useAuthContext';
-import { LoadingButton } from '../components/ui/LoadingButton';
+import React, { useState } from "react";
+import { useAuthContext } from "../hooks/useAuthContext";
+import { LoadingButton } from "../components/ui/LoadingButton";
 
 const Login: React.FC = () => {
   const { signIn } = useAuthContext();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
       await signIn(email, password);
     } catch (err: unknown) {
-      const message = err instanceof Error && err.message ? err.message : 'Failed to sign in';
+      const message =
+        err instanceof Error && err.message ? err.message : "Failed to sign in";
       setError(message);
     } finally {
       setLoading(false);
@@ -40,20 +41,26 @@ const Login: React.FC = () => {
             Austin Foresight
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
-            Strategic Research & Intelligence System
+            Horizon scanning for the City of Austin
           </p>
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
-            <div className="bg-extended-red/10 border border-extended-red/30 text-extended-red px-4 py-3 rounded-md" role="alert">
+            <div
+              className="bg-extended-red/10 border border-extended-red/30 text-extended-red px-4 py-3 rounded-md"
+              role="alert"
+            >
               {error}
             </div>
           )}
 
           <div className="space-y-4">
             <div>
-              <label htmlFor="email-address" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+              <label
+                htmlFor="email-address"
+                className="block text-sm font-medium text-gray-900 dark:text-white mb-1"
+              >
                 Email address
               </label>
               <input
@@ -69,7 +76,10 @@ const Login: React.FC = () => {
               />
             </div>
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-900 dark:text-white mb-1"
+              >
                 Password
               </label>
               <input
@@ -97,10 +107,16 @@ const Login: React.FC = () => {
             </LoadingButton>
           </div>
 
-          <div className="text-center">
+          <div className="text-center space-y-2">
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              For pilot testing, please contact the system administrator for credentials.
+              Pilot access by invitation only.
             </p>
+            <a
+              href="mailto:contact-foresight@austintexas.gov?subject=Foresight%20pilot%20access%20request"
+              className="inline-flex items-center text-sm font-medium text-brand-blue hover:underline dark:text-blue-300"
+            >
+              Request access →
+            </a>
           </div>
         </form>
       </div>

@@ -843,9 +843,17 @@ function ConversationItem({
   onDelete,
   collapsed,
 }: ConversationItemProps) {
+  const itemRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (isActive && itemRef.current) {
+      itemRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [isActive]);
+
   if (collapsed) {
     return (
       <button
+        ref={itemRef}
         type="button"
         onClick={() => onSelect(conversation)}
         title={conversation.title || "Untitled conversation"}
@@ -871,6 +879,7 @@ function ConversationItem({
 
   return (
     <button
+      ref={itemRef}
       type="button"
       onClick={() => onSelect(conversation)}
       className={cn(

@@ -205,29 +205,33 @@ export default function Patterns() {
           >
             All pillars
           </button>
-          {availablePillars.map((pillar) => (
-            <button
-              key={pillar}
-              onClick={() =>
-                setPillarFilter(pillarFilter === pillar ? null : pillar)
-              }
-              className={cn(
-                "rounded-full transition-opacity",
-                pillarFilter && pillarFilter !== pillar
-                  ? "opacity-50"
-                  : "opacity-100",
-              )}
-            >
-              <PillarBadge pillarId={pillar} size="sm" />
-            </button>
-          ))}
+          {availablePillars.map((pillar) => {
+            const isActive = pillarFilter === pillar;
+            const isMuted = pillarFilter !== null && !isActive;
+            return (
+              <button
+                key={pillar}
+                onClick={() => setPillarFilter(isActive ? null : pillar)}
+                className={cn(
+                  "rounded-full transition-all",
+                  isActive
+                    ? "ring-2 ring-brand-blue ring-offset-2 ring-offset-white dark:ring-offset-dark-bg"
+                    : "hover:scale-105",
+                  isMuted ? "opacity-40" : "opacity-100",
+                )}
+                aria-pressed={isActive}
+              >
+                <PillarBadge pillarId={pillar} size="sm" />
+              </button>
+            );
+          })}
         </div>
       )}
 
       {/* Body */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
+          {[0, 1, 2].map((i) => (
             <div
               key={i}
               className="bg-white dark:bg-dark-surface rounded-xl border border-gray-200 dark:border-gray-700 p-4 animate-pulse h-48"

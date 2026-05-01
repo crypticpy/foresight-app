@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Link, useParams, useNavigate } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Edit,
@@ -290,7 +290,6 @@ function CardItem({
 
 const WorkstreamFeed: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const _navigate = useNavigate();
   const { user } = useAuthContext();
 
   // State

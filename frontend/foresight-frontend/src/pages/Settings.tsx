@@ -567,28 +567,21 @@ const Settings: React.FC = () => {
           <div className="p-6">
             <div className="space-y-4 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-500 dark:text-gray-400">
-                  Version:
-                </span>
+                <span className="text-gray-500 dark:text-gray-400">Build:</span>
                 <span className="text-gray-900 dark:text-white">
-                  Foresight v1.0.0
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500 dark:text-gray-400">
-                  Last Updated:
-                </span>
-                <span className="text-gray-900 dark:text-white">
-                  December 23, 2025
+                  Foresight pilot · {__BUILD_DATE__}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500 dark:text-gray-400">
                   Support:
                 </span>
-                <span className="text-gray-900 dark:text-white">
+                <a
+                  href="mailto:contact-foresight@austintexas.gov"
+                  className="text-brand-blue hover:underline dark:text-blue-300"
+                >
                   contact-foresight@austintexas.gov
-                </span>
+                </a>
               </div>
             </div>
           </div>

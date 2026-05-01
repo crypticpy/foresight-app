@@ -394,7 +394,7 @@ const PIPELINE_STAGES = [
   {
     label: "AI Triage",
     icon: <Brain className="h-5 w-5" />,
-    desc: "GPT-4 analyzes each piece of content for relevance to Austin's strategic priorities, filtering out noise and off-topic material.",
+    desc: "GPT-5.4-mini analyzes each piece of content for relevance to Austin's strategic priorities, filtering out noise and off-topic material.",
   },
   {
     label: "Classification",

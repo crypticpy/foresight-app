@@ -1221,10 +1221,10 @@ function HybridSearchDemo() {
   );
 
   const exampleQueries = [
-    "autonomous vehicles",
-    "housing affordability",
-    "climate resilience",
-    "AI in government",
+    "Austin housing affordability",
+    "extreme heat resilience",
+    "I-35 corridor mobility",
+    "AI in city services",
   ];
 
   return (
@@ -1236,7 +1236,7 @@ function HybridSearchDemo() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Try a query — e.g. 'autonomous vehicles'"
+            placeholder="Try a query — e.g. 'Austin housing affordability'"
             className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface-deep text-gray-900 dark:text-white text-sm focus:outline-none focus:border-brand-blue"
           />
         </div>

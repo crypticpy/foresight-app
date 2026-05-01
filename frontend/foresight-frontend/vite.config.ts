@@ -1,23 +1,26 @@
 /// <reference types="vitest" />
-import path from "path"
-import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
-import sourceIdentifierPlugin from 'vite-plugin-source-identifier'
+import path from "path";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import sourceIdentifierPlugin from "vite-plugin-source-identifier";
 
-const isProd = process.env.BUILD_MODE === 'prod'
+const isProd = process.env.BUILD_MODE === "prod";
 export default defineConfig({
   plugins: [
     react(),
     sourceIdentifierPlugin({
       enabled: !isProd,
-      attributePrefix: 'data-matrix',
+      attributePrefix: "data-matrix",
       includeProps: true,
-    })
+    }),
   ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  define: {
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
   },
   build: {
     // Let Vite/Rollup handle code splitting automatically
@@ -25,14 +28,14 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
     coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      include: ['src/components/visualizations/**/*.tsx'],
-      exclude: ['src/components/visualizations/index.ts'],
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+      include: ["src/components/visualizations/**/*.tsx"],
+      exclude: ["src/components/visualizations/index.ts"],
     },
   },
-})
+});

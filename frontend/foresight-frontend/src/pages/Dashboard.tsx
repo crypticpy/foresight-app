@@ -406,7 +406,16 @@ const Dashboard: React.FC = () => {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
-          Welcome back, {user?.email?.split("@")[0]}
+          {(() => {
+            const username = user?.email?.split("@")[0];
+            if (!username) return "Welcome back";
+            const friendly = username
+              .split(/[._-]+/)
+              .filter(Boolean)
+              .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+              .join(" ");
+            return `Welcome back, ${friendly}`;
+          })()}
         </h1>
         <p className="mt-2 text-gray-600 dark:text-gray-400">
           Here's what's happening in your strategic intelligence feed.
@@ -683,7 +692,7 @@ const Dashboard: React.FC = () => {
               Follow signals to build your personalized intelligence feed.
               <br />
               <span className="text-gray-400">
-                Browse the Discover page and click the heart icon on any signal
+                Browse the Discover page and click the star icon on any signal
                 to start following it.
               </span>
             </p>

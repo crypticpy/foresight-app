@@ -386,8 +386,7 @@ const WorkstreamKanban: React.FC = () => {
 
   // Workstream scan state
   const [scanning, setScanning] = useState(false);
-  const [_scanStatus, setScanStatus] =
-    useState<WorkstreamScanStatusResponse | null>(null);
+  const [, setScanStatus] = useState<WorkstreamScanStatusResponse | null>(null);
 
   // Error state
   const [error, setError] = useState<string | null>(null);
