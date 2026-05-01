@@ -19,6 +19,7 @@ import {
   Sparkles,
   HelpCircle,
   Rss,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -175,6 +176,7 @@ const Header: React.FC = () => {
   const moreNavigation = [
     { name: "Analytics", href: "/analytics", icon: BarChart3 },
     { name: "Feeds", href: "/feeds", icon: Rss },
+    { name: "How It Works", href: "/how-it-works", icon: Wand2 },
     { name: "Methodology", href: "/methodology", icon: BookOpen },
   ];
 

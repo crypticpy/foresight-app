@@ -36,6 +36,7 @@ const WorkstreamKanban = lazy(() => import("./pages/WorkstreamKanban"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Analytics = lazy(() => import("./pages/AnalyticsV2"));
 const Methodology = lazy(() => import("./pages/Methodology"));
+const HowItWorks = lazy(() => import("./pages/HowItWorks"));
 const Signals = lazy(() => import("./pages/Signals"));
 const Patterns = lazy(() => import("./pages/Patterns"));
 const PatternDetail = lazy(() => import("./pages/PatternDetail"));
@@ -335,6 +336,15 @@ function App() {
                     <ProtectedRoute
                       element={<Methodology />}
                       loadingMessage="Loading methodology..."
+                    />
+                  }
+                />
+                <Route
+                  path="/how-it-works"
+                  element={
+                    <ProtectedRoute
+                      element={<HowItWorks />}
+                      loadingMessage="Loading the tour..."
                     />
                   }
                 />
