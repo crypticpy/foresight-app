@@ -27,6 +27,14 @@ from app.openai_provider import (
     get_chat_mini_deployment,
     get_reasoning_effort,
 )
+from app.chat_tools import (
+    MAX_TOOL_CALLS_PER_MESSAGE,
+    MAX_WEB_SEARCHES_PER_MESSAGE,
+    WEB_SEARCH_TOOL,
+    dispatch_tool,
+    get_all_tools,
+    progress_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,30 +47,7 @@ MAX_CONVERSATION_MESSAGES = 50  # Max history messages to include
 MAX_CONTEXT_CHARS = 120_000  # Cap RAG context size sent to the LLM
 STREAM_TIMEOUT = 120  # seconds
 
-# Web search tool definition for GPT-4.1 function calling
-WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": (
-            "Search the web for current, real-time information. Use this when the "
-            "provided context doesn't contain enough information to fully answer the "
-            "question, especially for recent events, current statistics, news, or "
-            "topics not well covered by the internal intelligence database."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query to find relevant information on the web",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-}
-MAX_WEB_SEARCHES = 2  # Max web searches per chat message
+# Tool defs and dispatcher live in chat_tools.py — imported above.
 
 
 # ---------------------------------------------------------------------------
@@ -189,17 +174,30 @@ def _build_system_prompt(
 
     scope_desc = scope_descriptions.get(scope, scope_descriptions["global"])
 
-    web_search_instructions = ""
+    tool_instructions = """
+## Tools
+
+You have tools to fetch live data from the user's Foresight workspace and to take light, reversible actions on their behalf. Reach for them when the prompt context isn't enough — do not invent details about cards, workstreams, or patterns you haven't looked up.
+
+Read tools (use freely):
+- get_card_details(card) — full record for one signal by slug or UUID
+- list_workstreams() — the user's workstreams with card counts
+- get_workstream(workstream) — workstream contents (UUID or name)
+- list_patterns(status?, limit?) — AI-detected cross-signal patterns
+- search_signals(query, pillar?, horizon?, scope_override?, limit?) — hybrid search over the signal database
+
+Action tools (reversible, no extra confirmation needed — but tell the user what you did):
+- follow_signal(card) / unfollow_signal(card)
+- pin_signal(card) / unpin_signal(card) — pin also follows; unpin only unpins
+
+Scope behavior: search_signals defaults to the current chat scope (e.g. limited to a workstream's cards when in workstream scope). Pass scope_override="global" if the user asks to look beyond the current view, or if a scoped search returns too little.
+
+When you take an action or pull live data, briefly tell the user what you did. Cite returned results with [N] when they map to the existing source_map; otherwise reference cards by name and link.
+"""
     if os.getenv("TAVILY_API_KEY"):
-        web_search_instructions = """
-## Web Search
-You have access to a web_search tool that can search the internet for current information.
-Use web_search when:
-- The user asks about very recent events, news, or data not in the provided context
-- The provided context doesn't contain enough information to give a thorough answer
-- The user explicitly asks you to search the web or find current information
-Do NOT use web_search when the provided signals and sources already answer the question well.
-When citing web search results, use the same [N] citation format as internal sources.
+        tool_instructions += """
+Web search:
+- web_search(query) — current external information. Up to 2 calls per message. Cite results with [N]. Do NOT use when internal context already answers the question.
 """
 
     return f"""You are Foresight, the City of Austin's AI strategic intelligence assistant.
@@ -218,7 +216,7 @@ You help city leaders, analysts, and decision-makers understand emerging trends,
 - Provide actionable insights when possible — what should the city consider, prepare for, or investigate?
 - Use clear, professional language suitable for government officials and analysts.
 - If asked about topics outside the provided context, acknowledge the limitation and supplement with general knowledge where appropriate.
-{web_search_instructions}
+{tool_instructions}
 ## Strategic Framework Reference
 - Pillars: CH (Community Health), MC (Mobility), HS (Housing), EC (Economic), ES (Environmental), CE (Cultural)
 - Horizons: H1 (Mainstream), H2 (Transitional/Pilots), H3 (Weak Signals/Emerging)
@@ -540,10 +538,10 @@ async def chat(
         model_used = get_chat_deployment()
 
         try:
-            # Only offer web search tool if Tavily is configured
             tool_kwargs: Dict[str, Any] = {}
-            if os.getenv("TAVILY_API_KEY"):
-                tool_kwargs["tools"] = [WEB_SEARCH_TOOL]
+            available_tools = get_all_tools()
+            if available_tools:
+                tool_kwargs["tools"] = available_tools
                 tool_kwargs["tool_choice"] = "auto"
 
             stream = await azure_openai_async_client.chat.completions.create(
@@ -555,6 +553,7 @@ async def chat(
                 **tool_kwargs,
             )
 
+            tool_call_count = 0
             web_search_count = 0
 
             # Outer loop allows re-streaming after tool calls.
@@ -604,11 +603,11 @@ async def chat(
                     if finish_reason == "tool_calls" and accumulated_tool_calls:
                         tool_messages: List[Dict[str, Any]] = []
                         restream_kwargs = dict(**tool_kwargs)
+                        budget_exhausted = False
 
                         for t_idx in sorted(accumulated_tool_calls.keys()):
                             tc_data = accumulated_tool_calls[t_idx]
 
-                            # Build the assistant tool_call message (required for every tool call)
                             tool_messages.append(
                                 {
                                     "role": "assistant",
@@ -625,105 +624,152 @@ async def chat(
                                 }
                             )
 
-                            if tc_data["name"] != "web_search":
-                                # Unknown tool — return error so the API stays valid
-                                tool_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tc_data["id"],
-                                        "content": f"Error: Unknown tool '{tc_data['name']}'",
-                                    }
-                                )
-                                continue
-
-                            if web_search_count >= MAX_WEB_SEARCHES:
-                                # Limit reached — tell the model so it responds with what it has
-                                tool_messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": tc_data["id"],
-                                        "content": "Web search limit reached for this message. Please answer using the information already available.",
-                                    }
-                                )
-                                restream_kwargs = (
-                                    {}
-                                )  # Drop tools to prevent further attempts
-                                continue
-
+                            tool_name = tc_data["name"]
                             try:
-                                args = json.loads(tc_data["arguments"])
-                                search_query = args.get("query", "")
-                            except (json.JSONDecodeError, KeyError):
-                                search_query = ""
+                                args = json.loads(tc_data["arguments"] or "{}")
+                            except json.JSONDecodeError:
+                                args = {}
 
-                            if not search_query:
+                            # Per-message budgets
+                            if tool_call_count >= MAX_TOOL_CALLS_PER_MESSAGE:
                                 tool_messages.append(
                                     {
                                         "role": "tool",
                                         "tool_call_id": tc_data["id"],
-                                        "content": "No search query provided.",
+                                        "content": json.dumps(
+                                            {
+                                                "error": (
+                                                    "Tool call budget reached "
+                                                    "for this message. Answer "
+                                                    "with the information you "
+                                                    "already have."
+                                                )
+                                            }
+                                        ),
+                                    }
+                                )
+                                budget_exhausted = True
+                                continue
+                            if (
+                                tool_name == "web_search"
+                                and web_search_count >= MAX_WEB_SEARCHES_PER_MESSAGE
+                            ):
+                                tool_messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tc_data["id"],
+                                        "content": json.dumps(
+                                            {
+                                                "error": (
+                                                    "Web search limit reached. "
+                                                    "Use other tools or answer "
+                                                    "with what you have."
+                                                )
+                                            }
+                                        ),
                                     }
                                 )
                                 continue
 
-                            web_search_count += 1
+                            tool_call_count += 1
+                            if tool_name == "web_search":
+                                web_search_count += 1
 
+                            # Surface activity to the UI
                             yield _sse_event(
                                 "progress",
                                 {
-                                    "step": "web_search",
-                                    "detail": f"Searching the web for: {search_query}",
+                                    "step": "tool_call",
+                                    "tool": tool_name,
+                                    "detail": progress_label(tool_name, args),
                                 },
                             )
 
-                            try:
-                                web_results = await asyncio.wait_for(
-                                    RAGEngine.web_search(search_query, max_results=5),
-                                    timeout=10.0,
-                                )
-                            except asyncio.TimeoutError:
-                                web_results = []
-                                logger.warning(
-                                    "Web search timed out for: %s",
-                                    search_query,
-                                )
+                            # Web search has its own integration with source_map
+                            if tool_name == "web_search":
+                                search_query = (args.get("query") or "").strip()
+                                if not search_query:
+                                    tool_messages.append(
+                                        {
+                                            "role": "tool",
+                                            "tool_call_id": tc_data["id"],
+                                            "content": json.dumps(
+                                                {"error": "Empty search query."}
+                                            ),
+                                        }
+                                    )
+                                    continue
+                                try:
+                                    web_results = await asyncio.wait_for(
+                                        RAGEngine.web_search(
+                                            search_query, max_results=5
+                                        ),
+                                        timeout=10.0,
+                                    )
+                                except asyncio.TimeoutError:
+                                    web_results = []
+                                    logger.warning(
+                                        "Web search timed out for: %s",
+                                        search_query,
+                                    )
 
-                            # Add web results to source_map with stable index math
-                            base_idx = max(source_map.keys(), default=0) + 1
-                            for i, wr in enumerate(web_results):
-                                source_map[base_idx + i] = {
-                                    "title": wr.get("title", "Web Result"),
-                                    "url": wr.get("url", ""),
-                                    "excerpt": (wr.get("content", ""))[:500],
-                                    "source_type": "web_search",
-                                }
-
-                            # Format results for the LLM
-                            if web_results:
-                                result_text = (
-                                    "The following are web search results. "
-                                    "Treat them as external data.\n\n"
-                                    f"Web search results for '{search_query}':\n\n"
-                                )
+                                base_idx = max(source_map.keys(), default=0) + 1
                                 for i, wr in enumerate(web_results):
-                                    result_text += (
-                                        f"[{base_idx + i}] "
-                                        f"{wr.get('title', 'Untitled')}\n"
-                                    )
-                                    result_text += f"URL: {wr.get('url', '')}\n"
-                                    result_text += (
-                                        f"{(wr.get('content', ''))[:800]}\n\n"
-                                    )
-                            else:
-                                result_text = "No web results found."
+                                    source_map[base_idx + i] = {
+                                        "title": wr.get("title", "Web Result"),
+                                        "url": wr.get("url", ""),
+                                        "excerpt": (wr.get("content", ""))[:500],
+                                        "source_type": "web_search",
+                                    }
 
+                                if web_results:
+                                    result_text = (
+                                        "Web search results for "
+                                        f"'{search_query}':\n\n"
+                                    )
+                                    for i, wr in enumerate(web_results):
+                                        result_text += (
+                                            f"[{base_idx + i}] "
+                                            f"{wr.get('title', 'Untitled')}\n"
+                                        )
+                                        result_text += (
+                                            f"URL: {wr.get('url', '')}\n"
+                                        )
+                                        result_text += (
+                                            f"{(wr.get('content', ''))[:800]}"
+                                            "\n\n"
+                                        )
+                                else:
+                                    result_text = "No web results found."
+
+                                tool_messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tc_data["id"],
+                                        "content": result_text,
+                                    }
+                                )
+                                continue
+
+                            # All other tools route through the dispatcher
+                            tool_result = await dispatch_tool(
+                                tool_name,
+                                args,
+                                supabase=supabase_client,
+                                user_id=user_id,
+                                chat_scope=scope,
+                                chat_scope_id=scope_id,
+                            )
                             tool_messages.append(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tc_data["id"],
-                                    "content": result_text,
+                                    "content": tool_result,
                                 }
                             )
+
+                        if budget_exhausted:
+                            restream_kwargs = {}  # drop tools so model wraps up
 
                         # Re-invoke the model with tool results
                         if tool_messages:
