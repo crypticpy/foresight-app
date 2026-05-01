@@ -65,6 +65,206 @@ function useReveal<T extends HTMLElement>(threshold = 0.15) {
 }
 
 // ---------------------------------------------------------------------------
+// Animated number counter — eases from 0 to target when in viewport
+// ---------------------------------------------------------------------------
+
+function CountUp({
+  value,
+  duration = 1400,
+  className,
+}: {
+  value: number | null | undefined;
+  duration?: number;
+  className?: string;
+}) {
+  const [display, setDisplay] = useState(0);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || value == null) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && !startedRef.current) {
+            startedRef.current = true;
+            const start = performance.now();
+            const from = 0;
+            const to = value;
+            const tick = (now: number) => {
+              const t = Math.min(1, (now - start) / duration);
+              // easeOutCubic
+              const eased = 1 - Math.pow(1 - t, 3);
+              setDisplay(Math.round(from + (to - from) * eased));
+              if (t < 1) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+            obs.disconnect();
+          }
+        }
+      },
+      { threshold: 0.3 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [value, duration]);
+
+  if (value == null) {
+    return (
+      <span ref={ref} className={className}>
+        <span className="text-gray-300 dark:text-gray-600">—</span>
+      </span>
+    );
+  }
+  return (
+    <span ref={ref} className={cn("tabular-nums", className)}>
+      {display.toLocaleString()}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top scroll progress bar
+// ---------------------------------------------------------------------------
+
+function ScrollProgressBar() {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    const onScroll = () => {
+      const h = document.documentElement;
+      const max = h.scrollHeight - h.clientHeight;
+      setPct(max > 0 ? (h.scrollTop / max) * 100 : 0);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return (
+    <div className="fixed top-16 left-0 right-0 h-0.5 z-40 pointer-events-none">
+      <div
+        className="h-full bg-gradient-to-r from-brand-blue to-brand-green transition-[width] duration-100"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sticky right-side anchor nav (highlights active section)
+// ---------------------------------------------------------------------------
+
+interface AnchorItem {
+  id: string;
+  label: string;
+}
+
+function StickyAnchorNav({ items }: { items: AnchorItem[] }) {
+  const [active, setActive] = useState(items[0]?.id ?? "");
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        // Pick the most-visible section in viewport
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible.length > 0 && visible[0]) {
+          setActive(visible[0].target.id);
+        }
+      },
+      { threshold: [0.2, 0.5, 0.8], rootMargin: "-80px 0px -40% 0px" },
+    );
+    items.forEach((it) => {
+      const el = document.getElementById(it.id);
+      if (el) obs.observe(el);
+    });
+    return () => obs.disconnect();
+  }, [items]);
+
+  return (
+    <nav
+      aria-label="Section navigation"
+      className="hidden xl:flex flex-col gap-2 fixed right-6 top-1/2 -translate-y-1/2 z-30"
+    >
+      {items.map((it) => (
+        <a
+          key={it.id}
+          href={`#${it.id}`}
+          className="group flex items-center gap-3 justify-end"
+          aria-label={it.label}
+        >
+          <span
+            className={cn(
+              "text-xs font-semibold transition-all duration-200",
+              active === it.id
+                ? "text-brand-blue dark:text-white opacity-100 translate-x-0"
+                : "text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0",
+            )}
+          >
+            {it.label}
+          </span>
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full transition-all duration-200",
+              active === it.id
+                ? "bg-brand-blue scale-150"
+                : "bg-gray-300 dark:bg-gray-600 group-hover:bg-brand-blue",
+            )}
+          />
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Live API speed ping — small "API: 47ms" pill
+// ---------------------------------------------------------------------------
+
+function SpeedMetric() {
+  const [ms, setMs] = useState<number | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function ping() {
+      try {
+        const start = performance.now();
+        const res = await fetch(`${API_BASE_URL}/api/v1/health`, {
+          method: "GET",
+        });
+        const elapsed = Math.round(performance.now() - start);
+        if (!cancelled) {
+          setErr(!res.ok);
+          setMs(elapsed);
+        }
+      } catch {
+        if (!cancelled) setErr(true);
+      }
+    }
+    ping();
+    const id = setInterval(ping, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded-full bg-white/10 backdrop-blur border border-white/20 text-white/90">
+      <span
+        className={cn(
+          "h-1.5 w-1.5 rounded-full animate-pulse",
+          err ? "bg-amber-400" : "bg-brand-green",
+        )}
+      />
+      API: {ms == null ? "…" : err ? "offline" : `${ms}ms`}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Section wrapper with scroll-triggered fade/slide
 // ---------------------------------------------------------------------------
 
@@ -203,21 +403,25 @@ function StatStrip() {
       label: "Signal cards indexed",
       value: stats?.total_cards,
       icon: Radio,
+      to: "/signals",
     },
     {
       label: "Active this month",
       value: stats?.cards_this_month,
       icon: TrendingUp,
+      to: "/discover",
     },
     {
       label: "New this week",
       value: stats?.cards_this_week,
       icon: Sparkles,
+      to: "/discover/queue",
     },
     {
       label: "Patterns detected",
       value: patternCount,
       icon: Brain,
+      to: "/patterns",
     },
   ];
 
@@ -227,22 +431,23 @@ function StatStrip() {
         {items.map((it) => {
           const Icon = it.icon;
           return (
-            <div
+            <Link
               key={it.label}
-              className="flex flex-col items-start p-3 rounded-xl bg-gray-50 dark:bg-dark-surface-deep"
+              to={it.to}
+              className="group flex flex-col items-start p-3 rounded-xl bg-gray-50 dark:bg-dark-surface-deep hover:bg-brand-blue/5 dark:hover:bg-brand-blue/10 transition-colors"
             >
-              <Icon className="h-4 w-4 text-brand-blue mb-2" />
-              <div className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white tabular-nums">
-                {it.value === null || it.value === undefined ? (
-                  <span className="text-gray-300 dark:text-gray-600">—</span>
-                ) : (
-                  it.value.toLocaleString()
-                )}
+              <div className="flex items-center justify-between w-full">
+                <Icon className="h-4 w-4 text-brand-blue mb-2" />
+                <ArrowRight className="h-3.5 w-3.5 text-gray-300 dark:text-gray-600 group-hover:text-brand-blue group-hover:translate-x-0.5 transition-all" />
               </div>
+              <CountUp
+                value={it.value}
+                className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white"
+              />
               <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                 {it.label}
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>
@@ -263,26 +468,67 @@ function PipelineDiagram() {
     { icon: Gauge, label: "Score" },
     { icon: Radio, label: "Card" },
   ];
+  const [active, setActive] = useState(0);
+  const { ref, visible } = useReveal<HTMLDivElement>(0.25);
+
+  useEffect(() => {
+    if (!visible) return;
+    const id = setInterval(() => {
+      setActive((a) => (a + 1) % stages.length);
+    }, 1400);
+    return () => clearInterval(id);
+  }, [visible, stages.length]);
+
   return (
-    <div className="relative bg-gradient-to-br from-brand-blue/5 via-transparent to-brand-green/5 dark:from-brand-blue/10 dark:to-brand-green/10 rounded-2xl border border-gray-200 dark:border-gray-700 p-6 md:p-10 overflow-hidden">
+    <div
+      ref={ref}
+      className="relative bg-gradient-to-br from-brand-blue/5 via-transparent to-brand-green/5 dark:from-brand-blue/10 dark:to-brand-green/10 rounded-2xl border border-gray-200 dark:border-gray-700 p-6 md:p-10 overflow-hidden"
+    >
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 md:gap-2 relative z-10">
         {stages.map((s, i) => {
           const Icon = s.icon;
+          const isActive = i === active;
           return (
             <div
               key={s.label}
               className="flex flex-col items-center text-center"
             >
               <div
-                className="relative h-14 w-14 md:h-16 md:w-16 rounded-2xl flex items-center justify-center bg-white dark:bg-dark-surface border border-gray-200 dark:border-gray-700 shadow-sm"
-                style={{ animationDelay: `${i * 200}ms` }}
+                className={cn(
+                  "relative h-14 w-14 md:h-16 md:w-16 rounded-2xl flex items-center justify-center border shadow-sm transition-all duration-500",
+                  isActive
+                    ? "bg-brand-blue border-brand-blue scale-110 shadow-lg shadow-brand-blue/30"
+                    : "bg-white dark:bg-dark-surface border-gray-200 dark:border-gray-700",
+                )}
               >
-                <Icon className="h-6 w-6 text-brand-blue" />
-                <span className="absolute -top-2 -left-2 h-5 w-5 rounded-full bg-brand-blue text-white text-[10px] font-bold flex items-center justify-center">
+                {isActive && (
+                  <span className="absolute inset-0 rounded-2xl ring-4 ring-brand-blue/30 animate-ping" />
+                )}
+                <Icon
+                  className={cn(
+                    "h-6 w-6 transition-colors duration-300",
+                    isActive ? "text-white" : "text-brand-blue",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "absolute -top-2 -left-2 h-5 w-5 rounded-full text-[10px] font-bold flex items-center justify-center transition-colors duration-300",
+                    isActive
+                      ? "bg-white text-brand-blue"
+                      : "bg-brand-blue text-white",
+                  )}
+                >
                   {i + 1}
                 </span>
               </div>
-              <div className="mt-2 text-xs font-semibold text-gray-700 dark:text-gray-200">
+              <div
+                className={cn(
+                  "mt-2 text-xs font-semibold transition-colors duration-300",
+                  isActive
+                    ? "text-brand-blue dark:text-white"
+                    : "text-gray-700 dark:text-gray-200",
+                )}
+              >
                 {s.label}
               </div>
               {i < stages.length - 1 && (
@@ -332,58 +578,135 @@ function PipelineDiagram() {
 // ---------------------------------------------------------------------------
 
 function CardAnatomy() {
+  type Part =
+    | "title"
+    | "pillar"
+    | "stage"
+    | "horizon"
+    | "scores"
+    | "summary"
+    | null;
+  const [hovered, setHovered] = useState<Part>(null);
+
   const Anno = ({
     label,
     desc,
+    part,
     side = "left" as "left" | "right",
   }: {
     label: string;
     desc: string;
+    part: Exclude<Part, null>;
     side?: "left" | "right";
-  }) => (
-    <div
-      className={cn(
-        "flex items-center gap-2 text-xs",
-        side === "right" && "flex-row-reverse text-right",
-      )}
-    >
-      <div className="h-px w-6 bg-brand-blue/40" />
-      <div>
-        <div className="font-semibold text-gray-900 dark:text-white">
-          {label}
+  }) => {
+    const isActive = hovered === part;
+    return (
+      <div
+        onMouseEnter={() => setHovered(part)}
+        onMouseLeave={() => setHovered(null)}
+        className={cn(
+          "flex items-center gap-2 text-xs cursor-pointer transition-all duration-200",
+          side === "right" && "flex-row-reverse text-right",
+          isActive ? "scale-[1.02]" : "opacity-90",
+        )}
+      >
+        <div
+          className={cn(
+            "h-px transition-all duration-200",
+            isActive ? "w-12 bg-brand-blue" : "w-6 bg-brand-blue/40",
+          )}
+        />
+        <div>
+          <div
+            className={cn(
+              "font-semibold transition-colors",
+              isActive
+                ? "text-brand-blue dark:text-brand-blue"
+                : "text-gray-900 dark:text-white",
+            )}
+          >
+            {label}
+          </div>
+          <div className="text-gray-500 dark:text-gray-400">{desc}</div>
         </div>
-        <div className="text-gray-500 dark:text-gray-400">{desc}</div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const ring = (part: Exclude<Part, null>) =>
+    hovered === part
+      ? "ring-2 ring-brand-blue ring-offset-2 ring-offset-white dark:ring-offset-dark-surface rounded"
+      : "";
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
       <div className="hidden lg:flex flex-col gap-6">
-        <Anno label="Title + slug" desc="Stable URL across renames" />
-        <Anno label="Strategic pillar" desc="One of six city priorities" />
-        <Anno label="Maturity stage" desc="Concept → Mature → Declining" />
+        <Anno
+          label="Title + slug"
+          desc="Stable URL across renames"
+          part="title"
+        />
+        <Anno
+          label="Strategic pillar"
+          desc="One of six city priorities"
+          part="pillar"
+        />
+        <Anno
+          label="Maturity stage"
+          desc="Concept → Mature → Declining"
+          part="stage"
+        />
       </div>
-      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface shadow-sm p-5">
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface shadow-sm p-5 transition-shadow hover:shadow-md">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-blue/10 text-brand-blue">
+          <span
+            className={cn(
+              "text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-blue/10 text-brand-blue transition-all",
+              ring("pillar"),
+            )}
+          >
             Mobility
           </span>
-          <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-green/10 text-brand-green">
+          <span
+            className={cn(
+              "text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-green/10 text-brand-green transition-all",
+              ring("stage"),
+            )}
+          >
             Pilot
           </span>
-          <span className="text-[10px] uppercase tracking-wider text-gray-500">
+          <span
+            className={cn(
+              "text-[10px] uppercase tracking-wider text-gray-500 px-1 transition-all",
+              ring("horizon"),
+            )}
+          >
             2y horizon
           </span>
         </div>
-        <h3 className="font-bold text-gray-900 dark:text-white mb-1">
+        <h3
+          className={cn(
+            "font-bold text-gray-900 dark:text-white mb-1 transition-all",
+            ring("title"),
+          )}
+        >
           Autonomous shuttle pilots accelerate
         </h3>
-        <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
+        <p
+          className={cn(
+            "text-xs text-gray-600 dark:text-gray-400 mb-4 transition-all",
+            ring("summary"),
+          )}
+        >
           Multiple municipalities are graduating low-speed AV shuttles from
           closed-loop demos to mixed-traffic pilots…
         </p>
-        <div className="grid grid-cols-3 gap-2 text-[10px]">
+        <div
+          className={cn(
+            "grid grid-cols-3 gap-2 text-[10px] transition-all p-1",
+            ring("scores"),
+          )}
+        >
           {[
             { label: "Impact", val: 84 },
             { label: "Relevance", val: 91 },
@@ -413,19 +736,26 @@ function CardAnatomy() {
         <Anno
           label="Six-factor score"
           desc="Impact, Relevance, Velocity, Novelty, Opportunity, Risk"
+          part="scores"
           side="right"
         />
         <Anno
           label="Time horizon"
           desc="When this matters: now, 1y, 2y, 5y+"
+          part="horizon"
           side="right"
         />
         <Anno
-          label="Sources roll up"
+          label="Summary + sources"
           desc="Articles dedup into a single card"
+          part="summary"
           side="right"
         />
       </div>
+      <p className="lg:hidden text-xs text-gray-500 dark:text-gray-400 col-span-1">
+        On a wider screen, hover the labels to see how each part of the card
+        maps back to the underlying schema.
+      </p>
     </div>
   );
 }
@@ -826,18 +1156,28 @@ function HybridSearchDemo() {
 // ---------------------------------------------------------------------------
 
 function PatternIllustration() {
+  const { ref, visible } = useReveal<HTMLDivElement>(0.3);
   return (
-    <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface p-6 md:p-8">
+    <div
+      ref={ref}
+      className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface p-6 md:p-8"
+    >
       <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-center">
         <div className="md:col-span-3 space-y-2">
           {[
             "Rural EV charging gap",
             "Battery recycling startup launches",
             "TxDOT grant program for fleets",
-          ].map((t) => (
+          ].map((t, i) => (
             <div
               key={t}
-              className="rounded-lg p-3 bg-gray-50 dark:bg-dark-surface-deep border border-gray-200 dark:border-gray-700 text-xs"
+              className={cn(
+                "rounded-lg p-3 bg-gray-50 dark:bg-dark-surface-deep border border-gray-200 dark:border-gray-700 text-xs transition-all duration-700 ease-out",
+                visible
+                  ? "opacity-100 translate-x-0"
+                  : "opacity-0 -translate-x-6",
+              )}
+              style={{ transitionDelay: `${i * 150}ms` }}
             >
               <div className="text-[10px] uppercase tracking-wider text-brand-blue font-semibold mb-0.5">
                 Weak signal
@@ -849,7 +1189,13 @@ function PatternIllustration() {
           ))}
         </div>
         <div className="md:col-span-1 flex items-center justify-center">
-          <div className="hidden md:flex flex-col items-center text-brand-blue">
+          <div
+            className={cn(
+              "hidden md:flex flex-col items-center text-brand-blue transition-all duration-700",
+              visible ? "opacity-100 scale-100" : "opacity-0 scale-50",
+            )}
+            style={{ transitionDelay: "500ms" }}
+          >
             <Network className="h-8 w-8 animate-pulse" />
             <span className="text-[10px] mt-1 uppercase tracking-wider">
               Cluster
@@ -859,7 +1205,15 @@ function PatternIllustration() {
             <ArrowRight className="h-6 w-6 rotate-90" />
           </div>
         </div>
-        <div className="md:col-span-3 rounded-xl p-4 bg-gradient-to-br from-brand-blue/10 to-brand-green/10 border border-brand-blue/20">
+        <div
+          className={cn(
+            "md:col-span-3 rounded-xl p-4 bg-gradient-to-br from-brand-blue/10 to-brand-green/10 border border-brand-blue/20 transition-all duration-700 ease-out",
+            visible
+              ? "opacity-100 translate-x-0 scale-100"
+              : "opacity-0 translate-x-6 scale-95",
+          )}
+          style={{ transitionDelay: "700ms" }}
+        >
           <div className="flex items-center gap-2 mb-1">
             <Brain className="h-4 w-4 text-brand-blue" />
             <span className="text-[10px] font-bold uppercase tracking-wider text-brand-blue">
@@ -1104,9 +1458,57 @@ function WorkstreamIllustration() {
 // Main page
 // ---------------------------------------------------------------------------
 
+const ANCHOR_NAV: AnchorItem[] = [
+  { id: "discovery", label: "Discovery" },
+  { id: "cards", label: "Cards" },
+  { id: "similarity", label: "Similarity" },
+  { id: "search", label: "Hybrid search" },
+  { id: "patterns", label: "Patterns" },
+  { id: "chat", label: "Chat agent" },
+  { id: "briefs", label: "Briefs" },
+  { id: "workstreams", label: "Workstreams" },
+];
+
+function WhatWeDontClaim() {
+  const items = [
+    "Not a forecasting model. Foresight surfaces and structures signals — humans decide what they mean.",
+    "Not real-time below ~5 minutes. The discovery worker is on a steady cadence, not a millisecond firehose.",
+    "Deduplication is conservative. Two cards on near-identical topics can occasionally coexist; analysts can merge them.",
+    "Citations come from public sources. We don't ingest paywalled content unless the city has a license.",
+    "The chat agent's writes are reversible (follow / pin / unpin) — it never deletes, never publishes externally.",
+  ];
+  return (
+    <section className="py-16 md:py-20 bg-gray-50 dark:bg-dark-surface-deep border-t border-gray-200 dark:border-gray-700">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            Honest limits
+          </span>
+        </div>
+        <h2 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-6">
+          What Foresight isn't.
+        </h2>
+        <ul className="space-y-3">
+          {items.map((it) => (
+            <li
+              key={it}
+              className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-300 leading-relaxed"
+            >
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gray-400 dark:bg-gray-500 shrink-0" />
+              <span>{it}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 export default function HowItWorks() {
   return (
     <div className="bg-brand-faded-white dark:bg-brand-dark-blue min-h-screen">
+      <ScrollProgressBar />
+      <StickyAnchorNav items={ANCHOR_NAV} />
       {/* Hero */}
       <header className="relative overflow-hidden bg-gradient-to-br from-brand-blue via-brand-blue/95 to-brand-green text-white">
         <div className="absolute inset-0 opacity-20">
@@ -1154,6 +1556,7 @@ export default function HowItWorks() {
             <span className="text-xs font-semibold uppercase tracking-wider text-white/80">
               Behind the scenes
             </span>
+            <SpeedMetric />
           </div>
           <h1 className="text-4xl md:text-6xl font-bold mb-4 max-w-4xl leading-tight">
             How Foresight finds tomorrow's questions today.
@@ -1272,6 +1675,8 @@ export default function HowItWorks() {
       >
         <WorkstreamIllustration />
       </Section>
+
+      <WhatWeDontClaim />
 
       {/* CTA */}
       <section className="py-20 md:py-28 bg-gradient-to-br from-brand-blue via-brand-blue/90 to-brand-green text-white">
