@@ -37,6 +37,8 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Analytics = lazy(() => import("./pages/AnalyticsV2"));
 const Methodology = lazy(() => import("./pages/Methodology"));
 const Signals = lazy(() => import("./pages/Signals"));
+const Patterns = lazy(() => import("./pages/Patterns"));
+const PatternDetail = lazy(() => import("./pages/PatternDetail"));
 const AskForesight = lazy(() => import("./pages/AskForesight"));
 const Feeds = lazy(() => import("./pages/Feeds"));
 
@@ -222,6 +224,26 @@ function App() {
                     <ProtectedRoute
                       element={<AskForesight />}
                       loadingMessage="Loading Ask Foresight..."
+                    />
+                  }
+                />
+
+                {/* AI-detected patterns */}
+                <Route
+                  path="/patterns"
+                  element={
+                    <ProtectedRoute
+                      element={<Patterns />}
+                      loadingMessage="Loading patterns..."
+                    />
+                  }
+                />
+                <Route
+                  path="/patterns/:id"
+                  element={
+                    <ProtectedRoute
+                      element={<PatternDetail />}
+                      loadingMessage="Loading pattern..."
                     />
                   }
                 />

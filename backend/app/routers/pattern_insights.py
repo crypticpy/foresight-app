@@ -58,7 +58,11 @@ async def get_pattern_insight_by_id(
         if related_ids := insight.get("related_card_ids", []):
             cards_result = (
                 supabase.table("cards")
-                .select("id, name, summary, pillar_id, stage_id, horizon")
+                .select(
+                    "id, name, slug, summary, pillar_id, stage_id, horizon, "
+                    "novelty_score, maturity_score, impact_score, relevance_score, "
+                    "velocity_score, signal_quality_score, updated_at"
+                )
                 .in_("id", related_ids)
                 .execute()
             )

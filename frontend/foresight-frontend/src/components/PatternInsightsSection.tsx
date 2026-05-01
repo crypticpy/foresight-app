@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { PillarBadge } from "./PillarBadge";
@@ -186,7 +186,7 @@ export function PatternInsightsSection({ className }: PatternInsightsProps) {
           </h2>
         </div>
         <Link
-          to="/ask?q=What cross-signal patterns have been detected?"
+          to="/patterns"
           className="text-sm text-brand-blue hover:underline flex items-center gap-1"
         >
           View All
@@ -240,7 +240,7 @@ export function PatternInsightsSection({ className }: PatternInsightsProps) {
                   {urgency.label}
                 </span>
                 <Link
-                  to={`/ask?q=${encodeURIComponent(insight.pattern_title)}`}
+                  to={`/patterns/${insight.id}`}
                   className="text-xs text-brand-blue hover:underline flex items-center gap-0.5"
                 >
                   Explore
