@@ -317,9 +317,9 @@ function PipelineDiagram() {
             Classify &amp; Score
           </div>
           <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-            GPT-4 assigns pillar, maturity stage, and time horizon, then scores
-            on six independent factors so analysts can sort by what matters
-            today.
+            GPT-5.4-mini assigns pillar, maturity stage, and time horizon, then
+            scores on six independent factors so analysts can sort by what
+            matters today.
           </p>
         </div>
       </div>
@@ -569,34 +569,94 @@ function HybridSearchDemo() {
       if (session?.access_token) {
         headers.Authorization = `Bearer ${session.access_token}`;
       }
-      const body = (vector: boolean) =>
+      const STOPWORDS = new Set([
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "into",
+        "about",
+        "this",
+        "that",
+        "are",
+        "was",
+        "were",
+        "but",
+        "not",
+        "you",
+        "your",
+        "have",
+        "has",
+        "will",
+        "can",
+        "all",
+        "any",
+        "how",
+        "what",
+        "when",
+        "where",
+        "why",
+        "who",
+      ]);
+      const tokens = q
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+      // Backend's text mode does `ilike %query%` against name/summary, so a
+      // multi-word phrase rarely matches. Tokenize and run one search per
+      // significant word, then dedupe & rank by hit-count for the demo.
+      const keywordTokens = tokens.length > 0 ? tokens : [q];
+      const body = (queryStr: string, vector: boolean) =>
         JSON.stringify({
-          query: q,
+          query: queryStr,
           use_vector_search: vector,
           limit: 5,
           offset: 0,
         });
-      const [textRes, vecRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/v1/cards/search`, {
-          method: "POST",
-          headers,
-          body: body(false),
-        }),
-        fetch(`${API_BASE_URL}/api/v1/cards/search`, {
-          method: "POST",
-          headers,
-          body: body(true),
-        }),
-      ]);
       const parse = async (r: Response): Promise<SearchHit[]> => {
         if (!r.ok) return [];
         const data = await r.json();
         const arr = Array.isArray(data) ? data : data?.results;
-        return Array.isArray(arr) ? arr.slice(0, 5) : [];
+        return Array.isArray(arr) ? arr.slice(0, 10) : [];
       };
-      const [t, v] = await Promise.all([parse(textRes), parse(vecRes)]);
+      const keywordPromise = Promise.all(
+        keywordTokens.map((tok) =>
+          fetch(`${API_BASE_URL}/api/v1/cards/search`, {
+            method: "POST",
+            headers,
+            body: body(tok, false),
+          }).then(parse),
+        ),
+      ).then((batches) => {
+        const counts: Record<
+          string,
+          { hit: SearchHit; count: number; firstRank: number }
+        > = {};
+        batches.forEach((batch) => {
+          batch.forEach((h, i) => {
+            const existing = counts[h.id];
+            if (existing) {
+              existing.count += 1;
+              existing.firstRank = Math.min(existing.firstRank, i);
+            } else {
+              counts[h.id] = { hit: h, count: 1, firstRank: i };
+            }
+          });
+        });
+        return Object.values(counts)
+          .sort((a, b) => b.count - a.count || a.firstRank - b.firstRank)
+          .slice(0, 5)
+          .map((x) => x.hit);
+      });
+      const vectorPromise = fetch(`${API_BASE_URL}/api/v1/cards/search`, {
+        method: "POST",
+        headers,
+        body: body(q, true),
+      }).then(parse);
+      const [t, v] = await Promise.all([keywordPromise, vectorPromise]);
       setTextHits(t);
-      setVectorHits(v);
+      setVectorHits(v.slice(0, 5));
       if (!t.length && !v.length) setError("No results — try a broader query.");
     } catch {
       setError("Search failed. Check your connection and try again.");
@@ -1131,7 +1191,7 @@ export default function HowItWorks() {
         title="The discovery pipeline runs continuously."
         intro="Foresight pulls in thousands of new items every week from RSS feeds, NewsAPI, and curated municipal sources. Every item is triaged, embedded, classified, and scored — automatically — so analysts never start from a blank page."
         icon={<Compass className="h-4 w-4" />}
-        techNote="Stack: Python worker process, Azure OpenAI embeddings (text-embedding-ada-002, 1536 dims), GPT-4 for classification & scoring, pgvector for similarity, Supabase Postgres for storage. Triage drops ~70% of items before any LLM cost."
+        techNote="Stack: Python worker process, OpenAI embeddings (text-embedding-ada-002, 1536 dims), GPT-5.4-mini for classification & scoring, pgvector for similarity, Supabase Postgres for storage. Triage drops ~70% of items before any LLM cost."
       >
         <PipelineDiagram />
       </Section>
@@ -1165,7 +1225,7 @@ export default function HowItWorks() {
         intro="Pure keyword search misses paraphrases. Pure semantic search drifts off-topic. Foresight runs both in parallel and fuses them with Reciprocal Rank Fusion — then an LLM reranker picks the final order. Try a query and watch all three rankings appear side by side."
         icon={<Search className="h-4 w-4" />}
         alternate
-        techNote="Postgres tsvector full-text search + pgvector cosine similarity. RRF score: Σ 1/(k + rank), k=60. Top fused results are then reranked by GPT-4.1-mini against the user's intent before being passed to the answering model."
+        techNote="Postgres tsvector full-text search + pgvector cosine similarity. RRF score: Σ 1/(k + rank), k=60. Top fused results are then reranked by GPT-5.4-mini against the user's intent before being passed to GPT-5.5 for synthesis."
       >
         <HybridSearchDemo />
       </Section>
@@ -1174,7 +1234,7 @@ export default function HowItWorks() {
         id="patterns"
         eyebrow="Step 5"
         title="Patterns: what weak signals add up to."
-        intro="The most valuable insights aren't in any single article. They're in the convergence of three or four. A scheduled job clusters cards across pillars, asks GPT-4 to find the cross-cutting story, and writes it back as a pattern card with an opportunity statement."
+        intro="The most valuable insights aren't in any single article. They're in the convergence of three or four. A scheduled job clusters cards across pillars, asks GPT-5.5 to find the cross-cutting story, and writes it back as a pattern card with an opportunity statement."
         icon={<Brain className="h-4 w-4" />}
       >
         <PatternIllustration />
@@ -1184,7 +1244,7 @@ export default function HowItWorks() {
         id="chat"
         eyebrow="Step 6"
         title="The chat agent has tools — and uses them."
-        intro="Ask Foresight isn't a wrapper around a chatbot. It's a tool-using agent backed by GPT-4.1 with hybrid-search retrieval, citations from the library, and a curated set of read and write tools. It defaults to your current scope (signal, workstream, or global) but can broaden when you ask."
+        intro="Ask Foresight isn't a wrapper around a chatbot. It's a tool-using agent backed by GPT-5.5 (via the OpenAI Responses API) with hybrid-search retrieval, citations from the library, and a curated set of read and write tools. It defaults to your current scope (signal, workstream, or global) but can broaden when you ask."
         icon={<MessageSquare className="h-4 w-4" />}
         alternate
         techNote="System prompt enforces citation discipline; per-message budget caps tool calls (8) and web searches (2) to keep latency in check. Write tools (follow / pin) are reversible by design — the agent never takes destructive actions."
