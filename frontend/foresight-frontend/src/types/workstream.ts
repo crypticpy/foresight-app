@@ -31,9 +31,26 @@ export interface Workstream {
   top25_priority_ids?: string[];
   budget_relevance?: string[];
   purpose_statement?: string | null;
-  owner_type?: "user" | "org";
+  owner_type?: WorkstreamOwnerType;
+  role?: WorkstreamRole;
   created_at: string;
 }
+
+export const WORKSTREAM_OWNER_TYPE = {
+  USER: "user",
+  ORG: "org",
+} as const;
+
+export type WorkstreamOwnerType =
+  (typeof WORKSTREAM_OWNER_TYPE)[keyof typeof WORKSTREAM_OWNER_TYPE];
+
+export type WorkstreamRole =
+  | "owner"
+  | "editor"
+  | "commenter"
+  | "viewer"
+  | "org_viewer"
+  | "admin";
 
 export interface WorkstreamFormProps {
   /** If provided, form operates in EDIT mode; otherwise CREATE mode */
