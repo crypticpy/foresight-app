@@ -55,6 +55,8 @@ export interface KanbanColumnProps {
   cards: WorkstreamCard[];
   /** The parent workstream ID */
   workstreamId?: string;
+  /** When true, cards in this column do not support drag (read-only board). */
+  readOnly?: boolean;
   /** Optional callback when a card is clicked */
   onCardClick?: OnCardClickCallback;
   /** Optional card action callbacks */
@@ -171,6 +173,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   description,
   cards,
   workstreamId,
+  readOnly = false,
   onCardClick,
   cardActions,
   onBulkExport,
@@ -331,6 +334,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                   card={card}
                   workstreamId={workstreamId}
                   columnId={id}
+                  readOnly={readOnly}
                   onCardClick={onCardClick}
                   cardActions={cardActions}
                 />

@@ -24,6 +24,7 @@ import {
   Presentation,
   ChevronDown,
   MessageSquare,
+  Lock,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -35,6 +36,7 @@ import { StageBadge } from "../components/StageBadge";
 import { Top25Badge } from "../components/Top25Badge";
 import { WorkstreamForm } from "../components/WorkstreamForm";
 import { WorkstreamChatPanel } from "../components/WorkstreamChatPanel";
+import { FrameworkBadge } from "../components/FrameworkBadge";
 
 // ============================================================================
 // Types
@@ -53,6 +55,8 @@ interface Workstream {
   auto_add: boolean;
   created_at: string;
   user_id: string;
+  framework_code?: string | null;
+  owner_type?: "user" | "org";
 }
 
 interface Card {
@@ -645,6 +649,10 @@ const WorkstreamFeed: React.FC = () => {
     );
   }
 
+  // Org-owned workstreams are read-only for non-admin users; suppress edit
+  // affordances rather than letting them 403.
+  const isOrgOwned = workstream.owner_type === "org";
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header Section */}
@@ -661,11 +669,27 @@ const WorkstreamFeed: React.FC = () => {
         {/* Title and actions */}
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
                 {workstream.name}
               </h1>
               <StatusBadge isActive={workstream.is_active} />
+              {workstream.framework_code && (
+                <FrameworkBadge
+                  code={workstream.framework_code}
+                  size="sm"
+                  disableTooltip
+                />
+              )}
+              {isOrgOwned && (
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                  title="Organization-wide workstream — managed by admins. View only."
+                >
+                  <Lock className="h-3 w-3" />
+                  View only
+                </span>
+              )}
             </div>
             {workstream.description && (
               <p className="text-gray-600 dark:text-gray-400 max-w-3xl">
@@ -766,13 +790,15 @@ const WorkstreamFeed: React.FC = () => {
               <span className="hidden sm:inline">Chat</span>
             </button>
 
-            <button
-              onClick={() => setShowEditModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
-            >
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Filters
-            </button>
+            {!isOrgOwned && (
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Filters
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -866,17 +892,20 @@ const WorkstreamFeed: React.FC = () => {
           </h3>
           <p className="mt-1 text-gray-500 dark:text-gray-400 max-w-md mx-auto">
             No intelligence signals currently match this workstream's filters.
-            Try adjusting the filter criteria to broaden your results.
+            {!isOrgOwned &&
+              " Try adjusting the filter criteria to broaden your results."}
           </p>
-          <div className="mt-6">
-            <button
-              onClick={() => setShowEditModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
-            >
-              <Edit className="h-4 w-4 mr-2" />
-              Adjust Filters
-            </button>
-          </div>
+          {!isOrgOwned && (
+            <div className="mt-6">
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Adjust Filters
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <>

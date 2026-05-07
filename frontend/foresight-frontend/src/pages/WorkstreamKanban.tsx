@@ -37,6 +37,7 @@ import {
   X,
   Radar,
   MessageSquare,
+  Lock,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -80,6 +81,7 @@ import { HorizonBadge } from "../components/HorizonBadge";
 import { StageBadge } from "../components/StageBadge";
 import { WorkstreamForm, type Workstream } from "../components/WorkstreamForm";
 import { WorkstreamChatPanel } from "../components/WorkstreamChatPanel";
+import { FrameworkBadge } from "../components/FrameworkBadge";
 import { useWorkstreamScanPolling } from "../hooks/useWorkstreamScanPolling";
 
 // ============================================================================
@@ -1581,6 +1583,11 @@ const WorkstreamKanban: React.FC = () => {
   // Main Render
   // ============================================================================
 
+  // Org-owned workstreams are read-only for non-admin users. The backend
+  // rejects mutations with 403, so suppress the corresponding UI affordances
+  // rather than letting them error.
+  const isOrgOwned = workstream.owner_type === "org";
+
   return (
     <div className="min-h-screen dark:bg-brand-dark-blue">
       <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1603,6 +1610,22 @@ const WorkstreamKanban: React.FC = () => {
                   {workstream.name}
                 </h1>
                 <StatusBadge isActive={workstream.is_active} />
+                {workstream.framework_code && (
+                  <FrameworkBadge
+                    code={workstream.framework_code}
+                    size="sm"
+                    disableTooltip
+                  />
+                )}
+                {isOrgOwned && (
+                  <span
+                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                    title="Organization-wide workstream — managed by admins. View only."
+                  >
+                    <Lock className="h-3 w-3" />
+                    View only
+                  </span>
+                )}
               </div>
               {workstream.description && (
                 <p className="text-gray-600 dark:text-gray-400 max-w-3xl">
@@ -1613,41 +1636,45 @@ const WorkstreamKanban: React.FC = () => {
 
             {/* Action Buttons */}
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Scan for Updates Button */}
-              <button
-                onClick={handleStartScan}
-                disabled={scanning}
-                className={cn(
-                  "inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors",
-                  scanning && "opacity-75 cursor-not-allowed",
-                )}
-                title="Scan web sources for new content matching this workstream (2/day limit)"
-              >
-                {scanning ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Radar className="h-4 w-4 mr-2" />
-                )}
-                {scanning ? "Scanning..." : "Scan for Updates"}
-              </button>
+              {/* Scan for Updates Button (hidden on org-owned workstreams) */}
+              {!isOrgOwned && (
+                <button
+                  onClick={handleStartScan}
+                  disabled={scanning}
+                  className={cn(
+                    "inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors",
+                    scanning && "opacity-75 cursor-not-allowed",
+                  )}
+                  title="Scan web sources for new content matching this workstream (2/day limit)"
+                >
+                  {scanning ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Radar className="h-4 w-4 mr-2" />
+                  )}
+                  {scanning ? "Scanning..." : "Scan for Updates"}
+                </button>
+              )}
 
-              {/* Auto-Populate Button */}
-              <button
-                onClick={handleAutoPopulate}
-                disabled={autoPopulating}
-                className={cn(
-                  "inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-green hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-green dark:focus:ring-offset-dark-surface transition-colors",
-                  autoPopulating && "opacity-75 cursor-not-allowed",
-                )}
-                title="Find and add matching cards from existing database"
-              >
-                {autoPopulating ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Plus className="h-4 w-4 mr-2" />
-                )}
-                Auto-populate
-              </button>
+              {/* Auto-Populate Button (hidden on org-owned workstreams) */}
+              {!isOrgOwned && (
+                <button
+                  onClick={handleAutoPopulate}
+                  disabled={autoPopulating}
+                  className={cn(
+                    "inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-green hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-green dark:focus:ring-offset-dark-surface transition-colors",
+                    autoPopulating && "opacity-75 cursor-not-allowed",
+                  )}
+                  title="Find and add matching cards from existing database"
+                >
+                  {autoPopulating ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
+                  Auto-populate
+                </button>
+              )}
 
               {/* Refresh Button */}
               <button
@@ -1744,15 +1771,17 @@ const WorkstreamKanban: React.FC = () => {
                 <span className="hidden sm:inline">Chat</span>
               </button>
 
-              {/* Edit Filters Button */}
-              <button
-                onClick={() => setShowEditModal(true)}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
-                title="Edit workstream filters"
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                Edit Filters
-              </button>
+              {/* Edit Filters Button (hidden on org-owned workstreams) */}
+              {!isOrgOwned && (
+                <button
+                  onClick={() => setShowEditModal(true)}
+                  className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
+                  title="Edit workstream filters"
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  Edit Filters
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1919,9 +1948,10 @@ const WorkstreamKanban: React.FC = () => {
               cards={filteredCards}
               workstreamId={id!}
               onCardMove={handleCardMove}
+              readOnly={isOrgOwned}
               onCardClick={handleCardClick}
-              cardActions={cardActions}
-              onBulkExport={handleOpenBulkExport}
+              cardActions={isOrgOwned ? undefined : cardActions}
+              onBulkExport={isOrgOwned ? undefined : handleOpenBulkExport}
             />
           </KanbanErrorBoundary>
         )}
