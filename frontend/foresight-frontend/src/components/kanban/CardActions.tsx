@@ -32,6 +32,7 @@ import {
   RefreshCw,
   Mail,
   Link2,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
@@ -39,6 +40,8 @@ import {
   type KanbanStatus,
   type WorkstreamCard,
 } from "./types";
+import { AddToPortfolioModal } from "../portfolios/AddToPortfolioModal";
+import { supabase } from "../../App";
 
 // =============================================================================
 // Types
@@ -358,7 +361,7 @@ const MoveSubmenu = memo(function MoveSubmenu({
  */
 export const CardActions = memo(function CardActions({
   card,
-  workstreamId: _workstreamId,
+  workstreamId,
   columnId: _columnId,
   onNotesUpdate,
   onDeepDive,
@@ -390,6 +393,16 @@ export const CardActions = memo(function CardActions({
   const [isQuickUpdating, setIsQuickUpdating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+
+  // Portfolio modal
+  const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
+
+  const getPortfolioToken = useCallback(async (): Promise<string | null> => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }, []);
 
   // Screen reader announcement for loading states
   const [srAnnouncement, setSrAnnouncement] = useState("");
@@ -522,17 +535,20 @@ export const CardActions = memo(function CardActions({
   // Handle export.
   // Export requires the actual card UUID (card.card.id), not the junction
   // table id (card.id). In v2 the "brief" column is gone — the brief is a
-  // card attribute, so when a brief artifact exists we export it; otherwise
-  // we export the underlying card.
-  const hasBrief = card.brief_status !== "none" && Boolean(onExportBrief);
+  // card attribute, so when a ready brief artifact exists we export it;
+  // drafts still fall back to exporting the underlying card.
+  const hasReadyBrief =
+    (card.brief_status === "ready" || card.brief_status === "exported") &&
+    Boolean(onExportBrief);
+  const canExport = Boolean(onExport) || hasReadyBrief;
   const handleExport = useCallback(
     async (format: "pdf" | "pptx") => {
-      const exportFn = hasBrief ? onExportBrief : onExport;
+      const exportFn = hasReadyBrief ? onExportBrief : onExport;
       if (!exportFn) return;
 
       setIsOpen(false);
       setIsExporting(true);
-      const exportType = hasBrief ? "Brief" : "";
+      const exportType = hasReadyBrief ? "Brief" : "";
       setSrAnnouncement(
         `Exporting ${exportType} as ${format.toUpperCase()}...`,
       );
@@ -549,7 +565,7 @@ export const CardActions = memo(function CardActions({
         setIsExporting(false);
       }
     },
-    [card.card.id, hasBrief, onExport, onExportBrief],
+    [card.card.id, hasReadyBrief, onExport, onExportBrief],
   );
 
   // Handle check updates (watching column)
@@ -611,11 +627,7 @@ export const CardActions = memo(function CardActions({
   const isColumnActionLoading =
     isQuickUpdating || isExporting || isCheckingUpdates;
   const hasCardActions = Boolean(
-    onQuickUpdate ||
-    onCheckUpdates ||
-    onGenerateBrief ||
-    onExport ||
-    onExportBrief,
+    onQuickUpdate || onCheckUpdates || onGenerateBrief || canExport,
   );
 
   // Toggle move submenu
@@ -745,7 +757,7 @@ export const CardActions = memo(function CardActions({
                     <span className="flex-1 text-left">Check Updates</span>
                   </button>
                 )}
-                {(onExport || onExportBrief) && (
+                {canExport && (
                   <>
                     <button
                       onClick={() => handleExport("pdf")}
@@ -758,7 +770,9 @@ export const CardActions = memo(function CardActions({
                       )}
                       role="menuitem"
                       title={
-                        hasBrief ? "Export brief as PDF" : "Export card as PDF"
+                        hasReadyBrief
+                          ? "Export brief as PDF"
+                          : "Export card as PDF"
                       }
                     >
                       {isExporting ? (
@@ -779,7 +793,7 @@ export const CardActions = memo(function CardActions({
                       )}
                       role="menuitem"
                       title={
-                        hasBrief
+                        hasReadyBrief
                           ? "Export brief as PowerPoint"
                           : "Export card as PowerPoint"
                       }
@@ -851,6 +865,23 @@ export const CardActions = memo(function CardActions({
             {/* Divider */}
             <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
 
+            {/* Add to portfolio */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsOpen(false);
+                setIsPortfolioModalOpen(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              role="menuitem"
+            >
+              <Briefcase className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+              Add to portfolio…
+            </button>
+
+            {/* Divider */}
+            <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+
             {/* Move to... */}
             <div className="relative">
               <button
@@ -914,6 +945,19 @@ export const CardActions = memo(function CardActions({
         initialNotes={card.notes || ""}
         cardName={card.card.name}
         isSaving={isSavingNotes}
+      />
+
+      {/* Add to Portfolio Modal */}
+      <AddToPortfolioModal
+        isOpen={isPortfolioModalOpen}
+        onClose={() => setIsPortfolioModalOpen(false)}
+        cardId={card.card_id}
+        cardName={card.card.name}
+        workstreamId={workstreamId}
+        getAuthToken={getPortfolioToken}
+        onAdded={() => {
+          setIsPortfolioModalOpen(false);
+        }}
       />
 
       {/* Screen reader announcements for loading states */}

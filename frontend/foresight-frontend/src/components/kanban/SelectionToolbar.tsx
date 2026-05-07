@@ -8,14 +8,15 @@
  */
 
 import { useCallback, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Archive,
   ArchiveRestore,
+  Briefcase,
   Eye,
   EyeOff,
   Mail,
   Link2,
-  Sparkles,
   X,
   Loader2,
 } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   type BulkCardAction,
   type BulkCardActionResponse,
 } from "../../lib/workstream-api";
+import { SavePortfolioModal } from "../portfolios/SavePortfolioModal";
 
 export interface SelectionToolbarProps {
   workstreamId: string;
@@ -48,7 +50,6 @@ type PendingAction =
   | "unwatch"
   | "copy_share_links"
   | "email_selection"
-  | "generate_portfolio"
   | null;
 
 export function SelectionToolbar({
@@ -133,7 +134,9 @@ export function SelectionToolbar({
   }, [runBulk, showToast, count, onClearSelection, onCardsChanged]);
 
   const handleCopyLinks = useCallback(async () => {
-    const res = await runBulk("copy_share_links", "copy_share_links");
+    const res = await runBulk("copy_share_links", "copy_share_links", {
+      frontend_url: window.location.origin,
+    });
     if (!res) return;
     const urls = res.urls ?? [];
     if (urls.length === 0) {
@@ -162,17 +165,13 @@ export function SelectionToolbar({
     showToast("success", "Opened your email client");
   }, [runBulk, showToast]);
 
-  const handlePortfolio = useCallback(async () => {
-    const res = await runBulk("generate_portfolio", "generate_portfolio");
-    if (res) {
-      showToast(
-        "success",
-        `Portfolio brief queued for ${res.updated ?? count} card(s)`,
-      );
-      onClearSelection();
-      await onCardsChanged?.();
-    }
-  }, [runBulk, showToast, count, onClearSelection, onCardsChanged]);
+  const [portfolioModalOpen, setPortfolioModalOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleOpenPortfolioModal = useCallback(() => {
+    if (count === 0) return;
+    setPortfolioModalOpen(true);
+  }, [count]);
 
   if (count === 0) return null;
 
@@ -243,12 +242,26 @@ export function SelectionToolbar({
         label="Email"
       />
       <ToolbarButton
-        onClick={handlePortfolio}
-        loading={isPending("generate_portfolio")}
+        onClick={handleOpenPortfolioModal}
+        loading={false}
         disabled={anyPending}
-        icon={<Sparkles className="h-3.5 w-3.5" />}
-        label="Generate portfolio"
+        icon={<Briefcase className="h-3.5 w-3.5" />}
+        label="Save as portfolio"
         accent
+      />
+
+      <SavePortfolioModal
+        isOpen={portfolioModalOpen}
+        onClose={() => setPortfolioModalOpen(false)}
+        cardIds={selectedCardIds}
+        workstreamId={workstreamId}
+        getAuthToken={getAuthToken}
+        onCreated={(portfolio) => {
+          setPortfolioModalOpen(false);
+          showToast("success", `Created "${portfolio.name}"`);
+          onClearSelection();
+          navigate(`/workstreams/${workstreamId}/portfolios/${portfolio.id}`);
+        }}
       />
 
       <div className="ml-auto" />

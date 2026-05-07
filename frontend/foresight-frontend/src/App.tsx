@@ -31,6 +31,9 @@ const Compare = lazy(() => import("./pages/Compare"));
 const Workstreams = lazy(() => import("./pages/Workstreams"));
 const WorkstreamFeed = lazy(() => import("./pages/WorkstreamFeed"));
 const WorkstreamKanban = lazy(() => import("./pages/WorkstreamKanban"));
+const WorkstreamPortfolios = lazy(() => import("./pages/WorkstreamPortfolios"));
+const PortfolioDetail = lazy(() => import("./pages/PortfolioDetail"));
+const Portfolios = lazy(() => import("./pages/Portfolios"));
 
 // Standalone pages
 const Settings = lazy(() => import("./pages/Settings"));
@@ -278,6 +281,42 @@ function App() {
                     <ProtectedRoute
                       element={<WorkstreamKanban />}
                       loadingMessage="Loading kanban board..."
+                    />
+                  }
+                />
+                <Route
+                  path="/workstreams/:id/portfolios"
+                  element={
+                    <ProtectedRoute
+                      element={<WorkstreamPortfolios />}
+                      loadingMessage="Loading portfolios..."
+                    />
+                  }
+                />
+                <Route
+                  path="/workstreams/:id/portfolios/:portfolioId"
+                  element={
+                    <ProtectedRoute
+                      element={<PortfolioDetail />}
+                      loadingMessage="Loading portfolio..."
+                    />
+                  }
+                />
+                <Route
+                  path="/portfolios"
+                  element={
+                    <ProtectedRoute
+                      element={<Portfolios />}
+                      loadingMessage="Loading portfolios..."
+                    />
+                  }
+                />
+                <Route
+                  path="/portfolios/:portfolioId"
+                  element={
+                    <ProtectedRoute
+                      element={<PortfolioDetail />}
+                      loadingMessage="Loading portfolio..."
                     />
                   }
                 />

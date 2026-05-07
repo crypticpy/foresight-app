@@ -32,6 +32,7 @@ from app.routers.workstreams import router as workstreams_router
 from app.routers.workstream_kanban import router as workstream_kanban_router
 from app.routers.workstream_scans import router as workstream_scans_router
 from app.routers.briefs import router as briefs_router
+from app.routers.portfolios import router as portfolios_router
 from app.routers.analytics import router as analytics_router
 from app.routers.discovery import router as discovery_router
 from app.routers.research import router as research_router
@@ -40,6 +41,7 @@ from app.routers.ai_helpers import router as ai_helpers_router
 from app.routers.pattern_insights import router as pattern_insights_router
 from app.routers.admin import router as admin_router
 from app.routers.feeds import router as feeds_router
+from app.routers.usage import router as usage_router
 
 load_dotenv()
 
@@ -205,6 +207,7 @@ def create_app() -> FastAPI:
     application.include_router(workstream_kanban_router)
     application.include_router(workstream_scans_router)
     application.include_router(briefs_router)
+    application.include_router(portfolios_router)
     application.include_router(analytics_router)
     application.include_router(discovery_router)
     application.include_router(research_router)
@@ -213,6 +216,7 @@ def create_app() -> FastAPI:
     application.include_router(pattern_insights_router)
     application.include_router(admin_router)
     application.include_router(feeds_router)
+    application.include_router(usage_router)
 
     return application
 

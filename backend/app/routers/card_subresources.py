@@ -3,13 +3,12 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.deps import supabase, get_current_user, _safe_error
-from app.models.core import Card
 from app.models.history import (
     ScoreHistory,
     ScoreHistoryResponse,
@@ -53,7 +52,9 @@ class EntityListResponse(BaseModel):
 
 
 @router.get("/cards/{card_id}/sources")
-async def get_card_sources(card_id: str):
+async def get_card_sources(
+    card_id: str, current_user: dict = Depends(get_current_user)
+):
     """Get sources for a card"""
     response = (
         supabase.table("sources")
@@ -66,7 +67,9 @@ async def get_card_sources(card_id: str):
 
 
 @router.get("/cards/{card_id}/timeline")
-async def get_card_timeline(card_id: str):
+async def get_card_timeline(
+    card_id: str, current_user: dict = Depends(get_current_user)
+):
     """Get timeline for a card"""
     response = (
         supabase.table("card_timeline")
@@ -83,6 +86,7 @@ async def get_card_entities(
     card_id: str,
     entity_type: Optional[str] = None,
     limit: int = 50,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Get entities extracted from a card's sources.
@@ -365,11 +369,9 @@ async def get_related_cards(
 @router.post("/cards/{card_id}/follow")
 async def follow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Follow a card"""
-    response = (
-        supabase.table("card_follows")
-        .insert({"user_id": current_user["id"], "card_id": card_id})
-        .execute()
-    )
+    supabase.table("card_follows").insert(
+        {"user_id": current_user["id"], "card_id": card_id}
+    ).execute()
     try:
         from app.signal_quality import update_signal_quality_score
 
@@ -382,13 +384,9 @@ async def follow_card(card_id: str, current_user: dict = Depends(get_current_use
 @router.delete("/cards/{card_id}/follow")
 async def unfollow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Unfollow a card"""
-    response = (
-        supabase.table("card_follows")
-        .delete()
-        .eq("user_id", current_user["id"])
-        .eq("card_id", card_id)
-        .execute()
-    )
+    supabase.table("card_follows").delete().eq("user_id", current_user["id"]).eq(
+        "card_id", card_id
+    ).execute()
     try:
         from app.signal_quality import update_signal_quality_score
 
@@ -709,7 +707,6 @@ async def get_card_assets(card_id: str, current_user: dict = Depends(get_current
         if not card_response.data:
             raise HTTPException(status_code=404, detail="Card not found")
 
-        card_name = card_response.data[0].get("name", "Unknown Card")
         assets = []
 
         # 1. Fetch executive briefs for this card
@@ -737,12 +734,6 @@ async def get_card_assets(card_id: str, current_user: dict = Depends(get_current
 
             title = f"Executive Brief v{brief.get('version', 1)}"
             if brief.get("summary"):
-                # Truncate summary for title if needed
-                summary_preview = (
-                    brief["summary"][:50] + "..."
-                    if len(brief.get("summary", "")) > 50
-                    else brief.get("summary", "")
-                )
                 title = f"Executive Brief v{brief.get('version', 1)}"
 
             assets.append(

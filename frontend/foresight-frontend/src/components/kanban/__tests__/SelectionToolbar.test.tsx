@@ -19,6 +19,7 @@ import {
   type Mock,
 } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { SelectionToolbar } from "../SelectionToolbar";
 import * as workstreamApi from "../../../lib/workstream-api";
 
@@ -39,14 +40,16 @@ function setup(selected: string[] = ["c1", "c2"]) {
   const showToast = vi.fn();
   const getAuthToken = vi.fn().mockResolvedValue("test-token");
   const utils = render(
-    <SelectionToolbar
-      workstreamId="ws-1"
-      selectedCardIds={selected}
-      getAuthToken={getAuthToken}
-      showToast={showToast}
-      onClearSelection={onClearSelection}
-      onCardsChanged={onCardsChanged}
-    />,
+    <MemoryRouter>
+      <SelectionToolbar
+        workstreamId="ws-1"
+        selectedCardIds={selected}
+        getAuthToken={getAuthToken}
+        showToast={showToast}
+        onClearSelection={onClearSelection}
+        onCardsChanged={onCardsChanged}
+      />
+    </MemoryRouter>,
   );
   return {
     ...utils,
@@ -68,13 +71,15 @@ afterEach(() => {
 describe("SelectionToolbar", () => {
   it("renders nothing when selection is empty", () => {
     const { container } = render(
-      <SelectionToolbar
-        workstreamId="ws-1"
-        selectedCardIds={[]}
-        getAuthToken={vi.fn()}
-        showToast={vi.fn()}
-        onClearSelection={vi.fn()}
-      />,
+      <MemoryRouter>
+        <SelectionToolbar
+          workstreamId="ws-1"
+          selectedCardIds={[]}
+          getAuthToken={vi.fn()}
+          showToast={vi.fn()}
+          onClearSelection={vi.fn()}
+        />
+      </MemoryRouter>,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -120,6 +125,13 @@ describe("SelectionToolbar", () => {
     fireEvent.click(screen.getByRole("button", { name: /copy links/i }));
 
     await waitFor(() => {
+      expect(bulkMock).toHaveBeenCalledWith(
+        "test-token",
+        "ws-1",
+        "copy_share_links",
+        ["c1", "c2"],
+        { frontend_url: window.location.origin },
+      );
       expect(writeText).toHaveBeenCalledWith("https://x/1\nhttps://x/2");
     });
     expect(showToast).toHaveBeenCalledWith(

@@ -219,6 +219,21 @@ from .briefs_extra import (
     BulkBriefStatusResponse,
 )
 
+from .portfolio import (
+    PORTFOLIO_MAX_ITEMS,
+    Portfolio,
+    PortfolioWithItems,
+    PortfolioItem,
+    PortfolioItemCardSnapshot,
+    PortfolioItemCreate,
+    PortfolioItemReorder,
+    PortfolioCreate,
+    PortfolioUpdate,
+    AddItemsRequest,
+    ReorderItemsRequest,
+    PortfolioExportRequest,
+)
+
 
 __all__ = [
     # validation
@@ -382,4 +397,17 @@ __all__ = [
     "BulkExportRequest",
     "BulkBriefCardStatus",
     "BulkBriefStatusResponse",
+    # portfolio
+    "PORTFOLIO_MAX_ITEMS",
+    "Portfolio",
+    "PortfolioWithItems",
+    "PortfolioItem",
+    "PortfolioItemCardSnapshot",
+    "PortfolioItemCreate",
+    "PortfolioItemReorder",
+    "PortfolioCreate",
+    "PortfolioUpdate",
+    "AddItemsRequest",
+    "ReorderItemsRequest",
+    "PortfolioExportRequest",
 ]

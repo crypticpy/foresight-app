@@ -1,15 +1,15 @@
 """Workstream kanban card management router."""
 
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
+from app.deps import supabase, get_current_user, openai_client
 from app.models.workstream import (
-    WorkstreamCardBase,
     WorkstreamCardWithDetails,
     WorkstreamCardCreate,
     WorkstreamCardUpdate,
@@ -28,6 +28,25 @@ from app.research_service import ResearchService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["workstream-kanban"])
+
+
+def _normalize_frontend_base_url(value: Optional[str]) -> str:
+    """Return a safe frontend base URL, or an empty string if unavailable."""
+    if not value:
+        return ""
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _build_card_share_url(card: Dict[str, Any], base_url: str = "") -> str:
+    """Build a share URL for a card using slug when available."""
+    slug = card.get("slug") or card.get("id")
+    if not slug:
+        return ""
+    path = f"/cards/{slug}"
+    return f"{base_url}{path}" if base_url else path
 
 
 def _record_research_trigger(
@@ -654,17 +673,18 @@ async def get_workstream_research_status(
         HTTPException 404: Workstream not found
         HTTPException 403: Not authorized
     """
-    # Verify workstream belongs to user
+    # Read access: owner OR any org-owned workstream.
     ws_response = (
         supabase.table("workstreams")
-        .select("id, user_id")
+        .select("id, user_id, owner_type")
         .eq("id", workstream_id)
         .execute()
     )
     if not ws_response.data:
         raise HTTPException(status_code=404, detail="Workstream not found")
 
-    if ws_response.data[0]["user_id"] != current_user["id"]:
+    ws_row = ws_response.data[0]
+    if ws_row.get("owner_type") != "org" and ws_row["user_id"] != current_user["id"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to access this workstream"
         )
@@ -843,17 +863,13 @@ async def get_workstream_card_share_payload(
     card = item.get("cards") or {}
     name = card.get("name") or "Untitled signal"
     summary = (card.get("summary") or "").strip()
-    slug = card.get("slug") or card.get("id")
 
-    # Best-effort frontend URL: respect FRONTEND_URL env var if exposed via the
-    # request, else fall back to a relative `/cards/<slug>` path that the
-    # recipient would open from the same deployment.
-    base_url = (
-        request.headers.get("x-foresight-frontend-url")
+    base_url = _normalize_frontend_base_url(
+        os.getenv("FRONTEND_URL")
+        or request.headers.get("x-foresight-frontend-url")
         or request.headers.get("origin")
-        or ""
-    ).rstrip("/")
-    url = f"{base_url}/cards/{slug}" if base_url else f"/cards/{slug}"
+    )
+    url = _build_card_share_url(card, base_url)
 
     subject = f"Foresight signal: {name}"
     body_lines = [name, ""]
@@ -979,21 +995,26 @@ async def bulk_workstream_card_action(
         return {"updated": len(rows), "action": action, "brief_status": new_brief}
 
     if action == "copy_share_links":
+        base_url = _normalize_frontend_base_url(
+            os.getenv("FRONTEND_URL") or str(params.get("frontend_url") or "")
+        )
         urls = []
         for row in rows:
             card = row.get("cards") or {}
-            slug = card.get("slug") or card.get("id")
-            if slug:
-                urls.append(f"/cards/{slug}")
+            url = _build_card_share_url(card, base_url)
+            if url:
+                urls.append(url)
         return {"urls": urls, "action": action}
 
     if action == "email_selection":
+        base_url = _normalize_frontend_base_url(
+            os.getenv("FRONTEND_URL") or str(params.get("frontend_url") or "")
+        )
         lines: List[str] = []
         for row in rows:
             card = row.get("cards") or {}
             name = card.get("name") or "Untitled signal"
-            slug = card.get("slug") or card.get("id")
-            url = f"/cards/{slug}" if slug else ""
+            url = _build_card_share_url(card, base_url)
             lines.append(f"- {name} {url}".rstrip())
         subject = f"Foresight signals ({len(rows)})"
         body_text = "Sharing the following Foresight signals:\n\n" + "\n".join(lines)

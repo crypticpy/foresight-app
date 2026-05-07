@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.authz import require_admin
 from app.deps import supabase, get_current_user, _safe_error, limiter
 from app.models.source_rating import (
     SourceRatingCreate,
@@ -29,14 +30,25 @@ router = APIRouter(prefix="/api/v1", tags=["admin"])
 
 
 @router.get("/taxonomy")
-async def get_taxonomy():
+async def get_taxonomy(user=Depends(get_current_user)):
     """Get all taxonomy data"""
-    pillars = supabase.table("pillars").select("*").order("name").execute()
-    goals = (
-        supabase.table("goals").select("*").order("pillar_id", "sort_order").execute()
+    pillars, goals, anchors, stages = await asyncio.gather(
+        asyncio.to_thread(
+            lambda: supabase.table("pillars").select("*").order("name").execute()
+        ),
+        asyncio.to_thread(
+            lambda: supabase.table("goals")
+            .select("*")
+            .order("pillar_id", "sort_order")
+            .execute()
+        ),
+        asyncio.to_thread(
+            lambda: supabase.table("anchors").select("*").order("name").execute()
+        ),
+        asyncio.to_thread(
+            lambda: supabase.table("stages").select("*").order("sort_order").execute()
+        ),
     )
-    anchors = supabase.table("anchors").select("*").order("name").execute()
-    stages = supabase.table("stages").select("*").order("sort_order").execute()
 
     return {
         "pillars": pillars.data,
@@ -62,8 +74,9 @@ async def trigger_manual_scan(
     This triggers a quick update research task for cards that haven't been
     updated in the last 24 hours. Limited to admin users.
 
-    Note: In production, add admin role check here.
     """
+    require_admin(current_user)
+
     try:
         # Get cards that need updates (not updated in last 24 hours)
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -269,6 +282,8 @@ async def recalculate_card_quality(
     request: Request, card_id: str, user=Depends(get_current_user)
 ):
     """Force SQI recalculation for a card."""
+    require_admin(user)
+
     try:
         return quality_service.calculate_sqi(supabase, card_id)
     except Exception as e:
@@ -282,6 +297,8 @@ async def recalculate_card_quality(
 @router.post("/admin/quality/recalculate-all")
 async def recalculate_all_quality(user=Depends(get_current_user)):
     """Batch recalculate SQI for all cards. Admin only."""
+    require_admin(user)
+
     try:
         return quality_service.recalculate_all_cards(supabase)
     except Exception as e:
@@ -293,7 +310,7 @@ async def recalculate_all_quality(user=Depends(get_current_user)):
 
 
 @router.get("/cards/{card_id}/quality-score")
-async def get_signal_quality_score(card_id: str):
+async def get_signal_quality_score(card_id: str, user=Depends(get_current_user)):
     """Get computed signal quality score for a card."""
     from app.signal_quality import compute_signal_quality_score
 
@@ -301,8 +318,10 @@ async def get_signal_quality_score(card_id: str):
 
 
 @router.post("/cards/{card_id}/quality-score/refresh")
-async def refresh_signal_quality_score(card_id: str):
+async def refresh_signal_quality_score(card_id: str, user=Depends(get_current_user)):
     """Recompute and store the signal quality score."""
+    require_admin(user)
+
     from app.signal_quality import update_signal_quality_score
 
     score = update_signal_quality_score(supabase, card_id)
@@ -371,6 +390,8 @@ async def create_domain_reputation(
     body: DomainReputationCreate, user=Depends(get_current_user)
 ):
     """Add a new domain to the reputation system. Admin only."""
+    require_admin(user)
+
     try:
         data = body.model_dump()
         # Calculate initial composite score based on tier
@@ -403,6 +424,8 @@ async def update_domain_reputation(
     user=Depends(get_current_user),
 ):
     """Update a domain's tier, category, or other fields. Admin only."""
+    require_admin(user)
+
     try:
         data = body.model_dump(exclude_none=True)
         if not data:
@@ -435,6 +458,8 @@ async def update_domain_reputation(
 @router.delete("/admin/domain-reputation/{domain_id}")
 async def delete_domain_reputation(domain_id: str, user=Depends(get_current_user)):
     """Remove a domain from the reputation system. Admin only."""
+    require_admin(user)
+
     try:
         supabase.table("domain_reputation").delete().eq("id", domain_id).execute()
         return {"status": "deleted"}
@@ -449,6 +474,8 @@ async def delete_domain_reputation(domain_id: str, user=Depends(get_current_user
 @router.post("/admin/domain-reputation/recalculate")
 async def recalculate_domain_reputations(user=Depends(get_current_user)):
     """Recalculate all composite scores from user ratings + pipeline stats."""
+    require_admin(user)
+
     try:
         return domain_reputation_service.recalculate_all(supabase)
     except Exception as e:
@@ -472,13 +499,7 @@ async def trigger_velocity_calculation(
     current_user: dict = Depends(get_current_user),
 ):
     """Trigger velocity trend calculation for all active cards. Runs in background."""
-    # Admin-only endpoint
-    user_role = current_user.get("role", "")
-    if user_role not in ("admin", "service_role"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+    require_admin(current_user)
 
     from app.velocity_service import calculate_velocity_trends
 

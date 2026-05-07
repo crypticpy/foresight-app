@@ -20,6 +20,7 @@ import React, {
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import {
   ArrowLeft,
+  Briefcase,
   RefreshCw,
   Settings,
   Download,
@@ -1845,6 +1846,16 @@ const WorkstreamKanban: React.FC = () => {
                   </>
                 )}
               </div>
+
+              {/* Portfolios Button */}
+              <Link
+                to={`/workstreams/${id}/portfolios`}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
+                aria-label="View portfolios"
+              >
+                <Briefcase className="h-4 w-4" />
+                <span className="hidden sm:inline">Portfolios</span>
+              </Link>
 
               {/* Chat Button */}
               <button

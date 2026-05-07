@@ -8,12 +8,48 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
-from app.models.research import ResearchTaskCreate, ResearchTask, VALID_TASK_TYPES
+from app.authz import (
+    require_card_in_workstream,
+    require_card_research_access,
+    require_workstream_access,
+)
+from app.deps import supabase, get_current_user, openai_client, limiter
+from app.models.research import ResearchTaskCreate, ResearchTask
 from app.research_service import ResearchService
+from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["research"])
+
+TRUTHY = {"1", "true", "yes", "y", "on"}
+RESEARCH_TASK_COST_ESTIMATE_USD = {
+    "update": 0.25,
+    "deep_research": 4.00,
+    "workstream_analysis": 2.00,
+}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in TRUTHY
+
+
+def _env_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r", name, raw)
+        return None
+
+
+def _estimated_task_cost(task_type: str) -> float:
+    env_name = f"RESEARCH_TASK_ESTIMATED_COST_{task_type.upper()}_USD"
+    return _env_float(env_name) or RESEARCH_TASK_COST_ESTIMATE_USD.get(task_type, 0.0)
 
 
 # ============================================================================
@@ -96,26 +132,33 @@ async def execute_research_task_background(
         heartbeat_task = asyncio.create_task(_heartbeat())
 
         try:
-            # Execute based on task type
-            if task_data.task_type == "update":
-                result = await asyncio.wait_for(
-                    service.execute_update(task_data.card_id, task_id),
-                    timeout=timeout_seconds,
-                )
-            elif task_data.task_type == "deep_research":
-                result = await asyncio.wait_for(
-                    service.execute_deep_research(task_data.card_id, task_id),
-                    timeout=timeout_seconds,
-                )
-            elif task_data.task_type == "workstream_analysis":
-                result = await asyncio.wait_for(
-                    service.execute_workstream_analysis(
-                        task_data.workstream_id, task_id, user_id
-                    ),
-                    timeout=timeout_seconds,
-                )
-            else:
-                raise ValueError(f"Unknown task type: {task_data.task_type}")
+            with llm_usage_context(
+                user_id=user_id,
+                task_id=task_id,
+                card_id=task_data.card_id,
+                workstream_id=task_data.workstream_id,
+                operation=f"research.{task_data.task_type}",
+            ):
+                # Execute based on task type
+                if task_data.task_type == "update":
+                    result = await asyncio.wait_for(
+                        service.execute_update(task_data.card_id, task_id),
+                        timeout=timeout_seconds,
+                    )
+                elif task_data.task_type == "deep_research":
+                    result = await asyncio.wait_for(
+                        service.execute_deep_research(task_data.card_id, task_id),
+                        timeout=timeout_seconds,
+                    )
+                elif task_data.task_type == "workstream_analysis":
+                    result = await asyncio.wait_for(
+                        service.execute_workstream_analysis(
+                            task_data.workstream_id, task_id, user_id
+                        ),
+                        timeout=timeout_seconds,
+                    )
+                else:
+                    raise ValueError(f"Unknown task type: {task_data.task_type}")
         finally:
             heartbeat_task.cancel()
 
@@ -206,6 +249,44 @@ async def create_research_task(
             detail="Invalid task_type. Use: update, deep_research, workstream_analysis",
         )
 
+    if not _env_bool("FORESIGHT_ENABLE_AI_RESEARCH", True):
+        raise HTTPException(
+            status_code=403,
+            detail="AI research is temporarily disabled",
+        )
+
+    if task_data.task_type == "deep_research" and not _env_bool(
+        "FORESIGHT_ENABLE_DEEP_RESEARCH", True
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Deep research is temporarily disabled",
+        )
+
+    estimated_cost = _estimated_task_cost(task_data.task_type)
+    max_estimated_cost = _env_float("FORESIGHT_MAX_RESEARCH_TASK_ESTIMATED_COST_USD")
+    if max_estimated_cost is not None and estimated_cost > max_estimated_cost:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Research task exceeds configured pilot cost cap "
+                f"(${estimated_cost:.2f} > ${max_estimated_cost:.2f})"
+            ),
+        )
+
+    # Pilot-safe authorization.  Research tasks spend external/LLM budget, so
+    # org-workstream read visibility is not enough to queue work.
+    if task_data.workstream_id:
+        require_workstream_access(
+            supabase, task_data.workstream_id, current_user, capability="edit"
+        )
+        if task_data.card_id:
+            require_card_in_workstream(
+                supabase, task_data.card_id, task_data.workstream_id
+            )
+    elif task_data.card_id:
+        require_card_research_access(supabase, task_data.card_id, current_user)
+
     # Check rate limit for deep research
     if task_data.task_type == "deep_research" and task_data.card_id:
         service = ResearchService(supabase, openai_client)
@@ -219,6 +300,10 @@ async def create_research_task(
         "user_id": current_user["id"],
         "task_type": task_data.task_type,
         "status": "queued",
+        "result_summary": {
+            "pilot_cost_estimate_usd": estimated_cost,
+            "pilot_budget_checked_at": datetime.now(timezone.utc).isoformat(),
+        },
     }
 
     if task_data.card_id:
@@ -232,7 +317,6 @@ async def create_research_task(
         raise HTTPException(status_code=500, detail="Failed to create research task")
 
     task = task_result.data[0]
-    task_id = task["id"]
 
     # Execute research in background (non-blocking)
     # Task execution is handled by the background worker (see `app.worker`).

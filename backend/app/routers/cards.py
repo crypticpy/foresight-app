@@ -4,10 +4,9 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 
 from app.deps import (
     supabase,
@@ -32,9 +31,9 @@ from app.models.history import (
 from app.models.workstream import FilterPreviewRequest, FilterPreviewResponse
 from app.helpers.search_utils import (
     _apply_search_filters,
-    _apply_score_filters,
     _extract_highlights,
 )
+from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +53,7 @@ async def get_cards(
     stage_id: Optional[str] = None,
     horizon: Optional[str] = None,
     search: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
 ):
     """Get cards with filtering"""
     query = supabase.table("cards").select("*").eq("status", "active")
@@ -243,7 +243,9 @@ async def compare_cards(
 
 
 @router.get("/cards/{card_id}", response_model=Card)
-async def get_card(card_id: uuid.UUID):
+async def get_card(
+    card_id: uuid.UUID, current_user: dict = Depends(get_current_user)
+):
     """Get specific card"""
     response = supabase.table("cards").select("*").eq("id", str(card_id)).execute()
     if response.data:
@@ -278,7 +280,9 @@ async def create_card(
 
 
 @router.post("/cards/search")
-async def search_cards(request: AdvancedSearchRequest):
+async def search_cards(
+    request: AdvancedSearchRequest, current_user: dict = Depends(get_current_user)
+):
     """
     Advanced search for intelligence cards with filtering and vector similarity.
 
@@ -299,9 +303,14 @@ async def search_cards(request: AdvancedSearchRequest):
         if request.use_vector_search and request.query:
             try:
                 # Get embedding for search query (uses embedding client with specific API version)
-                embedding_response = azure_openai_embedding_client.embeddings.create(
-                    model=get_embedding_deployment(), input=request.query
-                )
+                with llm_usage_context(
+                    user_id=current_user["id"], operation="cards.search"
+                ):
+                    embedding_response = (
+                        azure_openai_embedding_client.embeddings.create(
+                            model=get_embedding_deployment(), input=request.query
+                        )
+                    )
                 query_embedding = embedding_response.data[0].embedding
 
                 # Vector similarity search returns id, name, summary,
@@ -442,7 +451,11 @@ async def search_cards(request: AdvancedSearchRequest):
 
 
 @router.get("/cards/{card_id}/similar", response_model=List[SimilarCard])
-async def get_similar_cards(card_id: str, limit: int = 5):
+async def get_similar_cards(
+    card_id: str,
+    limit: int = 5,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Get cards similar to the specified card.
 

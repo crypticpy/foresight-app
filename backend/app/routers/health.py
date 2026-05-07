@@ -5,7 +5,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.authz import require_admin
+from app.deps import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
@@ -69,8 +72,9 @@ async def health_check():
 
 
 @router.get("/api/v1/debug/gpt-researcher")
-async def debug_gpt_researcher():
+async def debug_gpt_researcher(current_user: dict = Depends(get_current_user)):
     """Debug GPT Researcher configuration and Azure OpenAI connection. v2"""
+    require_admin(current_user)
 
     # Get GPT Researcher relevant env vars
     config_vars = {

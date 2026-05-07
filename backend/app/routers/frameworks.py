@@ -11,6 +11,7 @@ the data model.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Dict, List
 
@@ -32,12 +33,14 @@ router = APIRouter(prefix="/api/v1/frameworks", tags=["frameworks"])
 @router.get("", response_model=List[StrategicFrameworkSummary])
 async def list_frameworks(_: dict = Depends(get_current_user)):
     """List all strategic frameworks (without nested categories/drivers)."""
-    response = (
-        supabase.table("strategic_frameworks")
-        .select("id, code, name, description, owner_type, display_order")
-        .order("display_order", desc=False)
-        .order("code", desc=False)
-        .execute()
+    response = await asyncio.to_thread(
+        lambda: (
+            supabase.table("strategic_frameworks")
+            .select("id, code, name, description, owner_type, display_order")
+            .order("display_order", desc=False)
+            .order("code", desc=False)
+            .execute()
+        )
     )
     return [StrategicFrameworkSummary(**row) for row in (response.data or [])]
 
@@ -45,37 +48,43 @@ async def list_frameworks(_: dict = Depends(get_current_user)):
 @router.get("/{code}", response_model=StrategicFramework)
 async def get_framework(code: str, _: dict = Depends(get_current_user)):
     """Return one framework with categories and drivers nested."""
-    fw_resp = (
-        supabase.table("strategic_frameworks")
-        .select("*")
-        .eq("code", code)
-        .limit(1)
-        .execute()
+    fw_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("strategic_frameworks")
+            .select("*")
+            .eq("code", code)
+            .limit(1)
+            .execute()
+        )
     )
     if not fw_resp.data:
         raise HTTPException(status_code=404, detail=f"Framework '{code}' not found")
     framework_row = fw_resp.data[0]
 
-    cat_resp = (
-        supabase.table("framework_categories")
-        .select("*")
-        .eq("framework_code", code)
-        .order("display_order", desc=False)
-        .order("code", desc=False)
-        .execute()
+    cat_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("framework_categories")
+            .select("*")
+            .eq("framework_code", code)
+            .order("display_order", desc=False)
+            .order("code", desc=False)
+            .execute()
+        )
     )
     category_rows = cat_resp.data or []
     category_ids = [row["id"] for row in category_rows]
 
     drivers_by_category: Dict[str, List[Driver]] = {cid: [] for cid in category_ids}
     if category_ids:
-        drv_resp = (
-            supabase.table("drivers")
-            .select("*")
-            .in_("framework_category_id", category_ids)
-            .order("display_order", desc=False)
-            .order("code", desc=False)
-            .execute()
+        drv_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("drivers")
+                .select("*")
+                .in_("framework_category_id", category_ids)
+                .order("display_order", desc=False)
+                .order("code", desc=False)
+                .execute()
+            )
         )
         for drv_row in drv_resp.data or []:
             drivers_by_category.setdefault(

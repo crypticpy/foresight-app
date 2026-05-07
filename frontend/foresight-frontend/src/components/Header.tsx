@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
+  Briefcase,
   Compass,
   FolderOpen,
   Settings,
@@ -174,6 +175,7 @@ const Header: React.FC = () => {
 
   // Items in the "More" dropdown
   const moreNavigation = [
+    { name: "Portfolios", href: "/portfolios", icon: Briefcase },
     { name: "Analytics", href: "/analytics", icon: BarChart3 },
     { name: "Feeds", href: "/feeds", icon: Rss },
     { name: "How It Works", href: "/how-it-works", icon: Wand2 },

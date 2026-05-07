@@ -15,9 +15,17 @@ Environment Variables:
 - OPENAI_BASE_URL (optional): Override base URL for OpenAI-compatible endpoints
 """
 
-import os
 import logging
+import os
+from typing import Any
+
 from openai import OpenAI, AsyncOpenAI
+
+from app.usage_telemetry import (
+    extract_openai_usage,
+    monotonic_ms,
+    record_llm_usage_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,14 +166,136 @@ def _create_async_client(config: OpenAIConfig) -> AsyncOpenAI:
     return AsyncOpenAI(**kwargs)
 
 
+def _resolve_model(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+    if model := kwargs.get("model"):
+        return str(model)
+    if args:
+        return str(args[0])
+    return None
+
+
+class _SyncCreateProxy:
+    def __init__(self, create_func, request_kind: str):
+        self._create_func = create_func
+        self._request_kind = request_kind
+
+    def __call__(self, *args, **kwargs):
+        model = _resolve_model(args, kwargs)
+        started = monotonic_ms()
+        try:
+            response = self._create_func(*args, **kwargs)
+        except Exception as exc:
+            record_llm_usage_event(
+                provider="openai",
+                model=model,
+                operation=f"openai.{self._request_kind}",
+                request_kind=self._request_kind,
+                latency_ms=monotonic_ms() - started,
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+
+        usage = extract_openai_usage(response)
+        status = "stream_started" if kwargs.get("stream") else "success"
+        record_llm_usage_event(
+            provider="openai",
+            model=model,
+            operation=f"openai.{self._request_kind}",
+            request_kind=self._request_kind,
+            latency_ms=monotonic_ms() - started,
+            status=status,
+            **usage,
+        )
+        return response
+
+    def __getattr__(self, name: str):
+        return getattr(self._create_func, name)
+
+
+class _AsyncCreateProxy:
+    def __init__(self, create_func, request_kind: str):
+        self._create_func = create_func
+        self._request_kind = request_kind
+
+    async def __call__(self, *args, **kwargs):
+        model = _resolve_model(args, kwargs)
+        started = monotonic_ms()
+        try:
+            response = await self._create_func(*args, **kwargs)
+        except Exception as exc:
+            record_llm_usage_event(
+                provider="openai",
+                model=model,
+                operation=f"openai.{self._request_kind}",
+                request_kind=self._request_kind,
+                latency_ms=monotonic_ms() - started,
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+
+        usage = extract_openai_usage(response)
+        status = "stream_started" if kwargs.get("stream") else "success"
+        record_llm_usage_event(
+            provider="openai",
+            model=model,
+            operation=f"openai.{self._request_kind}",
+            request_kind=self._request_kind,
+            latency_ms=monotonic_ms() - started,
+            status=status,
+            **usage,
+        )
+        return response
+
+    def __getattr__(self, name: str):
+        return getattr(self._create_func, name)
+
+
+class _ResourceProxy:
+    def __init__(self, resource, request_kind: str, is_async: bool = False):
+        self._resource = resource
+        create_func = getattr(resource, "create", None)
+        if create_func is not None:
+            proxy_cls = _AsyncCreateProxy if is_async else _SyncCreateProxy
+            self.create = proxy_cls(create_func, request_kind)
+
+    def __getattr__(self, name: str):
+        return getattr(self._resource, name)
+
+
+class _ChatProxy:
+    def __init__(self, chat, is_async: bool = False):
+        self._chat = chat
+        self.completions = _ResourceProxy(
+            chat.completions, "chat.completions", is_async=is_async
+        )
+
+    def __getattr__(self, name: str):
+        return getattr(self._chat, name)
+
+
+class _InstrumentedClientProxy:
+    def __init__(self, client, is_async: bool = False):
+        self._client = client
+        self.chat = _ChatProxy(client.chat, is_async=is_async)
+        self.embeddings = _ResourceProxy(
+            client.embeddings, "embeddings", is_async=is_async
+        )
+        self.responses = _ResourceProxy(client.responses, "responses", is_async=is_async)
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+
 try:
     _config = OpenAIConfig()
     _initialize_model_mapping(_config)
 
     # Single client per (sync/async) — commercial OpenAI does not need a
     # separate embedding client (no per-resource api_version).
-    _sync_client = _create_sync_client(_config)
-    _async_client = _create_async_client(_config)
+    _sync_client = _InstrumentedClientProxy(_create_sync_client(_config))
+    _async_client = _InstrumentedClientProxy(_create_async_client(_config), is_async=True)
 
     # Public symbols — names retained from the Azure-era for caller compatibility.
     azure_openai_client = _sync_client
