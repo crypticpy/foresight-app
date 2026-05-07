@@ -57,6 +57,10 @@ export interface FormData {
   is_active: boolean;
   analyze_now: boolean;
   auto_scan: boolean;
+  // FY26 framework scoping (Phase 3)
+  framework_code: string | null;
+  framework_category_id: string | null;
+  driver_ids: string[];
 }
 
 export interface FormErrors {

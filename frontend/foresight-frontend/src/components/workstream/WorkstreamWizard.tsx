@@ -11,10 +11,11 @@
  * Only used for CREATE mode. Edit mode uses WorkstreamForm.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useWorkstreamForm } from "../../hooks/useWorkstreamForm";
+import { supabase } from "../../App";
 import { WizardProgress } from "./WizardProgress";
 import { StepStart } from "./steps/StepStart";
 import { StepDetails } from "./steps/StepDetails";
@@ -40,6 +41,19 @@ export function WorkstreamWizard({
     onSuccess,
     onCreatedWithZeroMatches,
   });
+
+  // Resolve a Supabase access token once, so the framework picker can call
+  // /api/v1/frameworks without each step needing to re-fetch the session.
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!cancelled) setAuthToken(session?.access_token ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ============================================================================
   // Wizard-specific step validation (not generic form logic)
@@ -140,6 +154,8 @@ export function WorkstreamWizard({
             onGoalToggle={form.handleGoalToggle}
             onStageToggle={form.handleStageToggle}
             onHorizonChange={form.handleHorizonChange}
+            onFrameworkChange={form.handleFrameworkChange}
+            frameworkToken={authToken}
           />
         );
       case 4:

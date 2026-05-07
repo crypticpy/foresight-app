@@ -51,6 +51,9 @@ export function useWorkstreamForm({
     is_active: workstream?.is_active ?? true,
     analyze_now: false,
     auto_scan: false,
+    framework_code: workstream?.framework_code ?? null,
+    framework_category_id: workstream?.framework_category_id ?? null,
+    driver_ids: workstream?.driver_ids ?? [],
   });
 
   // UI state
@@ -206,6 +209,22 @@ export function useWorkstreamForm({
     }
   };
 
+  const handleFrameworkChange = (next: {
+    framework_code: string | null;
+    framework_category_id: string | null;
+    driver_ids: string[];
+  }) => {
+    setFormData((prev) => ({
+      ...prev,
+      framework_code: next.framework_code,
+      framework_category_id: next.framework_category_id,
+      driver_ids: next.driver_ids,
+    }));
+    if (errors.filters) {
+      setErrors((prev) => ({ ...prev, filters: undefined }));
+    }
+  };
+
   const handleKeywordAdd = () => {
     const trimmed = keywordInput.trim();
     if (trimmed && !formData.keywords.includes(trimmed)) {
@@ -302,6 +321,9 @@ export function useWorkstreamForm({
         horizon: formData.horizon,
         keywords: formData.keywords,
         is_active: formData.is_active,
+        framework_code: formData.framework_code,
+        framework_category_id: formData.framework_category_id,
+        driver_ids: formData.driver_ids,
         ...(formData.auto_scan ? { auto_scan: true } : {}),
       };
 
@@ -398,6 +420,7 @@ export function useWorkstreamForm({
     handleGoalToggle,
     handleStageToggle,
     handleHorizonChange,
+    handleFrameworkChange,
     handleKeywordAdd,
     handleKeywordInputKeyDown,
     handleKeywordRemove,
