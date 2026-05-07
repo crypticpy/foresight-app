@@ -1,9 +1,9 @@
 # Feature: Climate Projection & Operational Risk Overlay
 
-**Version:** 0.2 (Draft for Review)
-**Date:** 2026-05-06
+**Version:** 0.3 (Draft for Review)
+**Date:** 2026-05-07
 **Status:** Planning + architecture — no code yet
-**Source brief:** Ana DeFrates email thread, May 4 2026 — climate adaptation reference list
+**Source brief:** Ana DeFrates email thread, May 4–5 2026 — climate adaptation reference list (URLs cross-checked against the original thread in v0.3)
 **Roadmap parent:** `10_FY26_FORESIGHT_ROADMAP.md`
 **Target sprints:** S4 (spike), S5–S8 (build), S9 (ESRI bridge)
 **Greenlight gates:** G0 → S4, G1 → S5, G2 → S9 (see roadmap §6)
@@ -72,25 +72,28 @@ Selected during S4 spike (Gate G1). Listed by triad component (§3) and roughly 
 
 ### 5.1 Triad A — Climate projections / scenarios
 
-| Dataset                                                               | Source         | Open?                 | Format           | Geographic unit      | Why it matters                                                           |
-| --------------------------------------------------------------------- | -------------- | --------------------- | ---------------- | -------------------- | ------------------------------------------------------------------------ |
-| **City of Austin climate projections**                                | City of Austin | Internal / TBD        | TBD              | City-wide / district | Local authoritative scenarios; first stop for budget conversations.      |
-| **Atlas 14 flood projections + early warning**                        | NOAA HDSC      | Yes                   | NetCDF / GeoTIFF | Grid cell            | Underpins flood-frequency analysis; widely used by City stormwater.      |
-| **Winter-storm / flood / heat scenarios** (Ana's brief, source TBD)   | Mixed          | Mixed                 | Mixed            | Mixed                | Operationalized scenario set used in Ana's department's adaptation work. |
-| **CAMPO Central Texas Extreme Weather & CC Vulnerability Assessment** | CAMPO          | Open                  | PDF + GIS        | Corridors            | Regional transportation framing.                                         |
-| **IPCC Atlas projections**                                            | IPCC           | Open                  | NetCDF           | Coarse grid          | Long-horizon scenario context; not actionable at tract level.            |
-| **Google Earth Engine catalog**                                       | Google         | Open access (API key) | API              | Various              | Source for _derived_ projection layers; not the system of record.        |
+URLs come directly from Ana DeFrates' May 5 2026 reference list (see §0 Source brief).
+
+| Dataset                                                                                                                                                                                                                                          | Source          | Open?                 | Format       | Geographic unit      | Why it matters                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- | --------------------- | ------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **[City of Austin climate projections](https://www.austintexas.gov/page/climate-projections-austin)**                                                                                                                                            | City of Austin  | Open                  | Web / PDF    | City-wide / district | Local authoritative scenarios; first stop for budget conversations.                                                 |
+| **[ATX Flood Pro (Atlas 14 flood mapping)](http://www.atxfloodpro.com/)** + **[ATX Floods early warning](https://atxfloods.com/)**                                                                                                               | City of Austin  | Open                  | Web / GIS    | Watershed / parcel   | Austin-specific operational tools; better Phase-1 fit than raw NOAA HDSC NetCDF.                                    |
+| **UT-hosted scenarios for [winter storms](https://utexas.box.com/s/nz709hxe16tdwcitgabwxiwkb0t1p89s) · [floods](https://utexas.box.com/s/t75qipgko9o7ttqwgbg4xitm617bcxuc) · [heat](https://utexas.box.com/s/rz1lwcp41saebk04d8l5ycgygv1d5eut)** | UT Austin (Box) | Shared link (auth?)   | Mixed (Box)  | Mixed                | Operationalized scenario set used in Ana's department's adaptation work. Confirm download permission before ingest. |
+| **[CAMPO Central Texas Extreme Weather & CC Vulnerability Assessment](https://www.austintexas.gov/sites/default/files/files/CAMPO_Extreme_Weather_Vulnerability_Assessment_FINAL.pdf)**                                                          | CAMPO           | Open                  | PDF (+ GIS)  | Corridors            | Regional transportation framing.                                                                                    |
+| **[IPCC Interactive Atlas](https://interactive-atlas.ipcc.ch/)**                                                                                                                                                                                 | IPCC            | Open                  | Web / NetCDF | Coarse grid          | Long-horizon scenario context; not actionable at tract level.                                                       |
+| **[Google Earth Engine catalog](https://earthengine.google.com/)**                                                                                                                                                                               | Google          | Open access (API key) | API          | Various              | Source for _derived_ projection layers; not the system of record.                                                   |
 
 ### 5.2 Triad B — Climate risk & vulnerability
 
-| Dataset                                    | Source         | Open?                     | Format        | Geographic unit | Why it matters                                                     |
-| ------------------------------------------ | -------------- | ------------------------- | ------------- | --------------- | ------------------------------------------------------------------ |
-| **EDF Climate Vulnerability Index**        | EDF            | Yes (CSV by census tract) | CSV → GeoJSON | Census tract    | Composite of dozens of parameters; trivial to ingest; tract-level. |
-| **US Climate Resilience Toolkit**          | NOAA           | Open                      | Various       | Various         | Framework + datasets index, not a single layer.                    |
-| **Texas A&M wildfire risk portal**         | TAMU           | Open                      | Web service   | County / parcel | Statewide context.                                                 |
-| **Austin Digital Twin — wildfire mapping** | City of Austin | Internal / open           | TBD           | Parcel / WUI    | Local relevance; ESRI-friendly.                                    |
-| **World Bank vulnerability tools**         | World Bank     | Open                      | Various       | Country         | Macro context only; out of Phase 1 unless needed for narrative.    |
-| **US DOT vulnerability tools**             | US DOT         | Open                      | Various       | Corridor        | Useful for _Place_ workstream transportation framing.              |
+| Dataset                                                                                                                                   | Source         | Open?                     | Format        | Geographic unit | Why it matters                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ------------------------- | ------------- | --------------- | --------------------------------------------------------------------------------------------------------- |
+| **[EDF Climate Vulnerability Index](https://map.climatevulnerabilityindex.org/map/)**                                                     | EDF            | Yes (CSV by census tract) | CSV → GeoJSON | Census tract    | Composite of dozens of parameters; trivial to ingest; tract-level.                                        |
+| **[US Climate Resilience Toolkit — Assess Vulnerability & Risk](https://toolkit.climate.gov/assess-vulnerability-and-risk)**              | NOAA           | Open                      | Various       | Various         | Framework + datasets index, not a single layer.                                                           |
+| **[GIS for Climate hub](https://climate-arcgis-content.hub.arcgis.com/)** ⭐                                                              | Esri           | Open (Esri Hub)           | Esri Hub      | Various         | **Esri-curated catalog** — natural anchor for the §8 ESRI bridge once the partnership lands. New in v0.3. |
+| **Texas A&M Texas Wildfire Risk Explorer** (Ana's link in email pointed to atxfloods.com — confirm canonical URL with TAMU before ingest) | TAMU           | Open                      | Web service   | County / parcel | Statewide wildfire context.                                                                               |
+| **[Austin Digital Twin (unified)](https://unified.austindigitaltwin.com/) — wildfire mapping**                                            | City of Austin | Open / partner            | Esri / web    | Parcel / WUI    | Local relevance; ESRI-friendly.                                                                           |
+| **[World Bank Climate Screening Tools](https://climatescreeningtools.worldbank.org/)**                                                    | World Bank     | Open                      | Various       | Country         | Macro context only; out of Phase 1 unless needed for narrative.                                           |
+| **[US DOT FHWA Resilience Tools](https://www.fhwa.dot.gov/environment/sustainability/resilience/tools/)**                                 | US DOT         | Open                      | Various       | Corridor        | Useful for _Place_ workstream transportation framing.                                                     |
 
 ### 5.3 Triad C — Departmental performance data
 
@@ -110,11 +113,11 @@ These are _City-internal_ feeds (or City-curated) and require coordination with 
 
 Pick one dataset from each triad component to demonstrate the full pipeline:
 
-1. **A — Atlas 14 flood projections** (already widely used; vector flood-zone polygons preferred over raster for Phase 1).
-2. **B — EDF Climate Vulnerability Index** (CSV by tract; smallest payload; exercises every join path).
-3. **C — Watershed stormwater incident history** (open City of Austin dataset; geocoded points; pairs naturally with Atlas 14 + EDF CVI for the _Place_ workstream).
+1. **A — Austin Atlas 14 flood mapping via [ATX Flood Pro](http://www.atxfloodpro.com/)** (City of Austin operational source; vector flood-zone polygons preferred over raster for Phase 1; pairs with [ATX Floods early warning](https://atxfloods.com/) when we extend to incident-history overlays).
+2. **B — [EDF Climate Vulnerability Index](https://map.climatevulnerabilityindex.org/map/)** (CSV by tract; smallest payload; exercises every join path).
+3. **C — Watershed stormwater incident history** (open City of Austin dataset; geocoded points; pairs naturally with ATX Flood Pro polygons + EDF CVI for the _Place_ workstream).
 
-This combination demonstrates the _triad join_ on the very first iteration. Subsequent sprints add wildfire (B + Austin digital twin), heat (A + EDF CVI), and additional performance feeds.
+This combination demonstrates the _triad join_ on the very first iteration. Subsequent sprints add wildfire (B + [Austin Digital Twin](https://unified.austindigitaltwin.com/)), heat (A + EDF CVI), and additional performance feeds. The [GIS for Climate hub](https://climate-arcgis-content.hub.arcgis.com/) is the natural Phase-2/3 anchor once the Esri partnership lands (§8).
 
 ## 5. End-to-End Architecture
 
