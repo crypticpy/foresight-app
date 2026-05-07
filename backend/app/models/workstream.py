@@ -22,6 +22,14 @@ class Workstream(BaseModel):
     is_active: bool = True
     auto_add: bool = False
     auto_scan: bool = False
+    # FY26 framework / scoping fields (see docs/11_PRD_Scoped_Workstreams_and_Frameworks.md)
+    framework_code: Optional[str] = None
+    framework_category_id: Optional[str] = None
+    driver_ids: List[str] = Field(default_factory=list)
+    top25_priority_ids: List[str] = Field(default_factory=list)
+    budget_relevance: List[str] = Field(default_factory=list)
+    purpose_statement: Optional[str] = None
+    owner_type: str = "user"
     created_at: datetime
 
 
@@ -47,6 +55,32 @@ class WorkstreamCreate(BaseModel):
     auto_scan: bool = Field(
         default=False,
         description="Enable automatic background source scanning for this workstream",
+    )
+    # FY26 framework / scoping fields
+    framework_code: Optional[str] = Field(
+        default=None,
+        description="Strategic framework code this workstream belongs to (e.g. 'PPP').",
+    )
+    framework_category_id: Optional[str] = Field(
+        default=None,
+        description="Framework category UUID (e.g. People/Place/Partnerships under PPP).",
+    )
+    driver_ids: List[str] = Field(
+        default_factory=list,
+        description="Driver UUIDs from the selected framework category.",
+    )
+    top25_priority_ids: List[str] = Field(
+        default_factory=list,
+        description="Top-25 CMO priority UUIDs this workstream advances.",
+    )
+    budget_relevance: List[str] = Field(
+        default_factory=list,
+        description="Free-text bullets connecting this workstream to budget lines.",
+    )
+    purpose_statement: Optional[str] = Field(
+        default=None,
+        max_length=4000,
+        description="Markdown-friendly purpose statement shown on the workstream header.",
     )
 
     @validator("name")
@@ -77,6 +111,13 @@ class WorkstreamUpdate(BaseModel):
     is_active: Optional[bool] = None
     auto_add: Optional[bool] = None
     auto_scan: Optional[bool] = None
+    # FY26 framework / scoping fields
+    framework_code: Optional[str] = None
+    framework_category_id: Optional[str] = None
+    driver_ids: Optional[List[str]] = None
+    top25_priority_ids: Optional[List[str]] = None
+    budget_relevance: Optional[List[str]] = None
+    purpose_statement: Optional[str] = None
 
 
 class WorkstreamCreateResponse(BaseModel):
@@ -91,6 +132,13 @@ class WorkstreamCreateResponse(BaseModel):
     is_active: bool = True
     auto_scan: bool = False
     auto_add: bool = False
+    framework_code: Optional[str] = None
+    framework_category_id: Optional[str] = None
+    driver_ids: List[str] = Field(default_factory=list)
+    top25_priority_ids: List[str] = Field(default_factory=list)
+    budget_relevance: List[str] = Field(default_factory=list)
+    purpose_statement: Optional[str] = None
+    owner_type: str = "user"
     auto_populated_count: int = 0
     scan_queued: bool = False
 
