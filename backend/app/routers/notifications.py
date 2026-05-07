@@ -1,20 +1,68 @@
 """Notification preferences and digest preview router."""
 
 import logging
+import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.deps import supabase, get_current_user, openai_client, _safe_error
+from app.feature_flags import collaboration_enabled
 from app.models.notification import (
     NotificationPreferencesResponse,
     NotificationPreferencesUpdate,
     DigestPreviewResponse,
 )
+from app.models.workstream_collab import MarkNotificationsReadRequest, NotificationItem
 from app.digest_service import DigestService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["notifications"])
+
+
+@router.get("/me/notifications", response_model=list[NotificationItem])
+async def list_notifications(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    collaboration_enabled()
+
+    def load() -> list[NotificationItem]:
+        query = (
+            supabase.table("collaboration_notifications")
+            .select("*")
+            .eq("user_id", current_user["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if unread_only:
+            query = query.is_("read_at", "null")
+        return [NotificationItem(**row) for row in query.execute().data or []]
+
+    return await asyncio.to_thread(load)
+
+
+@router.post("/me/notifications/mark-read")
+async def mark_notifications_read(
+    request: MarkNotificationsReadRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    collaboration_enabled()
+
+    def mark() -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        query = (
+            supabase.table("collaboration_notifications")
+            .update({"read_at": now})
+            .eq("user_id", current_user["id"])
+        )
+        if request.ids:
+            query = query.in_("id", request.ids)
+        result = query.execute()
+        return {"updated": len(result.data or [])}
+
+    return await asyncio.to_thread(mark)
 
 
 @router.get(

@@ -39,6 +39,9 @@ import {
   Radar,
   MessageSquare,
   Lock,
+  Share2,
+  Users,
+  ListChecks,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -86,6 +89,11 @@ import { WorkstreamForm, type Workstream } from "../components/WorkstreamForm";
 import { WorkstreamChatPanel } from "../components/WorkstreamChatPanel";
 import { FrameworkBadge } from "../components/FrameworkBadge";
 import { useWorkstreamScanPolling } from "../hooks/useWorkstreamScanPolling";
+import { useCapabilities } from "../hooks/useCapabilities";
+import { ShareWorkstreamModal } from "../components/collaboration/ShareWorkstreamModal";
+import { MembersDrawer } from "../components/collaboration/MembersDrawer";
+import { RoleBadge } from "../components/collaboration/RoleBadge";
+import { ActivityRail } from "../components/activity/ActivityRail";
 
 // ============================================================================
 // Types
@@ -367,6 +375,7 @@ const WorkstreamKanban: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuthContext();
+  const { canExport, canRunResearch, forWorkstream } = useCapabilities();
 
   // Check if we arrived from the wizard with a scan just started
   const scanJustStarted =
@@ -397,6 +406,9 @@ const WorkstreamKanban: React.FC = () => {
   // Modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   // Export state
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -418,6 +430,7 @@ const WorkstreamKanban: React.FC = () => {
   const [showBulkExportModal, setShowBulkExportModal] = useState(false);
   const [bulkExportStatus, setBulkExportStatus] =
     useState<BulkBriefStatusResponse | null>(null);
+  const workstreamCapabilities = forWorkstream(workstream);
   // Phase 4 will reattach a setter when the selection toolbar invokes bulk export.
   const bulkExportLoading = false;
   const [bulkExportError, setBulkExportError] = useState<string | null>(null);
@@ -1712,6 +1725,7 @@ const WorkstreamKanban: React.FC = () => {
                     View only
                   </span>
                 )}
+                <RoleBadge role={workstream.role} />
               </div>
               {workstream.description && (
                 <p className="text-gray-600 dark:text-gray-400 max-w-3xl">
@@ -1723,7 +1737,7 @@ const WorkstreamKanban: React.FC = () => {
             {/* Action Buttons */}
             <div className="flex items-center gap-2 flex-wrap">
               {/* Scan for Updates Button (hidden on org-owned workstreams) */}
-              {!isOrgOwned && (
+              {workstreamCapabilities.canEditBoard && canRunResearch && (
                 <button
                   onClick={handleStartScan}
                   disabled={scanning}
@@ -1743,7 +1757,7 @@ const WorkstreamKanban: React.FC = () => {
               )}
 
               {/* Auto-Populate Button (hidden on org-owned workstreams) */}
-              {!isOrgOwned && (
+              {workstreamCapabilities.canEditBoard && (
                 <button
                   onClick={handleAutoPopulate}
                   disabled={autoPopulating}
@@ -1777,8 +1791,32 @@ const WorkstreamKanban: React.FC = () => {
                 />
               </button>
 
+              {workstreamCapabilities.canManage && (
+                <button
+                  onClick={() => setShareOpen(true)}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+                >
+                  <Share2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Share</span>
+                </button>
+              )}
+              <button
+                onClick={() => setMembersOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+              >
+                <Users className="h-4 w-4" />
+                <span className="hidden sm:inline">Members</span>
+              </button>
+              <button
+                onClick={() => setActivityOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+              >
+                <ListChecks className="h-4 w-4" />
+                <span className="hidden sm:inline">Activity</span>
+              </button>
+
               {/* Export Dropdown */}
-              <div className="relative">
+              {canExport && <div className="relative">
                 <button
                   onClick={() => setShowExportMenu(!showExportMenu)}
                   disabled={exportLoading !== null}
@@ -1845,7 +1883,7 @@ const WorkstreamKanban: React.FC = () => {
                     </div>
                   </>
                 )}
-              </div>
+              </div>}
 
               {/* Portfolios Button */}
               <Link
@@ -1868,7 +1906,7 @@ const WorkstreamKanban: React.FC = () => {
               </button>
 
               {/* Edit Filters Button (hidden on org-owned workstreams) */}
-              {!isOrgOwned && (
+              {workstreamCapabilities.canManage && (
                 <button
                   onClick={() => setShowEditModal(true)}
                   className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
@@ -2040,23 +2078,25 @@ const WorkstreamKanban: React.FC = () => {
               showToast("error", "An error occurred in the Kanban board");
             }}
           >
-            <SelectionToolbar
-              workstreamId={id!}
-              selectedCardIds={Array.from(selectedCardIds)}
-              getAuthToken={getAuthToken}
-              showToast={showToast}
-              onClearSelection={handleClearSelection}
-              onCardsChanged={loadCards}
-            />
+            {workstreamCapabilities.canEditBoard && (
+              <SelectionToolbar
+                workstreamId={id!}
+                selectedCardIds={Array.from(selectedCardIds)}
+                getAuthToken={getAuthToken}
+                showToast={showToast}
+                onClearSelection={handleClearSelection}
+                onCardsChanged={loadCards}
+              />
+            )}
             <KanbanBoard
               cards={filteredCards}
               workstreamId={id!}
               onCardMove={handleCardMove}
-              readOnly={isOrgOwned}
+              readOnly={!workstreamCapabilities.canEditBoard}
               onCardClick={handleCardClick}
-              cardActions={isOrgOwned ? undefined : cardActions}
-              selectedCardIds={isOrgOwned ? undefined : selectedCardIds}
-              onToggleSelect={isOrgOwned ? undefined : handleToggleSelect}
+              cardActions={workstreamCapabilities.canEditBoard ? cardActions : undefined}
+              selectedCardIds={workstreamCapabilities.canEditBoard ? selectedCardIds : undefined}
+              onToggleSelect={workstreamCapabilities.canEditBoard ? handleToggleSelect : undefined}
             />
           </KanbanErrorBoundary>
         )}
@@ -2146,6 +2186,26 @@ const WorkstreamKanban: React.FC = () => {
           isOpen={chatOpen}
           onClose={() => setChatOpen(false)}
         />
+        {workstream && (
+          <>
+            <ShareWorkstreamModal
+              workstreamId={workstream.id}
+              open={shareOpen}
+              onClose={() => setShareOpen(false)}
+            />
+            <MembersDrawer
+              workstreamId={workstream.id}
+              open={membersOpen}
+              canManage={workstreamCapabilities.canManage}
+              onClose={() => setMembersOpen(false)}
+            />
+            <ActivityRail
+              workstreamId={workstream.id}
+              open={activityOpen}
+              onClose={() => setActivityOpen(false)}
+            />
+          </>
+        )}
 
         {/* Toast Notifications */}
         <ToastContainer notifications={toasts} onDismiss={dismissToast} />
