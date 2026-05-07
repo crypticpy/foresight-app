@@ -30,7 +30,7 @@ Environment Variables:
 import argparse
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -171,7 +171,11 @@ class ScoreHistoryBackfill:
             History record dictionary ready for insertion
         """
         # Use updated_at if available, otherwise created_at, otherwise now
-        recorded_at = card.get("updated_at") or card.get("created_at") or datetime.now().isoformat()
+        recorded_at = (
+            card.get("updated_at")
+            or card.get("created_at")
+            or datetime.now(timezone.utc).isoformat()
+        )
 
         record = {
             "card_id": card["id"],
@@ -291,7 +295,7 @@ class ScoreHistoryBackfill:
             print(f"  Records to insert: {len(records)}")
 
             # Show cards that would be backfilled
-            print(f"\n  Cards to backfill:")
+            print("\n  Cards to backfill:")
             for i, card in enumerate(cards_to_backfill[:10]):
                 scores_summary = ", ".join(
                     f"{col.replace('_score', '')}={card.get(col)}"
