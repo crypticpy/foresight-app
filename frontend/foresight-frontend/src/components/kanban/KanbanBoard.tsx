@@ -14,7 +14,7 @@
  * - Dark mode support
  */
 
-import React, { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -57,8 +57,6 @@ export interface KanbanBoardProps {
   onCardClick?: OnCardClickCallback;
   /** Optional card action callbacks */
   cardActions?: CardActionCallbacks;
-  /** Optional callback for bulk export (passed to Brief column) */
-  onBulkExport?: () => void;
   /** Optional additional class names */
   className?: string;
 }
@@ -113,7 +111,6 @@ export function KanbanBoard({
   readOnly = false,
   onCardClick,
   cardActions,
-  onBulkExport,
   className,
 }: KanbanBoardProps) {
   // Track the currently dragged card for the overlay
@@ -268,7 +265,6 @@ export function KanbanBoard({
             readOnly={readOnly}
             onCardClick={onCardClick}
             cardActions={cardActions}
-            onBulkExport={column.id === "brief" ? onBulkExport : undefined}
           />
         ))}
       </div>

@@ -69,7 +69,6 @@ import {
   triggerDeepDive,
   autoPopulateWorkstream,
   fetchResearchStatus,
-  getBulkBriefStatus,
   exportBulkBriefs,
   startWorkstreamScan,
   type WorkstreamResearchStatus,
@@ -373,10 +372,8 @@ const WorkstreamKanban: React.FC = () => {
   const [workstream, setWorkstream] = useState<Workstream | null>(null);
   const [cards, setCards] = useState<Record<KanbanStatus, WorkstreamCard[]>>({
     inbox: [],
-    screening: [],
-    research: [],
-    brief: [],
-    watching: [],
+    working: [],
+    ready: [],
     archived: [],
   });
 
@@ -417,7 +414,8 @@ const WorkstreamKanban: React.FC = () => {
   const [showBulkExportModal, setShowBulkExportModal] = useState(false);
   const [bulkExportStatus, setBulkExportStatus] =
     useState<BulkBriefStatusResponse | null>(null);
-  const [bulkExportLoading, setBulkExportLoading] = useState(false);
+  // Phase 4 will reattach a setter when the selection toolbar invokes bulk export.
+  const bulkExportLoading = false;
   const [bulkExportError, setBulkExportError] = useState<string | null>(null);
   const [isBulkExporting, setIsBulkExporting] = useState(false);
 
@@ -722,10 +720,8 @@ const WorkstreamKanban: React.FC = () => {
   const cardsWithResearchStatus = useMemo(() => {
     const enriched: Record<KanbanStatus, WorkstreamCard[]> = {
       inbox: [],
-      screening: [],
-      research: [],
-      brief: [],
-      watching: [],
+      working: [],
+      ready: [],
       archived: [],
     };
 
@@ -1106,35 +1102,6 @@ const WorkstreamKanban: React.FC = () => {
   // ============================================================================
 
   /**
-   * Open the bulk export modal and fetch brief status.
-   */
-  const handleOpenBulkExport = useCallback(async () => {
-    if (!id) return;
-
-    setShowBulkExportModal(true);
-    setBulkExportLoading(true);
-    setBulkExportError(null);
-
-    try {
-      const token = await getAuthToken();
-      if (!token) {
-        setBulkExportError("Authentication required");
-        return;
-      }
-
-      const status = await getBulkBriefStatus(token, id);
-      setBulkExportStatus(status);
-    } catch (err) {
-      console.error("Error fetching bulk brief status:", err);
-      setBulkExportError(
-        err instanceof Error ? err.message : "Failed to load brief status",
-      );
-    } finally {
-      setBulkExportLoading(false);
-    }
-  }, [id, getAuthToken]);
-
-  /**
    * Close the bulk export modal and reset state.
    */
   const handleCloseBulkExport = useCallback(() => {
@@ -1216,10 +1183,8 @@ const WorkstreamKanban: React.FC = () => {
 
     const filtered: Record<KanbanStatus, WorkstreamCard[]> = {
       inbox: [],
-      screening: [],
-      research: [],
-      brief: [],
-      watching: [],
+      working: [],
+      ready: [],
       archived: [],
     };
 
@@ -1951,7 +1916,6 @@ const WorkstreamKanban: React.FC = () => {
               readOnly={isOrgOwned}
               onCardClick={handleCardClick}
               cardActions={isOrgOwned ? undefined : cardActions}
-              onBulkExport={isOrgOwned ? undefined : handleOpenBulkExport}
             />
           </KanbanErrorBoundary>
         )}

@@ -7,60 +7,48 @@
  */
 
 import { API_BASE_URL } from "./config";
+import type { EmbeddedCard } from "../types/card";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /**
- * Valid Kanban column statuses for workstream cards.
- * Cards flow through these stages as part of the research workflow:
- * - inbox: Newly added cards awaiting initial triage
- * - screening: Cards being evaluated for relevance
- * - research: Cards actively being researched
- * - brief: Cards ready for or in briefing stage
- * - watching: Cards to monitor for future developments
- * - archived: Completed or dismissed cards
+ * Valid Kanban stages for workstream cards (v2: collapsed from six to four).
+ *
+ * - inbox    — untriaged signals waiting for a decision
+ * - working  — actively investigating (research running, draft brief, notes)
+ * - ready    — a shareable artifact exists (Ready brief or exported deck)
+ * - archived — done or dismissed (un-archive restores `previous_status`)
+ *
+ * "Watching" is now a card attribute (`is_watching`), not a column. See
+ * docs/16_PRD_Kanban_Redesign_and_Sharing.md.
  */
-export type KanbanStatus =
-  | "inbox"
-  | "screening"
-  | "research"
-  | "brief"
-  | "watching"
-  | "archived";
+export type KanbanStatus = "inbox" | "working" | "ready" | "archived";
+
+/**
+ * Brief artifact lifecycle on a workstream card (chip on Working / Ready).
+ * Distinct from `BriefStatus` (the brief generation polling response, defined
+ * below) — this is just the card's own brief-state attribute.
+ */
+export type CardBriefStatus = "none" | "draft" | "ready" | "exported";
+
+/** Most recent research depth run on a card — drives the freshness badge. */
+export type ResearchDepth = "none" | "quick" | "deep";
 
 /**
  * Detailed card information embedded within workstream cards.
- * Contains core card metadata and scoring for display in Kanban view.
+ *
+ * Aliased to the canonical `EmbeddedCard` type so the kanban component and
+ * the API client agree on the shape of `WorkstreamCard.card`.
  */
-export interface CardDetails {
-  /** Unique identifier for the card */
-  id: string;
-  /** Display name of the card */
-  name: string;
-  /** URL-safe slug for the card */
-  slug: string;
-  /** Brief description or summary of the card */
-  summary: string;
-  /** UUID of the pillar this card belongs to */
-  pillar_id: string;
-  /** Numeric stage identifier (1-8) representing maturity */
-  stage_id: number;
-  /** Innovation horizon classification */
-  horizon: "H1" | "H2" | "H3";
-  /** Novelty score (0-100) indicating how new/unique the concept is */
-  novelty_score: number;
-  /** Maturity score (0-100) indicating development stage */
-  maturity_score: number;
-  /** Optional list of top 25 relevance terms/topics */
-  top25_relevance?: string[];
-}
+export type CardDetails = EmbeddedCard;
 
 /**
  * Workstream card representing a card's presence and state within a workstream.
  * Combines the card reference with workstream-specific metadata like status,
- * position, notes, and reminders.
+ * position, notes, reminders, plus the v2 attributes that used to live in
+ * column choices (watching) or be implicit (brief status, freshness).
  */
 export interface WorkstreamCard {
   /** Unique identifier for this workstream-card relationship */
@@ -83,20 +71,28 @@ export interface WorkstreamCard {
   added_at: string;
   /** Timestamp of last update (ISO format) */
   updated_at: string;
+  /** v2: watch flag, orthogonal to status. Notifies on updates regardless of column. */
+  is_watching: boolean;
+  /** v2: brief artifact state. */
+  brief_status: CardBriefStatus;
+  /** v2: most recent research depth run on this card. */
+  last_research_depth: ResearchDepth;
+  /** v2: timestamp of most recent research run (ISO). */
+  last_research_at: string | null;
+  /** v2: status the card had before being archived (used to restore on un-archive). */
+  previous_status: KanbanStatus | null;
   /** Embedded card details for display */
   card: CardDetails;
 }
 
 /**
- * Cards grouped by their Kanban status.
- * Each status key contains an array of workstream cards for that column.
+ * Cards grouped by their Kanban stage.
+ * Each stage key contains an array of workstream cards for that column.
  */
 export interface GroupedWorkstreamCards {
   inbox: WorkstreamCard[];
-  screening: WorkstreamCard[];
-  research: WorkstreamCard[];
-  brief: WorkstreamCard[];
-  watching: WorkstreamCard[];
+  working: WorkstreamCard[];
+  ready: WorkstreamCard[];
   archived: WorkstreamCard[];
 }
 
@@ -355,10 +351,8 @@ async function apiRequest<T>(
 function createEmptyGroupedCards(): GroupedWorkstreamCards {
   return {
     inbox: [],
-    screening: [],
-    research: [],
-    brief: [],
-    watching: [],
+    working: [],
+    ready: [],
     archived: [],
   };
 }
@@ -428,13 +422,11 @@ export async function fetchWorkstreamCards(
     token,
   );
 
-  // Ensure all status keys exist with proper defaults
+  // Ensure all stage keys exist with proper defaults.
   return {
     inbox: response.inbox || [],
-    screening: response.screening || [],
-    research: response.research || [],
-    brief: response.brief || [],
-    watching: response.watching || [],
+    working: response.working || [],
+    ready: response.ready || [],
     archived: response.archived || [],
   };
 }
@@ -453,7 +445,7 @@ export async function fetchWorkstreamCards(
  *
  * @example
  * ```typescript
- * const card = await addCardToWorkstream(token, wsId, cardId, 'screening', 'Review this week');
+ * const card = await addCardToWorkstream(token, wsId, cardId, 'working', 'Review this week');
  * ```
  */
 export async function addCardToWorkstream(
@@ -517,6 +509,8 @@ export async function updateWorkstreamCard(
     position?: number;
     notes?: string;
     reminder_at?: string | null;
+    is_watching?: boolean;
+    brief_status?: CardBriefStatus;
   },
 ): Promise<WorkstreamCard> {
   return apiRequest<WorkstreamCard>(
@@ -525,6 +519,99 @@ export async function updateWorkstreamCard(
     {
       method: "PATCH",
       body: JSON.stringify(updates),
+    },
+  );
+}
+
+/**
+ * Toggle the watch flag on a workstream card. When `is_watching` is true the
+ * card is monitored for updates regardless of stage; orthogonal to status.
+ */
+export async function setWorkstreamCardWatching(
+  token: string,
+  workstreamId: string,
+  cardId: string,
+  isWatching: boolean,
+): Promise<WorkstreamCard> {
+  return apiRequest<WorkstreamCard>(
+    `/api/v1/me/workstreams/${workstreamId}/cards/${cardId}/watching`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({ is_watching: isWatching }),
+    },
+  );
+}
+
+/**
+ * Server-rendered email payload for a workstream card. The frontend opens
+ * `mailto:` with this subject/body, so the wording stays consistent across
+ * surfaces.
+ */
+export interface SharePayloadResponse {
+  subject: string;
+  body: string;
+  url: string;
+}
+
+export async function fetchWorkstreamCardSharePayload(
+  token: string,
+  workstreamId: string,
+  cardId: string,
+): Promise<SharePayloadResponse> {
+  return apiRequest<SharePayloadResponse>(
+    `/api/v1/me/workstreams/${workstreamId}/cards/${cardId}/share-payload`,
+    token,
+    {
+      method: "GET",
+      headers: {
+        "x-foresight-frontend-url": window.location.origin,
+      },
+    },
+  );
+}
+
+/** Bulk-action vocabulary supported by `POST /workstreams/{id}/bulk`. */
+export type BulkCardAction =
+  | "archive"
+  | "restore"
+  | "watch"
+  | "unwatch"
+  | "set_status"
+  | "set_brief_status"
+  | "copy_share_links"
+  | "email_selection"
+  | "rerun_research"
+  | "generate_portfolio"
+  | "generate_combined_memo"
+  | "export_raw";
+
+export interface BulkCardActionResponse {
+  /** Number of cards affected (mutating actions only). */
+  updated?: number;
+  action?: BulkCardAction;
+  /** copy_share_links / email_selection results. */
+  urls?: string[];
+  subject?: string;
+  body?: string;
+  status?: KanbanStatus;
+  brief_status?: CardBriefStatus;
+  is_watching?: boolean;
+}
+
+export async function bulkWorkstreamCardAction(
+  token: string,
+  workstreamId: string,
+  action: BulkCardAction,
+  cardIds: string[],
+  params?: Record<string, unknown>,
+): Promise<BulkCardActionResponse> {
+  return apiRequest<BulkCardActionResponse>(
+    `/api/v1/me/workstreams/${workstreamId}/bulk`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({ action, card_ids: cardIds, params }),
     },
   );
 }

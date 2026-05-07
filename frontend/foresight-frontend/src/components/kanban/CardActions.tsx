@@ -14,14 +14,7 @@
  * - Keyboard navigation and accessibility
  */
 
-import React, {
-  useState,
-  useRef,
-  useEffect,
-  useCallback,
-  memo,
-  useMemo,
-} from "react";
+import React, { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   MoreVertical,
@@ -32,13 +25,17 @@ import {
   X,
   ChevronRight,
   Loader2,
+  FlaskConical,
+  Zap,
+  FileText,
+  Presentation,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
   KANBAN_COLUMNS,
   type KanbanStatus,
   type WorkstreamCard,
-  type ColumnAction,
 } from "./types";
 
 // =============================================================================
@@ -356,7 +353,7 @@ const MoveSubmenu = memo(function MoveSubmenu({
 export const CardActions = memo(function CardActions({
   card,
   workstreamId: _workstreamId,
-  columnId,
+  columnId: _columnId,
   onNotesUpdate,
   onDeepDive,
   onRemove,
@@ -388,23 +385,6 @@ export const CardActions = memo(function CardActions({
 
   // Screen reader announcement for loading states
   const [srAnnouncement, setSrAnnouncement] = useState("");
-
-  // Get column-specific actions
-  const columnDefinition = useMemo(
-    () => KANBAN_COLUMNS.find((col) => col.id === columnId),
-    [columnId],
-  );
-
-  const columnActions = useMemo<ColumnAction[]>(() => {
-    const actions: ColumnAction[] = [];
-    if (columnDefinition?.primaryAction) {
-      actions.push(columnDefinition.primaryAction);
-    }
-    if (columnDefinition?.secondaryActions) {
-      actions.push(...columnDefinition.secondaryActions);
-    }
-    return actions;
-  }, [columnDefinition]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -531,19 +511,20 @@ export const CardActions = memo(function CardActions({
     }
   }, [card.id, onQuickUpdate]);
 
-  // Handle export
-  // NOTE: Export requires the actual card UUID (card.card.id), not the junction table ID (card.id)
-  // In the Brief column, use onExportBrief to export the executive brief content
-  // In other columns, use onExport to export the original card
+  // Handle export.
+  // Export requires the actual card UUID (card.card.id), not the junction
+  // table id (card.id). In v2 the "brief" column is gone — the brief is a
+  // card attribute, so when a brief artifact exists we export it; otherwise
+  // we export the underlying card.
+  const hasBrief = card.brief_status !== "none" && Boolean(onExportBrief);
   const handleExport = useCallback(
     async (format: "pdf" | "pptx") => {
-      // In Brief column, export the brief; otherwise export the card
-      const exportFn = columnId === "brief" ? onExportBrief : onExport;
+      const exportFn = hasBrief ? onExportBrief : onExport;
       if (!exportFn) return;
 
       setIsOpen(false);
       setIsExporting(true);
-      const exportType = columnId === "brief" ? "Brief" : "";
+      const exportType = hasBrief ? "Brief" : "";
       setSrAnnouncement(
         `Exporting ${exportType} as ${format.toUpperCase()}...`,
       );
@@ -560,7 +541,7 @@ export const CardActions = memo(function CardActions({
         setIsExporting(false);
       }
     },
-    [card.card.id, columnId, onExport, onExportBrief],
+    [card.card.id, hasBrief, onExport, onExportBrief],
   );
 
   // Handle check updates (watching column)
@@ -596,60 +577,22 @@ export const CardActions = memo(function CardActions({
     [card.id, onMoveToColumn],
   );
 
-  // Handle remove (must be defined before handleColumnAction which references it)
+  // Handle remove
   const handleRemove = useCallback(() => {
     setIsOpen(false);
     onRemove(card.id);
   }, [card.id, onRemove]);
 
-  // Generic action handler that routes to the correct function
-  const handleColumnAction = useCallback(
-    async (action: ColumnAction) => {
-      switch (action.handler) {
-        case "quickUpdate":
-          await handleQuickUpdate();
-          break;
-        case "deepDive":
-          handleDeepDive();
-          break;
-        case "exportPdf":
-          await handleExport("pdf");
-          break;
-        case "exportPptx":
-          await handleExport("pptx");
-          break;
-        case "checkUpdates":
-          await handleCheckUpdates();
-          break;
-        case "viewDetails":
-          handleViewDetails();
-          break;
-        case "addNotes":
-          handleNotesClick();
-          break;
-        case "remove":
-          handleRemove();
-          break;
-        case "generateBrief":
-          handleGenerateBrief();
-          break;
-      }
-    },
-    [
-      handleQuickUpdate,
-      handleDeepDive,
-      handleExport,
-      handleCheckUpdates,
-      handleViewDetails,
-      handleNotesClick,
-      handleRemove,
-      handleGenerateBrief,
-    ],
-  );
-
-  // Check if any column action is loading
+  // Disable per-card action buttons while any one of them is mid-flight.
   const isColumnActionLoading =
     isQuickUpdating || isExporting || isCheckingUpdates;
+  const hasCardActions = Boolean(
+    onQuickUpdate ||
+    onCheckUpdates ||
+    onGenerateBrief ||
+    onExport ||
+    onExportBrief,
+  );
 
   // Toggle move submenu
   const toggleMoveSubmenu = useCallback((e: React.MouseEvent) => {
@@ -694,21 +637,94 @@ export const CardActions = memo(function CardActions({
             role="menu"
             aria-orientation="vertical"
           >
-            {/* Column-Specific Actions (shown first if available) */}
-            {columnActions.length > 0 && (
+            {/* Per-card actions — formerly column-specific, now always shown
+                when the parent supplies the corresponding callback. */}
+            {hasCardActions && (
               <>
-                {columnActions.map((action) => {
-                  const Icon = action.icon;
-                  const isLoading =
-                    (action.handler === "quickUpdate" && isQuickUpdating) ||
-                    (action.handler === "exportPdf" && isExporting) ||
-                    (action.handler === "exportPptx" && isExporting) ||
-                    (action.handler === "checkUpdates" && isCheckingUpdates);
-
-                  return (
+                {onQuickUpdate && (
+                  <button
+                    onClick={handleQuickUpdate}
+                    disabled={isColumnActionLoading}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
+                      "text-brand-blue dark:text-brand-light-blue",
+                      "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+                      "disabled:opacity-50 disabled:cursor-not-allowed",
+                    )}
+                    role="menuitem"
+                    title="Refresh with 5 quick sources"
+                  >
+                    {isQuickUpdating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Zap className="h-4 w-4" />
+                    )}
+                    <span className="flex-1 text-left">Quick Update</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                      5 sources
+                    </span>
+                  </button>
+                )}
+                <button
+                  onClick={handleDeepDive}
+                  disabled={isColumnActionLoading}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
+                    "text-brand-blue dark:text-brand-light-blue",
+                    "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                  )}
+                  role="menuitem"
+                  title="Run a deep research dive"
+                >
+                  <FlaskConical className="h-4 w-4" />
+                  <span className="flex-1 text-left">Deep Dive</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    15 sources
+                  </span>
+                </button>
+                {onGenerateBrief && (
+                  <button
+                    onClick={handleGenerateBrief}
+                    disabled={isColumnActionLoading}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
+                      "text-brand-blue dark:text-brand-light-blue",
+                      "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+                      "disabled:opacity-50 disabled:cursor-not-allowed",
+                    )}
+                    role="menuitem"
+                    title="Generate an executive brief"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span className="flex-1 text-left">Generate Brief</span>
+                  </button>
+                )}
+                {onCheckUpdates && (
+                  <button
+                    onClick={handleCheckUpdates}
+                    disabled={isColumnActionLoading}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
+                      "text-brand-blue dark:text-brand-light-blue",
+                      "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+                      "disabled:opacity-50 disabled:cursor-not-allowed",
+                    )}
+                    role="menuitem"
+                    title="Check for new sources"
+                  >
+                    {isCheckingUpdates ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    <span className="flex-1 text-left">Check Updates</span>
+                  </button>
+                )}
+                {(onExport || onExportBrief) && (
+                  <>
                     <button
-                      key={action.id}
-                      onClick={() => handleColumnAction(action)}
+                      onClick={() => handleExport("pdf")}
                       disabled={isColumnActionLoading}
                       className={cn(
                         "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
@@ -717,24 +733,43 @@ export const CardActions = memo(function CardActions({
                         "disabled:opacity-50 disabled:cursor-not-allowed",
                       )}
                       role="menuitem"
-                      title={action.description}
+                      title={
+                        hasBrief ? "Export brief as PDF" : "Export card as PDF"
+                      }
                     >
-                      {isLoading ? (
+                      {isExporting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Icon className="h-4 w-4" />
+                        <FileText className="h-4 w-4" />
                       )}
-                      <span className="flex-1 text-left">{action.label}</span>
-                      {action.description && (
-                        <span className="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[80px]">
-                          {action.handler === "quickUpdate" && "5 sources"}
-                          {action.handler === "deepDive" && "15 sources"}
-                        </span>
-                      )}
+                      <span className="flex-1 text-left">Export PDF</span>
                     </button>
-                  );
-                })}
-                {/* Divider after column-specific actions */}
+                    <button
+                      onClick={() => handleExport("pptx")}
+                      disabled={isColumnActionLoading}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors",
+                        "text-brand-blue dark:text-brand-light-blue",
+                        "hover:bg-blue-50 dark:hover:bg-blue-900/20",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                      )}
+                      role="menuitem"
+                      title={
+                        hasBrief
+                          ? "Export brief as PowerPoint"
+                          : "Export card as PowerPoint"
+                      }
+                    >
+                      {isExporting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Presentation className="h-4 w-4" />
+                      )}
+                      <span className="flex-1 text-left">Export PPTX</span>
+                    </button>
+                  </>
+                )}
+                {/* Divider after per-card actions */}
                 <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
               </>
             )}

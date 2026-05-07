@@ -1,19 +1,13 @@
 /**
- * KanbanColumn Component
+ * KanbanColumn (v2)
  *
- * A droppable column for the workstream kanban board.
- * Uses @dnd-kit for drop target functionality with sortable cards.
- *
- * Features:
- * - Droppable area for card placement
- * - Column header with title, description, and count
- * - Visual feedback when dragging over
- * - Scrollable card list with max height
- * - Empty state placeholder
- * - Dark mode support
+ * Droppable column for the four-stage kanban board. Stage-specific buttons
+ * (Quick Update / Deep Dive / Generate Brief / Check Updates / Export All)
+ * have moved out — they live in the per-card menu and the selection-driven
+ * toolbar now. The column header is purely informational + drop target.
  */
 
-import React, { memo, useMemo } from "react";
+import { memo, useMemo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -21,16 +15,12 @@ import {
 } from "@dnd-kit/sortable";
 import {
   Inbox,
-  Search,
   FlaskConical,
   FileText,
-  Eye,
   Archive,
-  Presentation,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { Tooltip } from "../ui/Tooltip";
 import { KanbanCard } from "./KanbanCard";
 import {
   KANBAN_COLUMNS,
@@ -45,47 +35,28 @@ import {
 // =============================================================================
 
 export interface KanbanColumnProps {
-  /** Unique column identifier */
   id: KanbanStatus;
-  /** Column display title */
   title: string;
-  /** Column description for the header */
   description: string;
-  /** Cards in this column */
   cards: WorkstreamCard[];
-  /** The parent workstream ID */
   workstreamId?: string;
   /** When true, cards in this column do not support drag (read-only board). */
   readOnly?: boolean;
-  /** Optional callback when a card is clicked */
   onCardClick?: OnCardClickCallback;
-  /** Optional card action callbacks */
   cardActions?: CardActionCallbacks;
-  /** Optional callback for bulk export (Brief column only) */
-  onBulkExport?: () => void;
 }
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/**
- * Icon mapping for each column status.
- * Provides visual context for the workflow stage.
- */
 const COLUMN_ICONS: Record<KanbanStatus, LucideIcon> = {
   inbox: Inbox,
-  screening: Search,
-  research: FlaskConical,
-  brief: FileText,
-  watching: Eye,
+  working: FlaskConical,
+  ready: FileText,
   archived: Archive,
 };
 
-/**
- * Color accent mapping for column headers.
- * Subtle visual differentiation between stages.
- */
 const COLUMN_COLORS: Record<
   KanbanStatus,
   { bg: string; text: string; border: string }
@@ -95,25 +66,15 @@ const COLUMN_COLORS: Record<
     text: "text-blue-600 dark:text-blue-400",
     border: "border-blue-200 dark:border-blue-800",
   },
-  screening: {
-    bg: "bg-amber-50 dark:bg-amber-900/20",
-    text: "text-amber-600 dark:text-amber-400",
-    border: "border-amber-200 dark:border-amber-800",
-  },
-  research: {
+  working: {
     bg: "bg-purple-50 dark:bg-purple-900/20",
     text: "text-purple-600 dark:text-purple-400",
     border: "border-purple-200 dark:border-purple-800",
   },
-  brief: {
+  ready: {
     bg: "bg-green-50 dark:bg-green-900/20",
     text: "text-green-600 dark:text-green-400",
     border: "border-green-200 dark:border-green-800",
-  },
-  watching: {
-    bg: "bg-cyan-50 dark:bg-cyan-900/20",
-    text: "text-cyan-600 dark:text-cyan-400",
-    border: "border-cyan-200 dark:border-cyan-800",
   },
   archived: {
     bg: "bg-gray-50 dark:bg-dark-surface/50",
@@ -131,10 +92,6 @@ interface EmptyColumnStateProps {
   hint?: string;
 }
 
-/**
- * Empty state component for columns with no cards.
- * Displays a column-specific hint when available.
- */
 function EmptyColumnState({ columnId, hint }: EmptyColumnStateProps) {
   const colors = COLUMN_COLORS[columnId];
 
@@ -161,12 +118,6 @@ function EmptyColumnState({ columnId, hint }: EmptyColumnStateProps) {
 // Component
 // =============================================================================
 
-/**
- * KanbanColumn - A droppable column containing sortable cards.
- *
- * Provides the drop zone for cards and manages the sortable context
- * for cards within this column.
- */
 export const KanbanColumn = memo(function KanbanColumn({
   id,
   title,
@@ -176,9 +127,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   readOnly = false,
   onCardClick,
   cardActions,
-  onBulkExport,
 }: KanbanColumnProps) {
-  // Configure droppable behavior
   const { setNodeRef, isOver } = useDroppable({
     id,
     data: {
@@ -187,16 +136,13 @@ export const KanbanColumn = memo(function KanbanColumn({
     },
   });
 
-  // Get column definition for actions and hints
   const columnDef = useMemo(
     () => KANBAN_COLUMNS.find((col) => col.id === id),
     [id],
   );
 
-  // Extract card IDs for sortable context
   const cardIds = useMemo(() => cards.map((card) => card.id), [cards]);
 
-  // Get column styling
   const colors = COLUMN_COLORS[id];
   const Icon = COLUMN_ICONS[id];
 
@@ -204,15 +150,12 @@ export const KanbanColumn = memo(function KanbanColumn({
     <div
       ref={setNodeRef}
       className={cn(
-        // Base column styles
         "flex flex-col",
         "w-72 min-w-72 flex-shrink-0",
         "bg-gray-50 dark:bg-dark-surface-deep",
         "rounded-xl",
         "border border-gray-200 dark:border-gray-800",
-        // Transition for hover/over states
         "transition-all duration-200",
-        // Drop target highlight - applied to entire column
         isOver && "ring-2 ring-brand-blue/50 border-brand-blue/50",
       )}
     >
@@ -232,92 +175,25 @@ export const KanbanColumn = memo(function KanbanColumn({
               {title}
             </h3>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Bulk Export Button - Brief column only */}
-            {id === "brief" && onBulkExport && cards.length > 0 && (
-              <Tooltip
-                content={
-                  <div className="max-w-[200px]">
-                    <p className="font-medium">Export Portfolio</p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Combine all briefs into a single presentation
-                    </p>
-                  </div>
-                }
-                side="bottom"
-              >
-                <button
-                  onClick={onBulkExport}
-                  className={cn(
-                    "inline-flex items-center gap-1 px-2 py-1",
-                    "text-xs font-medium rounded-md",
-                    "bg-brand-blue/10 text-brand-blue",
-                    "hover:bg-brand-blue/20",
-                    "dark:bg-brand-blue/20 dark:text-[#9b9edb]",
-                    "dark:hover:bg-brand-blue/30",
-                    "transition-colors",
-                  )}
-                  aria-label="Export all briefs as portfolio"
-                >
-                  <Presentation className="h-3.5 w-3.5" />
-                  <span>Export All</span>
-                </button>
-              </Tooltip>
+          <span
+            className={cn(
+              "inline-flex items-center justify-center",
+              "min-w-5 h-5 px-1.5",
+              "text-xs font-medium rounded-full",
+              cards.length > 0
+                ? cn(colors.bg, colors.text, "border", colors.border)
+                : "bg-gray-100 text-gray-500 dark:bg-dark-surface dark:text-gray-400",
             )}
-            {/* Primary Action Indicator - shows available action for this column */}
-            {columnDef?.primaryAction && (
-              <Tooltip
-                content={
-                  <div className="max-w-[200px]">
-                    <p className="font-medium">
-                      {columnDef.primaryAction.label}
-                    </p>
-                    {columnDef.primaryAction.description && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {columnDef.primaryAction.description}
-                      </p>
-                    )}
-                    <p className="text-xs text-gray-500 mt-1 italic">
-                      Use signal menu to trigger
-                    </p>
-                  </div>
-                }
-                side="bottom"
-              >
-                <div
-                  className={cn(
-                    "inline-flex items-center gap-1 px-2 py-1",
-                    "text-xs rounded-md",
-                    colors.text,
-                    "opacity-60",
-                  )}
-                  aria-label={`${columnDef.primaryAction.label} available in signal menu`}
-                >
-                  <columnDef.primaryAction.icon className="h-3.5 w-3.5" />
-                </div>
-              </Tooltip>
-            )}
-            {/* Card Count Badge */}
-            <span
-              className={cn(
-                "inline-flex items-center justify-center",
-                "min-w-5 h-5 px-1.5",
-                "text-xs font-medium rounded-full",
-                cards.length > 0
-                  ? cn(colors.bg, colors.text, "border", colors.border)
-                  : "bg-gray-100 text-gray-500 dark:bg-dark-surface dark:text-gray-400",
-              )}
-            >
-              {cards.length}
-            </span>
-          </div>
+          >
+            {cards.length}
+          </span>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
           {description}
         </p>
       </div>
 
-      {/* Card List - Scrollable Area */}
+      {/* Card List */}
       <div
         className={cn(
           "flex-1 p-3 overflow-y-auto",

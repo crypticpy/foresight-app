@@ -510,10 +510,10 @@ export const KanbanCard = memo(function KanbanCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  cardActions.onMoveToColumn?.(card.id, "screening");
+                  cardActions.onMoveToColumn?.(card.id, "working");
                 }}
                 className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-md transition-colors"
-                title="Move to Screening"
+                title="Move to Working"
               >
                 <Check className="h-3.5 w-3.5" />
                 Accept
