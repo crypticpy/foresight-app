@@ -22,6 +22,7 @@ import {
   BookOpen,
   Radar,
   Loader2,
+  Lock,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -36,6 +37,12 @@ import {
   type WorkstreamScanStatusResponse,
 } from "../lib/workstream-api";
 import { FrameworkBadge } from "../components/FrameworkBadge";
+import { DriverChip } from "../components/DriverChip";
+import {
+  listFrameworks,
+  getFramework,
+  type Driver,
+} from "../lib/frameworks-api";
 
 // ============================================================================
 // Delete Confirmation Modal
@@ -425,6 +432,7 @@ interface WorkstreamCardProps {
   onEdit: () => void;
   onDelete: () => void;
   scanStatus?: WorkstreamScanStatusResponse | null;
+  driversById?: Record<string, Driver>;
 }
 
 function WorkstreamCard({
@@ -432,6 +440,7 @@ function WorkstreamCard({
   onEdit,
   onDelete,
   scanStatus,
+  driversById,
 }: WorkstreamCardProps) {
   const isOrgOwned = workstream.owner_type === "org";
 
@@ -490,6 +499,15 @@ function WorkstreamCard({
                 disableTooltip
               />
             )}
+            {isOrgOwned && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-dark-surface-elevated dark:text-gray-400 border border-gray-200 dark:border-gray-700"
+                title="Managed by admins — cannot be edited"
+              >
+                <Lock className="h-3 w-3" />
+                View only
+              </span>
+            )}
             {/* Scan running indicator */}
             {scanStatus &&
               (scanStatus.status === "queued" ||
@@ -533,6 +551,38 @@ function WorkstreamCard({
               />
             </div>
           )}
+
+          {/* Drivers (FY26 framework) */}
+          {workstream.driver_ids &&
+            workstream.driver_ids.length > 0 &&
+            driversById && (
+              <div>
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide block mb-1.5">
+                  Drivers
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {workstream.driver_ids
+                    .map((id) => driversById[id])
+                    .filter((d): d is Driver => Boolean(d))
+                    .slice(0, 5)
+                    .map((d) => (
+                      <DriverChip
+                        key={d.id}
+                        name={d.name}
+                        description={d.description}
+                        trackedMetricExamples={d.tracked_metric_examples}
+                        selected
+                        size="sm"
+                      />
+                    ))}
+                  {workstream.driver_ids.length > 5 && (
+                    <span className="inline-flex px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs">
+                      +{workstream.driver_ids.length - 5} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Goals */}
           {workstream.goal_ids.length > 0 && (
@@ -667,6 +717,10 @@ const Workstreams: React.FC = () => {
   const [scanStatuses, setScanStatuses] = useState<
     Record<string, WorkstreamScanStatusResponse>
   >({});
+
+  // Resolved driver definitions, keyed by driver id, used to render driver
+  // chips on workstream cards. Populated once on mount.
+  const [driversById, setDriversById] = useState<Record<string, Driver>>({});
   const scanPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const workstreamsRef = useRef<Workstream[]>([]);
 
@@ -699,6 +753,41 @@ const Workstreams: React.FC = () => {
 
   useEffect(() => {
     loadWorkstreams();
+  }, []);
+
+  // Build a flat driver lookup map by fetching every framework once. Stays in
+  // sync with the user's session — refetched if the page re-mounts.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+        const summaries = await listFrameworks(token);
+        const frameworks = await Promise.all(
+          summaries.map((s) => getFramework(token, s.code).catch(() => null)),
+        );
+        if (cancelled) return;
+        const map: Record<string, Driver> = {};
+        for (const fw of frameworks) {
+          if (!fw) continue;
+          for (const cat of fw.categories) {
+            for (const driver of cat.drivers) {
+              map[driver.id] = driver;
+            }
+          }
+        }
+        setDriversById(map);
+      } catch {
+        // Silently ignore — chips simply won't render.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const fetchScanStatuses = useCallback(async () => {
@@ -964,6 +1053,7 @@ const Workstreams: React.FC = () => {
                       onEdit={() => handleEditClick(workstream)}
                       onDelete={() => handleDeleteClick(workstream)}
                       scanStatus={scanStatuses[workstream.id] || null}
+                      driversById={driversById}
                     />
                   ))}
               </div>
@@ -991,6 +1081,7 @@ const Workstreams: React.FC = () => {
                       onEdit={() => handleEditClick(workstream)}
                       onDelete={() => handleDeleteClick(workstream)}
                       scanStatus={scanStatuses[workstream.id] || null}
+                      driversById={driversById}
                     />
                   ))}
               </div>

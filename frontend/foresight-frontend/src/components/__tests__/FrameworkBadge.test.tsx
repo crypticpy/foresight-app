@@ -49,9 +49,13 @@ describe("FrameworkBadge", () => {
     expect(badge.className).toMatch(/indigo/);
   });
 
-  it("falls back to gray styling for unknown framework codes", () => {
-    render(<FrameworkBadge code="XYZ" disableTooltip />);
-    const badge = screen.getByRole("status");
-    expect(badge.className).toMatch(/gray/);
+  it("picks a stable fallback palette for unknown framework codes", () => {
+    const { rerender } = render(<FrameworkBadge code="XYZ" disableTooltip />);
+    const first = screen.getByRole("status").className;
+    rerender(<FrameworkBadge code="XYZ" disableTooltip />);
+    const second = screen.getByRole("status").className;
+    expect(first).toEqual(second);
+    // Fallback palette is one of teal/amber/rose/cyan/violet
+    expect(first).toMatch(/teal|amber|rose|cyan|violet/);
   });
 });

@@ -27,20 +27,54 @@ export interface FrameworkBadgeProps {
   disableTooltip?: boolean;
 }
 
-const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> =
-  {
-    PPP: {
-      bg: "bg-indigo-50 dark:bg-indigo-900/30",
-      text: "text-indigo-700 dark:text-indigo-300",
-      border: "border-indigo-200 dark:border-indigo-700",
-    },
-  };
+type FrameworkColors = { bg: string; text: string; border: string };
 
-const FALLBACK_COLORS = {
-  bg: "bg-gray-100 dark:bg-dark-surface",
-  text: "text-gray-700 dark:text-gray-300",
-  border: "border-gray-300 dark:border-gray-700",
+// Explicit palette for known frameworks. New frameworks not in this map get a
+// deterministic color from `FALLBACK_PALETTE` keyed by their code, so they
+// stay visually consistent across pages without hard-coding every entry.
+const COLOR_MAP: Record<string, FrameworkColors> = {
+  PPP: {
+    bg: "bg-indigo-50 dark:bg-indigo-900/30",
+    text: "text-indigo-700 dark:text-indigo-300",
+    border: "border-indigo-200 dark:border-indigo-700",
+  },
 };
+
+const FALLBACK_PALETTE: FrameworkColors[] = [
+  {
+    bg: "bg-teal-50 dark:bg-teal-900/30",
+    text: "text-teal-700 dark:text-teal-300",
+    border: "border-teal-200 dark:border-teal-700",
+  },
+  {
+    bg: "bg-amber-50 dark:bg-amber-900/30",
+    text: "text-amber-700 dark:text-amber-300",
+    border: "border-amber-200 dark:border-amber-700",
+  },
+  {
+    bg: "bg-rose-50 dark:bg-rose-900/30",
+    text: "text-rose-700 dark:text-rose-300",
+    border: "border-rose-200 dark:border-rose-700",
+  },
+  {
+    bg: "bg-cyan-50 dark:bg-cyan-900/30",
+    text: "text-cyan-700 dark:text-cyan-300",
+    border: "border-cyan-200 dark:border-cyan-700",
+  },
+  {
+    bg: "bg-violet-50 dark:bg-violet-900/30",
+    text: "text-violet-700 dark:text-violet-300",
+    border: "border-violet-200 dark:border-violet-700",
+  },
+];
+
+function pickFallback(code: string): FrameworkColors {
+  let hash = 0;
+  for (let i = 0; i < code.length; i++) {
+    hash = (hash * 31 + code.charCodeAt(i)) >>> 0;
+  }
+  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length]!;
+}
 
 export function FrameworkBadge({
   code,
@@ -51,7 +85,7 @@ export function FrameworkBadge({
   className,
   disableTooltip = false,
 }: FrameworkBadgeProps) {
-  const colors = COLOR_MAP[code] ?? FALLBACK_COLORS;
+  const colors = COLOR_MAP[code] ?? pickFallback(code);
   const iconSize = getIconSize(size);
 
   const badge = (
