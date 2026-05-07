@@ -42,7 +42,9 @@ export function CommentThread({
     const token = await getToken();
     if (!token) return;
     try {
-      setComments(await listComments(token, targetType, targetId, workstreamId));
+      setComments(
+        await listComments(token, targetType, targetId, workstreamId),
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load comments");
@@ -56,21 +58,33 @@ export function CommentThread({
   const submit = async () => {
     const token = await getToken();
     if (!token || !body.trim()) return;
-    await createComment(token, {
-      target_type: targetType,
-      target_id: targetId,
-      workstream_id: workstreamId,
-      body_markdown: body.trim(),
-    });
-    setBody("");
-    await load();
+    try {
+      setError(null);
+      await createComment(token, {
+        target_type: targetType,
+        target_id: targetId,
+        workstream_id: workstreamId,
+        body_markdown: body.trim(),
+      });
+      setBody("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to post comment");
+    }
   };
 
   const react = async (commentId: string, emoji: string) => {
     const token = await getToken();
     if (!token) return;
-    await toggleCommentReaction(token, commentId, emoji);
-    await load();
+    try {
+      setError(null);
+      await toggleCommentReaction(token, commentId, emoji);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to update reaction",
+      );
+    }
   };
 
   return (
@@ -94,10 +108,16 @@ export function CommentThread({
                 {new Date(comment.created_at).toLocaleString()}
               </time>
             </div>
-            <div
-              className="prose prose-sm max-w-none text-slate-700 dark:prose-invert dark:text-slate-200"
-              dangerouslySetInnerHTML={{ __html: comment.body_html || comment.body_markdown }}
-            />
+            {comment.body_html ? (
+              <div
+                className="prose prose-sm max-w-none text-slate-700 dark:prose-invert dark:text-slate-200"
+                dangerouslySetInnerHTML={{ __html: comment.body_html }}
+              />
+            ) : (
+              <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">
+                {comment.body_markdown}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap gap-1">
               {reactions.map(([emoji, label]) => (
                 <button

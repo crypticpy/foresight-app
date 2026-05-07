@@ -47,16 +47,33 @@ export function MembersDrawer({
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return;
-    await updateMemberRole(token, workstreamId, member.user_id, role as never);
-    await load();
+    try {
+      setError(null);
+      await updateMemberRole(
+        token,
+        workstreamId,
+        member.user_id,
+        role as never,
+      );
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to update member role",
+      );
+    }
   };
 
   const remove = async (member: WorkstreamMember) => {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return;
-    await removeMember(token, workstreamId, member.user_id);
-    await load();
+    try {
+      setError(null);
+      await removeMember(token, workstreamId, member.user_id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to remove member");
+    }
   };
 
   if (!open) return null;
@@ -83,15 +100,22 @@ export function MembersDrawer({
         {error && <p className="px-5 py-3 text-sm text-red-600">{error}</p>}
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {members.map((member) => (
-            <div key={member.user_id} className="flex items-center gap-3 px-5 py-4">
+            <div
+              key={member.user_id}
+              className="flex items-center gap-3 px-5 py-4"
+            >
               <div className="flex h-9 w-9 items-center justify-center rounded bg-slate-100 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-                {(member.display_name || member.email || "?").slice(0, 1).toUpperCase()}
+                {(member.display_name || member.email || "?")
+                  .slice(0, 1)
+                  .toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-slate-900 dark:text-white">
                   {member.display_name || member.email || member.user_id}
                 </p>
-                <p className="truncate text-xs text-slate-500">{member.email}</p>
+                <p className="truncate text-xs text-slate-500">
+                  {member.email}
+                </p>
               </div>
               {canManage && member.role !== "owner" ? (
                 <select
