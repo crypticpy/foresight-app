@@ -147,15 +147,18 @@ class WorkstreamCreateResponse(BaseModel):
 # Workstream Kanban Card Models
 # ============================================================================
 
-# Valid status values for workstream cards (Kanban columns)
+# Valid status values for workstream cards (Kanban columns).
+# v2: collapsed from 6 stages (inbox/screening/research/brief/watching/archived)
+# to 4. See docs/16_PRD_Kanban_Redesign_and_Sharing.md.
 VALID_WORKSTREAM_CARD_STATUSES = {
     "inbox",
-    "screening",
-    "research",
-    "brief",
-    "watching",
+    "working",
+    "ready",
     "archived",
 }
+
+VALID_BRIEF_STATUSES = {"none", "draft", "ready", "exported"}
+VALID_RESEARCH_DEPTHS = {"none", "quick", "deep"}
 
 
 class WorkstreamCardBase(BaseModel):
@@ -172,6 +175,12 @@ class WorkstreamCardBase(BaseModel):
     reminder_at: Optional[datetime] = None
     added_from: str = "manual"
     updated_at: Optional[datetime] = None
+    # v2 card attributes (orthogonal to stage)
+    is_watching: bool = False
+    brief_status: str = "none"
+    last_research_depth: str = "none"
+    last_research_at: Optional[datetime] = None
+    previous_status: Optional[str] = None
 
 
 class WorkstreamCardWithDetails(BaseModel):
@@ -188,6 +197,12 @@ class WorkstreamCardWithDetails(BaseModel):
     reminder_at: Optional[datetime] = None
     added_from: str
     updated_at: Optional[datetime] = None
+    # v2 card attributes
+    is_watching: bool = False
+    brief_status: str = "none"
+    last_research_depth: str = "none"
+    last_research_at: Optional[datetime] = None
+    previous_status: Optional[str] = None
     # Card details
     card: Optional[Dict[str, Any]] = None
 
@@ -231,6 +246,12 @@ class WorkstreamCardUpdate(BaseModel):
     reminder_at: Optional[str] = Field(
         None, description="Reminder timestamp (ISO format)"
     )
+    is_watching: Optional[bool] = Field(
+        None, description="Toggle watch flag (notify on updates)."
+    )
+    brief_status: Optional[str] = Field(
+        None, description="Brief artifact state."
+    )
 
     @validator("status")
     def validate_status(cls, v):
@@ -241,15 +262,71 @@ class WorkstreamCardUpdate(BaseModel):
             )
         return v
 
+    @validator("brief_status")
+    def validate_brief_status(cls, v):
+        if v and v not in VALID_BRIEF_STATUSES:
+            raise ValueError(
+                f"Invalid brief_status. Must be one of: {', '.join(sorted(VALID_BRIEF_STATUSES))}"
+            )
+        return v
+
+
+class WorkstreamCardWatchingUpdate(BaseModel):
+    """Request body for toggling the watch flag on a workstream card."""
+
+    is_watching: bool = Field(..., description="New watch flag value.")
+
+
+class BulkCardActionRequest(BaseModel):
+    """Bulk action over a set of workstream cards.
+
+    See docs/16_PRD_Kanban_Redesign_and_Sharing.md "Selection-driven bulk
+    actions" for the supported action vocabulary.
+    """
+
+    action: str = Field(
+        ...,
+        description=(
+            "One of: archive, restore, watch, unwatch, set_status, "
+            "rerun_research, generate_portfolio, generate_combined_memo, "
+            "email_selection, copy_share_links, export_raw"
+        ),
+    )
+    card_ids: List[str] = Field(
+        ..., description="Workstream-card junction IDs to act on."
+    )
+    params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Action-specific parameters (e.g. depth='quick' for rerun_research, status='working' for set_status).",
+    )
+
+    @validator("card_ids")
+    def card_ids_nonempty(cls, v):
+        if not v:
+            raise ValueError("card_ids must contain at least one id")
+        if len(v) > 200:
+            raise ValueError("Bulk actions are capped at 200 cards per request")
+        return v
+
+
+class SharePayloadResponse(BaseModel):
+    """Email-friendly share payload rendered server-side."""
+
+    subject: str
+    body: str
+    url: str
+
 
 class WorkstreamCardsGroupedResponse(BaseModel):
-    """Response model for cards grouped by status (Kanban view)."""
+    """Response model for cards grouped by status (Kanban view).
+
+    v2: four stages — inbox / working / ready / archived. Watching is no
+    longer a column; clients filter `is_watching` independently.
+    """
 
     inbox: List[WorkstreamCardWithDetails] = []
-    screening: List[WorkstreamCardWithDetails] = []
-    research: List[WorkstreamCardWithDetails] = []
-    brief: List[WorkstreamCardWithDetails] = []
-    watching: List[WorkstreamCardWithDetails] = []
+    working: List[WorkstreamCardWithDetails] = []
+    ready: List[WorkstreamCardWithDetails] = []
     archived: List[WorkstreamCardWithDetails] = []
 
 

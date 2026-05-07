@@ -47,6 +47,7 @@ import { logger } from "../lib/logger";
 import {
   KanbanBoard,
   KanbanErrorBoundary,
+  SelectionToolbar,
   type KanbanStatus,
   type WorkstreamCard,
   type CardActionCallbacks,
@@ -69,9 +70,10 @@ import {
   triggerDeepDive,
   autoPopulateWorkstream,
   fetchResearchStatus,
-  getBulkBriefStatus,
+  setWorkstreamCardWatching,
   exportBulkBriefs,
   startWorkstreamScan,
+  fetchWorkstreamCardSharePayload,
   type WorkstreamResearchStatus,
   type BulkBriefStatusResponse,
   type WorkstreamScanStatusResponse,
@@ -373,10 +375,8 @@ const WorkstreamKanban: React.FC = () => {
   const [workstream, setWorkstream] = useState<Workstream | null>(null);
   const [cards, setCards] = useState<Record<KanbanStatus, WorkstreamCard[]>>({
     inbox: [],
-    screening: [],
-    research: [],
-    brief: [],
-    watching: [],
+    working: [],
+    ready: [],
     archived: [],
   });
 
@@ -417,13 +417,19 @@ const WorkstreamKanban: React.FC = () => {
   const [showBulkExportModal, setShowBulkExportModal] = useState(false);
   const [bulkExportStatus, setBulkExportStatus] =
     useState<BulkBriefStatusResponse | null>(null);
-  const [bulkExportLoading, setBulkExportLoading] = useState(false);
+  // Phase 4 will reattach a setter when the selection toolbar invokes bulk export.
+  const bulkExportLoading = false;
   const [bulkExportError, setBulkExportError] = useState<string | null>(null);
   const [isBulkExporting, setIsBulkExporting] = useState(false);
 
   // Search/filter state for kanban board
   const [searchQuery, setSearchQuery] = useState("");
   const [filterPillar, setFilterPillar] = useState<string | null>(null);
+
+  // Bulk-selection state — drives the SelectionToolbar.
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Research status tracking
   const [researchStatuses, setResearchStatuses] = useState<
@@ -722,10 +728,8 @@ const WorkstreamKanban: React.FC = () => {
   const cardsWithResearchStatus = useMemo(() => {
     const enriched: Record<KanbanStatus, WorkstreamCard[]> = {
       inbox: [],
-      screening: [],
-      research: [],
-      brief: [],
-      watching: [],
+      working: [],
+      ready: [],
       archived: [],
     };
 
@@ -865,6 +869,40 @@ const WorkstreamKanban: React.FC = () => {
       } catch (err) {
         console.error("Error updating notes:", err);
         showToast("error", "Failed to save notes");
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
+   * Toggle the watch flag on a card. The chip flips optimistically in the
+   * card; we update the canonical board state on success and revert on error.
+   */
+  const handleToggleWatching = useCallback(
+    async (cardId: string, isWatching: boolean) => {
+      if (!id) return;
+
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        throw new Error("Authentication required");
+      }
+
+      try {
+        await setWorkstreamCardWatching(token, id, cardId, isWatching);
+        setCards((prev) => {
+          const updated = { ...prev };
+          for (const status of Object.keys(updated) as KanbanStatus[]) {
+            updated[status] = updated[status].map((card) =>
+              card.id === cardId ? { ...card, is_watching: isWatching } : card,
+            );
+          }
+          return updated;
+        });
+      } catch (err) {
+        console.error("Error toggling watch:", err);
+        showToast("error", "Failed to update watch state");
+        throw err;
       }
     },
     [id, getAuthToken, showToast],
@@ -1106,35 +1144,6 @@ const WorkstreamKanban: React.FC = () => {
   // ============================================================================
 
   /**
-   * Open the bulk export modal and fetch brief status.
-   */
-  const handleOpenBulkExport = useCallback(async () => {
-    if (!id) return;
-
-    setShowBulkExportModal(true);
-    setBulkExportLoading(true);
-    setBulkExportError(null);
-
-    try {
-      const token = await getAuthToken();
-      if (!token) {
-        setBulkExportError("Authentication required");
-        return;
-      }
-
-      const status = await getBulkBriefStatus(token, id);
-      setBulkExportStatus(status);
-    } catch (err) {
-      console.error("Error fetching bulk brief status:", err);
-      setBulkExportError(
-        err instanceof Error ? err.message : "Failed to load brief status",
-      );
-    } finally {
-      setBulkExportLoading(false);
-    }
-  }, [id, getAuthToken]);
-
-  /**
    * Close the bulk export modal and reset state.
    */
   const handleCloseBulkExport = useCallback(() => {
@@ -1190,6 +1199,81 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
+   * Email a single card via the user's mail client. Fetches the share-payload
+   * (subject/body/url) from the backend, then opens `mailto:`.
+   */
+  const handleShareCard = useCallback(
+    async (cardId: string) => {
+      if (!id) return;
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        return;
+      }
+      try {
+        const payload = await fetchWorkstreamCardSharePayload(
+          token,
+          id,
+          cardId,
+        );
+        const subject = encodeURIComponent(payload.subject);
+        const body = encodeURIComponent(payload.body);
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      } catch (err) {
+        console.error("share-payload fetch failed:", err);
+        showToast("error", "Could not prepare share email");
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
+   * Copy a single card's public share link to the clipboard.
+   */
+  const handleCopyShareLink = useCallback(
+    async (cardId: string) => {
+      if (!id) return;
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        return;
+      }
+      try {
+        const payload = await fetchWorkstreamCardSharePayload(
+          token,
+          id,
+          cardId,
+        );
+        await navigator.clipboard.writeText(payload.url);
+        showToast("success", "Share link copied to clipboard");
+      } catch (err) {
+        console.error("copy share link failed:", err);
+        showToast("error", "Could not copy share link");
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
+   * Toggle a card's membership in the bulk-selection set.
+   */
+  const handleToggleSelect = useCallback((cardId: string) => {
+    setSelectedCardIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) {
+        next.delete(cardId);
+      } else {
+        next.add(cardId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedCardIds(new Set());
+  }, []);
+
+  /**
    * Card action callbacks for KanbanBoard.
    */
   const cardActions: CardActionCallbacks = {
@@ -1202,6 +1286,9 @@ const WorkstreamKanban: React.FC = () => {
     onExportBrief: handleBriefExportFromCard,
     onCheckUpdates: handleCheckUpdates,
     onGenerateBrief: handleGenerateBrief,
+    onToggleWatching: handleToggleWatching,
+    onShareCard: handleShareCard,
+    onCopyShareLink: handleCopyShareLink,
   };
 
   /**
@@ -1216,10 +1303,8 @@ const WorkstreamKanban: React.FC = () => {
 
     const filtered: Record<KanbanStatus, WorkstreamCard[]> = {
       inbox: [],
-      screening: [],
-      research: [],
-      brief: [],
-      watching: [],
+      working: [],
+      ready: [],
       archived: [],
     };
 
@@ -1944,6 +2029,14 @@ const WorkstreamKanban: React.FC = () => {
               showToast("error", "An error occurred in the Kanban board");
             }}
           >
+            <SelectionToolbar
+              workstreamId={id!}
+              selectedCardIds={Array.from(selectedCardIds)}
+              getAuthToken={getAuthToken}
+              showToast={showToast}
+              onClearSelection={handleClearSelection}
+              onCardsChanged={loadCards}
+            />
             <KanbanBoard
               cards={filteredCards}
               workstreamId={id!}
@@ -1951,7 +2044,8 @@ const WorkstreamKanban: React.FC = () => {
               readOnly={isOrgOwned}
               onCardClick={handleCardClick}
               cardActions={isOrgOwned ? undefined : cardActions}
-              onBulkExport={isOrgOwned ? undefined : handleOpenBulkExport}
+              selectedCardIds={isOrgOwned ? undefined : selectedCardIds}
+              onToggleSelect={isOrgOwned ? undefined : handleToggleSelect}
             />
           </KanbanErrorBoundary>
         )}

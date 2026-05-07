@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -14,7 +14,11 @@ from app.models.workstream import (
     WorkstreamCardCreate,
     WorkstreamCardUpdate,
     WorkstreamCardsGroupedResponse,
+    WorkstreamCardWatchingUpdate,
+    BulkCardActionRequest,
+    SharePayloadResponse,
     VALID_WORKSTREAM_CARD_STATUSES,
+    VALID_BRIEF_STATUSES,
     WorkstreamResearchStatus,
     WorkstreamResearchStatusResponse,
 )
@@ -26,6 +30,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["workstream-kanban"])
 
 
+def _record_research_trigger(
+    workstream_card_id: str, current_status: Optional[str], depth: str
+) -> None:
+    """Stamp last_research_* on a workstream_card and promote inbox → working.
+
+    Per docs/16_PRD_Kanban_Redesign_and_Sharing.md "State transitions": running
+    research on an Inbox card moves it to Working; running it elsewhere leaves
+    the stage alone (Ready cards just get their brief flagged stale upstream).
+    """
+    update: Dict[str, Any] = {
+        "last_research_depth": depth,
+        "last_research_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if current_status == "inbox":
+        update["status"] = "working"
+
+    try:
+        supabase.table("workstream_cards").update(update).eq(
+            "id", workstream_card_id
+        ).execute()
+    except Exception as e:  # noqa: BLE001 — non-fatal; research task is already created
+        logger.warning(f"Failed to stamp research metadata on card {workstream_card_id}: {e}")
+
+
+def _row_to_card_with_details(item: Dict[str, Any]) -> WorkstreamCardWithDetails:
+    """Map a `workstream_cards` row (with `cards(*)` joined) to the response model."""
+    return WorkstreamCardWithDetails(
+        id=item["id"],
+        workstream_id=item["workstream_id"],
+        card_id=item["card_id"],
+        added_by=item["added_by"],
+        added_at=item["added_at"],
+        status=item.get("status", "inbox"),
+        position=item.get("position", 0),
+        notes=item.get("notes"),
+        reminder_at=item.get("reminder_at"),
+        added_from=item.get("added_from", "manual"),
+        updated_at=item.get("updated_at"),
+        is_watching=bool(item.get("is_watching", False)),
+        brief_status=item.get("brief_status") or "none",
+        last_research_depth=item.get("last_research_depth") or "none",
+        last_research_at=item.get("last_research_at"),
+        previous_status=item.get("previous_status"),
+        card=item.get("cards"),
+    )
+
+
 @router.get(
     "/me/workstreams/{workstream_id}/cards",
     response_model=WorkstreamCardsGroupedResponse,
@@ -34,17 +86,11 @@ async def get_workstream_cards(
     workstream_id: str, current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all cards in a workstream grouped by status (Kanban view).
+    Get all cards in a workstream grouped by stage (Kanban view).
 
-    Returns cards organized into columns:
-    - inbox: Newly added cards awaiting review
-    - screening: Cards being screened for relevance
-    - research: Cards actively being researched
-    - brief: Cards with completed briefs
-    - watching: Cards being monitored for updates
-    - archived: Archived cards
-
-    Each card includes full card details joined from the cards table.
+    Stages (v2): inbox / working / ready / archived. Watching is a card
+    attribute (`is_watching`), not a stage. See
+    docs/16_PRD_Kanban_Redesign_and_Sharing.md.
 
     Args:
         workstream_id: UUID of the workstream
@@ -83,13 +129,10 @@ async def get_workstream_cards(
         .execute()
     )
 
-    # Group cards by status
-    grouped = {
+    grouped: Dict[str, List[WorkstreamCardWithDetails]] = {
         "inbox": [],
-        "screening": [],
-        "research": [],
-        "brief": [],
-        "watching": [],
+        "working": [],
+        "ready": [],
         "archived": [],
     }
 
@@ -97,22 +140,7 @@ async def get_workstream_cards(
         card_status = item.get("status", "inbox")
         if card_status not in grouped:
             card_status = "inbox"
-
-        card_with_details = WorkstreamCardWithDetails(
-            id=item["id"],
-            workstream_id=item["workstream_id"],
-            card_id=item["card_id"],
-            added_by=item["added_by"],
-            added_at=item["added_at"],
-            status=item.get("status", "inbox"),
-            position=item.get("position", 0),
-            notes=item.get("notes"),
-            reminder_at=item.get("reminder_at"),
-            added_from=item.get("added_from", "manual"),
-            updated_at=item.get("updated_at"),
-            card=item.get("cards"),
-        )
-        grouped[card_status].append(card_with_details)
+        grouped[card_status].append(_row_to_card_with_details(item))
 
     return WorkstreamCardsGroupedResponse(**grouped)
 
@@ -214,21 +242,9 @@ async def add_card_to_workstream(
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to add card to workstream")
 
-    inserted = result.data[0]
-    return WorkstreamCardWithDetails(
-        id=inserted["id"],
-        workstream_id=inserted["workstream_id"],
-        card_id=inserted["card_id"],
-        added_by=inserted["added_by"],
-        added_at=inserted["added_at"],
-        status=inserted.get("status", "inbox"),
-        position=inserted.get("position", 0),
-        notes=inserted.get("notes"),
-        reminder_at=inserted.get("reminder_at"),
-        added_from=inserted.get("added_from", "manual"),
-        updated_at=inserted.get("updated_at"),
-        card=card_response.data[0],
-    )
+    inserted = dict(result.data[0])
+    inserted["cards"] = card_response.data[0]
+    return _row_to_card_with_details(inserted)
 
 
 @router.patch(
@@ -291,35 +307,45 @@ async def update_workstream_card(
     existing = wsc_response.data[0]
     workstream_card_id = existing["id"]
 
-    # Build update dict
-    update_dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    update_dict: Dict[str, Any] = {
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
 
     if update_data.status is not None:
-        # If status changed, recalculate position
-        if update_data.status != existing.get("status"):
+        new_status = update_data.status
+        prev_status = existing.get("status") or "inbox"
+        if new_status != prev_status:
             # Get max position in new column
             position_response = (
                 supabase.table("workstream_cards")
                 .select("position")
                 .eq("workstream_id", workstream_id)
-                .eq("status", update_data.status)
+                .eq("status", new_status)
                 .order("position", desc=True)
                 .limit(1)
                 .execute()
             )
-
             next_position = 0
             if position_response.data:
                 next_position = position_response.data[0]["position"] + 1
 
-            update_dict["status"] = update_data.status
+            update_dict["status"] = new_status
             update_dict["position"] = (
                 update_data.position
                 if update_data.position is not None
                 else next_position
             )
+
+            # Archive bookkeeping: remember where we came from so restore can
+            # send the card back to its original column.
+            if new_status == "archived" and prev_status != "archived":
+                update_dict["previous_status"] = prev_status
+            elif prev_status == "archived" and new_status != "archived":
+                # Coming out of the archive — clear previous_status so it won't
+                # accidentally apply on a future archive cycle.
+                update_dict["previous_status"] = None
         else:
-            update_dict["status"] = update_data.status
+            update_dict["status"] = new_status
             if update_data.position is not None:
                 update_dict["position"] = update_data.position
     elif update_data.position is not None:
@@ -331,7 +357,12 @@ async def update_workstream_card(
     if update_data.reminder_at is not None:
         update_dict["reminder_at"] = update_data.reminder_at
 
-    # Perform update
+    if update_data.is_watching is not None:
+        update_dict["is_watching"] = update_data.is_watching
+
+    if update_data.brief_status is not None:
+        update_dict["brief_status"] = update_data.brief_status
+
     result = (
         supabase.table("workstream_cards")
         .update(update_dict)
@@ -342,9 +373,6 @@ async def update_workstream_card(
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to update workstream card")
 
-    updated = result.data[0]
-
-    # Re-fetch with card details for response
     final_response = (
         supabase.table("workstream_cards")
         .select("*, cards(*)")
@@ -355,21 +383,7 @@ async def update_workstream_card(
     if not final_response.data:
         raise HTTPException(status_code=500, detail="Failed to retrieve updated card")
 
-    item = final_response.data[0]
-    return WorkstreamCardWithDetails(
-        id=item["id"],
-        workstream_id=item["workstream_id"],
-        card_id=item["card_id"],
-        added_by=item["added_by"],
-        added_at=item["added_at"],
-        status=item.get("status", "inbox"),
-        position=item.get("position", 0),
-        notes=item.get("notes"),
-        reminder_at=item.get("reminder_at"),
-        added_from=item.get("added_from", "manual"),
-        updated_at=item.get("updated_at"),
-        card=item.get("cards"),
-    )
+    return _row_to_card_with_details(final_response.data[0])
 
 
 @router.delete("/me/workstreams/{workstream_id}/cards/{card_id}")
@@ -475,7 +489,7 @@ async def trigger_card_deep_dive(
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = (
         supabase.table("workstream_cards")
-        .select("id, card_id")
+        .select("id, card_id, status")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
         .execute()
@@ -484,8 +498,8 @@ async def trigger_card_deep_dive(
     if not wsc_response.data:
         raise HTTPException(status_code=404, detail="Card not found in this workstream")
 
-    # Get the actual underlying card UUID for research
-    actual_card_id = wsc_response.data[0]["card_id"]
+    wsc_row = wsc_response.data[0]
+    actual_card_id = wsc_row["card_id"]
 
     # Check rate limit for deep research
     service = ResearchService(supabase, openai_client)
@@ -494,7 +508,6 @@ async def trigger_card_deep_dive(
             status_code=429, detail="Daily deep research limit reached (2 per card)"
         )
 
-    # Create research task using the actual underlying card UUID
     task_record = {
         "user_id": current_user["id"],
         "card_id": actual_card_id,
@@ -507,9 +520,10 @@ async def trigger_card_deep_dive(
     if not task_result.data:
         raise HTTPException(status_code=500, detail="Failed to create research task")
 
-    task = task_result.data[0]
+    # Stamp research metadata + auto-promote inbox → working (PRD §State transitions).
+    _record_research_trigger(card_id, wsc_row.get("status"), "deep")
 
-    # Task execution is handled by the background worker (see `app.worker`).
+    task = task_result.data[0]
     return ResearchTask(**task)
 
 
@@ -557,7 +571,7 @@ async def trigger_card_quick_update(
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = (
         supabase.table("workstream_cards")
-        .select("id, card_id")
+        .select("id, card_id, status")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
         .execute()
@@ -566,11 +580,9 @@ async def trigger_card_quick_update(
     if not wsc_response.data:
         raise HTTPException(status_code=404, detail="Card not found in this workstream")
 
-    # Get the actual underlying card UUID for research
-    actual_card_id = wsc_response.data[0]["card_id"]
+    wsc_row = wsc_response.data[0]
+    actual_card_id = wsc_row["card_id"]
 
-    # Create research task using the actual underlying card UUID
-    # task_type='quick_update' signals the worker to do a lighter 5-source update
     task_record = {
         "user_id": current_user["id"],
         "card_id": actual_card_id,
@@ -583,9 +595,9 @@ async def trigger_card_quick_update(
     if not task_result.data:
         raise HTTPException(status_code=500, detail="Failed to create research task")
 
-    task = task_result.data[0]
+    _record_research_trigger(card_id, wsc_row.get("status"), "quick")
 
-    # Task execution is handled by the background worker (see `app.worker`).
+    task = task_result.data[0]
     return ResearchTask(**task)
 
 
@@ -734,3 +746,271 @@ async def get_workstream_research_status(
     ]
 
     return WorkstreamResearchStatusResponse(tasks=result_tasks)
+
+
+# ============================================================================
+# v2: Watching toggle, share-payload, bulk actions
+# See docs/16_PRD_Kanban_Redesign_and_Sharing.md
+# ============================================================================
+
+
+def _verify_workstream_owner(workstream_id: str, user_id: str) -> None:
+    """Raise HTTPException unless the user owns the workstream."""
+    ws_response = (
+        supabase.table("workstreams")
+        .select("id, user_id")
+        .eq("id", workstream_id)
+        .execute()
+    )
+    if not ws_response.data:
+        raise HTTPException(status_code=404, detail="Workstream not found")
+    if ws_response.data[0]["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this workstream"
+        )
+
+
+@router.post(
+    "/me/workstreams/{workstream_id}/cards/{card_id}/watching",
+    response_model=WorkstreamCardWithDetails,
+)
+async def toggle_workstream_card_watching(
+    workstream_id: str,
+    card_id: str,
+    body: WorkstreamCardWatchingUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Toggle the `is_watching` flag on a workstream card."""
+    _verify_workstream_owner(workstream_id, current_user["id"])
+
+    wsc_response = (
+        supabase.table("workstream_cards")
+        .select("id")
+        .eq("workstream_id", workstream_id)
+        .eq("id", card_id)
+        .execute()
+    )
+    if not wsc_response.data:
+        raise HTTPException(status_code=404, detail="Card not found in this workstream")
+
+    supabase.table("workstream_cards").update(
+        {
+            "is_watching": body.is_watching,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).eq("id", card_id).execute()
+
+    refreshed = (
+        supabase.table("workstream_cards")
+        .select("*, cards(*)")
+        .eq("id", card_id)
+        .execute()
+    )
+    if not refreshed.data:
+        raise HTTPException(status_code=500, detail="Failed to retrieve updated card")
+    return _row_to_card_with_details(refreshed.data[0])
+
+
+@router.get(
+    "/me/workstreams/{workstream_id}/cards/{card_id}/share-payload",
+    response_model=SharePayloadResponse,
+)
+async def get_workstream_card_share_payload(
+    workstream_id: str,
+    card_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a server-rendered email-friendly share payload for one card.
+
+    The frontend opens the user's mail client via `mailto:` using these fields,
+    so the body wording stays consistent regardless of which surface triggers
+    the share.
+    """
+    _verify_workstream_owner(workstream_id, current_user["id"])
+
+    wsc_response = (
+        supabase.table("workstream_cards")
+        .select("*, cards(*)")
+        .eq("workstream_id", workstream_id)
+        .eq("id", card_id)
+        .execute()
+    )
+    if not wsc_response.data:
+        raise HTTPException(status_code=404, detail="Card not found in this workstream")
+
+    item = wsc_response.data[0]
+    card = item.get("cards") or {}
+    name = card.get("name") or "Untitled signal"
+    summary = (card.get("summary") or "").strip()
+    slug = card.get("slug") or card.get("id")
+
+    # Best-effort frontend URL: respect FRONTEND_URL env var if exposed via the
+    # request, else fall back to a relative `/cards/<slug>` path that the
+    # recipient would open from the same deployment.
+    base_url = (
+        request.headers.get("x-foresight-frontend-url")
+        or request.headers.get("origin")
+        or ""
+    ).rstrip("/")
+    url = f"{base_url}/cards/{slug}" if base_url else f"/cards/{slug}"
+
+    subject = f"Foresight signal: {name}"
+    body_lines = [name, ""]
+    if summary:
+        body_lines.extend([summary, ""])
+    body_lines.append(url)
+    body = "\n".join(body_lines)
+
+    return SharePayloadResponse(subject=subject, body=body, url=url)
+
+
+@router.post(
+    "/me/workstreams/{workstream_id}/bulk",
+)
+async def bulk_workstream_card_action(
+    workstream_id: str,
+    body: BulkCardActionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Run a bulk action across selected workstream cards.
+
+    Supported actions (mutating):
+      - archive          → status='archived' (records previous_status)
+      - restore          → un-archive back to previous_status (else 'working')
+      - watch / unwatch  → toggle is_watching
+      - set_status       → params.status in {inbox,working,ready,archived}
+      - set_brief_status → params.brief_status in VALID_BRIEF_STATUSES
+
+    Read-only actions (caller renders results):
+      - copy_share_links → returns {urls: [...]}
+      - email_selection  → returns {subject, body}
+
+    Heavier actions (rerun_research, generate_portfolio, generate_combined_memo,
+    export_raw) are stubbed out for now and return 501.
+    """
+    _verify_workstream_owner(workstream_id, current_user["id"])
+
+    rows_response = (
+        supabase.table("workstream_cards")
+        .select("*, cards(*)")
+        .eq("workstream_id", workstream_id)
+        .in_("id", body.card_ids)
+        .execute()
+    )
+    rows = rows_response.data or []
+    if len(rows) != len(set(body.card_ids)):
+        # Some ids didn't match; surface that but still operate on the matched rows.
+        logger.info(
+            f"bulk action {body.action}: {len(rows)} of {len(body.card_ids)} cards matched"
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    action = body.action
+    params = body.params or {}
+
+    if action == "archive":
+        for row in rows:
+            if row.get("status") == "archived":
+                continue
+            supabase.table("workstream_cards").update(
+                {
+                    "status": "archived",
+                    "previous_status": row.get("status") or "inbox",
+                    "updated_at": now_iso,
+                }
+            ).eq("id", row["id"]).execute()
+        return {"updated": len(rows), "action": action}
+
+    if action == "restore":
+        for row in rows:
+            if row.get("status") != "archived":
+                continue
+            target = row.get("previous_status") or "working"
+            if target not in VALID_WORKSTREAM_CARD_STATUSES or target == "archived":
+                target = "working"
+            supabase.table("workstream_cards").update(
+                {
+                    "status": target,
+                    "previous_status": None,
+                    "updated_at": now_iso,
+                }
+            ).eq("id", row["id"]).execute()
+        return {"updated": len(rows), "action": action}
+
+    if action in ("watch", "unwatch"):
+        flag = action == "watch"
+        if rows:
+            supabase.table("workstream_cards").update(
+                {"is_watching": flag, "updated_at": now_iso}
+            ).in_("id", [r["id"] for r in rows]).execute()
+        return {"updated": len(rows), "action": action, "is_watching": flag}
+
+    if action == "set_status":
+        new_status = params.get("status")
+        if new_status not in VALID_WORKSTREAM_CARD_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"params.status must be one of: {sorted(VALID_WORKSTREAM_CARD_STATUSES)}",
+            )
+        for row in rows:
+            update: Dict[str, Any] = {"status": new_status, "updated_at": now_iso}
+            prev = row.get("status") or "inbox"
+            if new_status == "archived" and prev != "archived":
+                update["previous_status"] = prev
+            elif prev == "archived" and new_status != "archived":
+                update["previous_status"] = None
+            supabase.table("workstream_cards").update(update).eq(
+                "id", row["id"]
+            ).execute()
+        return {"updated": len(rows), "action": action, "status": new_status}
+
+    if action == "set_brief_status":
+        new_brief = params.get("brief_status")
+        if new_brief not in VALID_BRIEF_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"params.brief_status must be one of: {sorted(VALID_BRIEF_STATUSES)}",
+            )
+        if rows:
+            supabase.table("workstream_cards").update(
+                {"brief_status": new_brief, "updated_at": now_iso}
+            ).in_("id", [r["id"] for r in rows]).execute()
+        return {"updated": len(rows), "action": action, "brief_status": new_brief}
+
+    if action == "copy_share_links":
+        urls = []
+        for row in rows:
+            card = row.get("cards") or {}
+            slug = card.get("slug") or card.get("id")
+            if slug:
+                urls.append(f"/cards/{slug}")
+        return {"urls": urls, "action": action}
+
+    if action == "email_selection":
+        lines: List[str] = []
+        for row in rows:
+            card = row.get("cards") or {}
+            name = card.get("name") or "Untitled signal"
+            slug = card.get("slug") or card.get("id")
+            url = f"/cards/{slug}" if slug else ""
+            lines.append(f"- {name} {url}".rstrip())
+        subject = f"Foresight signals ({len(rows)})"
+        body_text = "Sharing the following Foresight signals:\n\n" + "\n".join(lines)
+        return {"subject": subject, "body": body_text, "action": action}
+
+    if action in (
+        "rerun_research",
+        "generate_portfolio",
+        "generate_combined_memo",
+        "export_raw",
+    ):
+        # These actions are tracked in the PRD but not wired into the worker
+        # yet; the frontend should fall back to per-card calls until phase 4/5
+        # ships them.
+        raise HTTPException(
+            status_code=501,
+            detail=f"Bulk action '{action}' is not implemented in this build.",
+        )
+
+    raise HTTPException(status_code=400, detail=f"Unknown bulk action: {action}")

@@ -12,7 +12,7 @@
  * - Dark mode support
  */
 
-import React, { memo, useState } from "react";
+import React, { memo, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
@@ -28,6 +28,11 @@ import {
   CheckCircle2,
   AlertCircle,
   CheckCircle,
+  Eye,
+  EyeOff,
+  FileText,
+  Zap,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PillarBadge } from "../PillarBadge";
@@ -40,6 +45,7 @@ import { ExploratoryBadge } from "../badges/ExploratoryBadge";
 import { Tooltip } from "../ui/Tooltip";
 import { CardActions } from "./CardActions";
 import { getPillarByCode } from "../../data/taxonomy";
+import { formatRelativeTime } from "../CardDetail/utils";
 import type {
   WorkstreamCard as WorkstreamCardType,
   CardActionCallbacks,
@@ -65,6 +71,10 @@ export interface KanbanCardProps {
   onCardClick?: (card: WorkstreamCardType) => void;
   /** Optional card action callbacks */
   cardActions?: CardActionCallbacks;
+  /** Whether this card is part of the current bulk-action selection. */
+  isSelected?: boolean;
+  /** Toggle this card's selection in the bulk-action set. */
+  onToggleSelect?: (cardId: string) => void;
 }
 
 // =============================================================================
@@ -193,6 +203,8 @@ export const KanbanCard = memo(function KanbanCard({
   readOnly = false,
   onCardClick,
   cardActions,
+  isSelected = false,
+  onToggleSelect,
 }: KanbanCardProps) {
   const navigate = useNavigate();
 
@@ -230,6 +242,107 @@ export const KanbanCard = memo(function KanbanCard({
   const [isApproved, setIsApproved] = useState(false);
   const showNeedsReview =
     card.review_status === "pending_review" && !isApproved;
+
+  // Optimistic state for the watching toggle so the chip flips instantly
+  // even before the server round-trip resolves.
+  const [optimisticWatching, setOptimisticWatching] = useState<boolean | null>(
+    null,
+  );
+  const isWatching = optimisticWatching ?? card.is_watching;
+
+  const handleToggleWatching = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!cardActions?.onToggleWatching) return;
+    const next = !isWatching;
+    setOptimisticWatching(next);
+    try {
+      await cardActions.onToggleWatching(card.id, next);
+    } catch {
+      // Revert on failure — let the server state win.
+      setOptimisticWatching(null);
+    }
+  };
+
+  // Quick-triage keyboard shortcuts — only active for inbox cards while
+  // the pointer is over the card. Keys: e/a accept (→ working), x/r dismiss
+  // (→ archived), w toggle watching. Ignored when typing in form fields.
+  const [isHovered, setIsHovered] = useState(false);
+  useEffect(() => {
+    if (!isHovered || columnId !== "inbox" || isDragOverlay || !cardActions) {
+      return;
+    }
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const k = e.key.toLowerCase();
+      if (k === "e" || k === "a") {
+        e.preventDefault();
+        cardActions.onMoveToColumn?.(card.id, "working");
+      } else if (k === "x" || k === "r") {
+        e.preventDefault();
+        cardActions.onMoveToColumn?.(card.id, "archived");
+      } else if (k === "w") {
+        e.preventDefault();
+        const next = !isWatching;
+        setOptimisticWatching(next);
+        Promise.resolve(cardActions.onToggleWatching?.(card.id, next)).catch(
+          () => setOptimisticWatching(null),
+        );
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isHovered, columnId, isDragOverlay, cardActions, card.id, isWatching]);
+
+  // Brief-status chip — hidden when the card has no brief artifact yet.
+  const briefChip = (() => {
+    switch (card.brief_status) {
+      case "draft":
+        return {
+          label: "Draft brief",
+          className:
+            "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800",
+        };
+      case "ready":
+        return {
+          label: "Brief ready",
+          className:
+            "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800",
+        };
+      case "exported":
+        return {
+          label: "Brief exported",
+          className:
+            "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800",
+        };
+      default:
+        return null;
+    }
+  })();
+
+  // Freshness chip — shown only when research has been run.
+  const freshnessChip =
+    card.last_research_depth !== "none" && card.last_research_at
+      ? {
+          icon:
+            card.last_research_depth === "deep" ? (
+              <FlaskConical className="h-3 w-3" />
+            ) : (
+              <Zap className="h-3 w-3" />
+            ),
+          label: `${
+            card.last_research_depth === "deep" ? "Deep" : "Quick"
+          } · ${formatRelativeTime(card.last_research_at)}`,
+        }
+      : null;
 
   /**
    * Handle card click navigation.
@@ -269,6 +382,8 @@ export const KanbanCard = memo(function KanbanCard({
       style={style}
       {...attributes}
       {...listeners}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       className={cn(
         // Base card styles
         "group relative bg-white dark:bg-dark-surface rounded-lg shadow-sm",
@@ -281,10 +396,38 @@ export const KanbanCard = memo(function KanbanCard({
         // Drag states
         isDragging && "opacity-50 shadow-lg ring-2 ring-brand-blue/50",
         isDragOverlay && "shadow-xl scale-105 rotate-2 cursor-grabbing",
+        // Selection ring — wins over hover-shadow so the user can scan
+        // the selection at a glance.
+        isSelected &&
+          "ring-2 ring-brand-blue ring-offset-1 dark:ring-offset-dark-surface-deep",
         // Touch optimization and cursor
         "touch-none cursor-grab active:cursor-grabbing",
       )}
     >
+      {/* Selection checkbox — top-left. Always visible once any card is
+          selected, otherwise revealed on hover so cards stay clean. */}
+      {onToggleSelect && !isDragOverlay && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect(card.id);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            "absolute top-2 left-2 z-10 flex h-5 w-5 items-center justify-center rounded border transition-all",
+            isSelected
+              ? "bg-brand-blue border-brand-blue text-white opacity-100"
+              : "bg-white dark:bg-dark-surface border-gray-300 dark:border-gray-600 text-transparent opacity-0 group-hover:opacity-100 hover:border-brand-blue",
+          )}
+          role="checkbox"
+          aria-checked={isSelected}
+          aria-label={isSelected ? "Deselect card" : "Select card"}
+        >
+          <Check className="h-3.5 w-3.5" strokeWidth={3} />
+        </button>
+      )}
+
       {/* Top-right actions: Card Actions Menu */}
       <div
         className={cn(
@@ -308,6 +451,8 @@ export const KanbanCard = memo(function KanbanCard({
             onExportBrief={cardActions.onExportBrief}
             onCheckUpdates={cardActions.onCheckUpdates}
             onGenerateBrief={cardActions.onGenerateBrief}
+            onShareCard={cardActions.onShareCard}
+            onCopyShareLink={cardActions.onCopyShareLink}
           />
         )}
       </div>
@@ -428,8 +573,63 @@ export const KanbanCard = memo(function KanbanCard({
           </div>
         )}
 
+        {/* v2 attribute chips: brief status, freshness. Watching lives in
+            the indicators row below so it sits next to the toggle target. */}
+        {(briefChip || freshnessChip) && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            {briefChip && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border",
+                  briefChip.className,
+                )}
+              >
+                <FileText className="h-3 w-3" />
+                {briefChip.label}
+              </span>
+            )}
+            {freshnessChip && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800"
+                title="Last research run"
+              >
+                {freshnessChip.icon}
+                {freshnessChip.label}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Indicators Row */}
         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+          {/* Watching toggle */}
+          {cardActions?.onToggleWatching && !isDragOverlay && (
+            <Tooltip
+              content={isWatching ? "Stop watching" : "Watch this card"}
+              side="top"
+              disabled={isDragOverlay}
+            >
+              <button
+                type="button"
+                onClick={handleToggleWatching}
+                className={cn(
+                  "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors",
+                  isWatching
+                    ? "text-pink-600 dark:text-pink-400 bg-pink-50 dark:bg-pink-900/20 hover:bg-pink-100 dark:hover:bg-pink-900/40"
+                    : "text-gray-400 dark:text-gray-500 hover:text-pink-600 dark:hover:text-pink-400 hover:bg-pink-50 dark:hover:bg-pink-900/20",
+                )}
+                aria-pressed={isWatching}
+                aria-label={isWatching ? "Stop watching" : "Watch this card"}
+              >
+                {isWatching ? (
+                  <Eye className="h-3 w-3" />
+                ) : (
+                  <EyeOff className="h-3 w-3" />
+                )}
+              </button>
+            </Tooltip>
+          )}
+
           {/* Notes Indicator */}
           {hasNotes && (
             <div
@@ -510,13 +710,16 @@ export const KanbanCard = memo(function KanbanCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  cardActions.onMoveToColumn?.(card.id, "screening");
+                  cardActions.onMoveToColumn?.(card.id, "working");
                 }}
                 className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-md transition-colors"
-                title="Move to Screening"
+                title="Move to Working (E or A)"
               >
                 <Check className="h-3.5 w-3.5" />
                 Accept
+                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-green-200 dark:border-green-800">
+                  E
+                </kbd>
               </button>
               <button
                 onClick={(e) => {
@@ -524,10 +727,13 @@ export const KanbanCard = memo(function KanbanCard({
                   cardActions.onMoveToColumn?.(card.id, "archived");
                 }}
                 className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-md transition-colors"
-                title="Move to Archived"
+                title="Move to Archived (X or R)"
               >
                 <X className="h-3.5 w-3.5" />
                 Dismiss
+                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-red-200 dark:border-red-800">
+                  X
+                </kbd>
               </button>
             </div>
           )}
