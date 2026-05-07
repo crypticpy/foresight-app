@@ -21,6 +21,7 @@ import {
   HelpCircle,
   Rss,
   Wand2,
+  Bell,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -89,7 +90,7 @@ const NavLinkItem: React.FC<{
 };
 
 const Header: React.FC = () => {
-  const { user, signOut } = useAuthContext();
+  const { user, profile, signOut } = useAuthContext();
   const location = useLocation();
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -177,7 +178,9 @@ const Header: React.FC = () => {
   const moreNavigation = [
     { name: "Portfolios", href: "/portfolios", icon: Briefcase },
     { name: "Analytics", href: "/analytics", icon: BarChart3 },
-    { name: "Feeds", href: "/feeds", icon: Rss },
+    ...(profile?.account_type === "guest"
+      ? []
+      : [{ name: "Feeds", href: "/feeds", icon: Rss }]),
     { name: "How It Works", href: "/how-it-works", icon: Wand2 },
     { name: "Methodology", href: "/methodology", icon: BookOpen },
   ];
@@ -299,7 +302,19 @@ const Header: React.FC = () => {
           </nav>
 
           {/* User Menu Dropdown */}
-          <div className="hidden md:flex items-center" ref={userDropdownRef}>
+          <div className="hidden md:flex items-center gap-1" ref={userDropdownRef}>
+            {profile?.account_type === "guest" && (
+              <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                Guest
+              </span>
+            )}
+            <Link
+              to="/notifications"
+              aria-label="Notifications"
+              className="rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-brand-dark-blue dark:text-gray-300 dark:hover:bg-white/10"
+            >
+              <Bell className="h-4 w-4" />
+            </Link>
             <div className="relative">
               <button
                 onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}

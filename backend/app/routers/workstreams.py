@@ -2,11 +2,15 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
+from app.authz import (
+    WORKSTREAM_OWNER_TYPE_ORG,
+    require_paid_user,
+    require_workstream_access,
+)
+from app.deps import supabase, get_current_user, _safe_error
 from app.helpers.workstream_utils import (
     _filter_cards_for_workstream,
     _build_workstream_scan_config,
@@ -19,8 +23,6 @@ from app.models.workstream import (
     WorkstreamCreateResponse,
     AutoPopulateResponse,
     WorkstreamCardWithDetails,
-    FilterPreviewRequest,
-    FilterPreviewResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,10 +48,28 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
         .order("created_at", desc=True)
         .execute()
     )
+    memberships = (
+        supabase.table("workstream_members")
+        .select("workstream_id, role")
+        .eq("user_id", current_user["id"])
+        .execute()
+    )
+    member_role_by_ws = {
+        row["workstream_id"]: row["role"]
+        for row in memberships.data or []
+        if row.get("workstream_id")
+    }
+    shared = (
+        supabase.table("workstreams")
+        .select("*")
+        .in_("id", list(member_role_by_ws) or ["00000000-0000-0000-0000-000000000000"])
+        .order("created_at", desc=True)
+        .execute()
+    )
     org = (
         supabase.table("workstreams")
         .select("*")
-        .eq("owner_type", "org")
+        .eq("owner_type", WORKSTREAM_OWNER_TYPE_ORG)
         .order("created_at", desc=True)
         .execute()
     )
@@ -58,10 +78,16 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
     # case a future change makes a workstream both org-owned and user-owned.
     seen: set[str] = set()
     rows: list[dict] = []
-    for ws in (org.data or []) + (own.data or []):
+    for ws in (org.data or []) + (shared.data or []) + (own.data or []):
         if ws["id"] in seen:
             continue
         seen.add(ws["id"])
+        if ws.get("user_id") == current_user["id"]:
+            ws["role"] = "owner"
+        elif ws["id"] in member_role_by_ws:
+            ws["role"] = member_role_by_ws[ws["id"]]
+        elif ws.get("owner_type") == WORKSTREAM_OWNER_TYPE_ORG:
+            ws["role"] = "org_viewer"
         rows.append(ws)
 
     return [Workstream(**ws) for ws in rows]
@@ -77,6 +103,7 @@ async def create_workstream(
     1. Auto-populates the workstream with matching existing cards
     2. If fewer than 3 cards matched AND auto_scan is enabled, queues a scan
     """
+    require_paid_user(current_user)
     ws_dict = workstream_data.dict()
     ws_dict.update(
         {
@@ -203,25 +230,21 @@ async def update_workstream(
         HTTPException 404: Workstream not found
         HTTPException 403: Workstream belongs to another user
     """
-    # First check if workstream exists
-    ws_check = (
-        supabase.table("workstreams").select("*").eq("id", workstream_id).execute()
-    )
-    if not ws_check.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    # Verify ownership
-    if ws_check.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to update this workstream"
-        )
+    require_workstream_access(supabase, workstream_id, current_user, "manage")
 
     # Build update dict with only non-None values
     update_dict = {k: v for k, v in workstream_data.dict().items() if v is not None}
 
     if not update_dict:
         # No updates provided, return existing workstream
-        return Workstream(**ws_check.data[0])
+        ws = (
+            supabase.table("workstreams")
+            .select("*")
+            .eq("id", workstream_id)
+            .limit(1)
+            .execute()
+        )
+        return Workstream(**ws.data[0])
 
     # Add updated_at timestamp
     update_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -260,21 +283,10 @@ async def delete_workstream(
         HTTPException 404: Workstream not found
         HTTPException 403: Workstream belongs to another user
     """
-    # First check if workstream exists
-    ws_check = (
-        supabase.table("workstreams").select("*").eq("id", workstream_id).execute()
-    )
-    if not ws_check.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    # Verify ownership
-    if ws_check.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to delete this workstream"
-        )
+    require_workstream_access(supabase, workstream_id, current_user, "manage")
 
     # Perform delete
-    response = supabase.table("workstreams").delete().eq("id", workstream_id).execute()
+    supabase.table("workstreams").delete().eq("id", workstream_id).execute()
 
     return {"status": "deleted", "message": "Workstream successfully deleted"}
 

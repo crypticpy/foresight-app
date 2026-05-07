@@ -16,19 +16,22 @@ from supabase import Client
 ADMIN_ROLES = {"admin", "service_role"}
 WORKSTREAM_OWNER_TYPE_ORG = "org"
 WORKSTREAM_OWNER_TYPE_USER = "user"
+ACCOUNT_TYPE_PAID = "paid"
+ACCOUNT_TYPE_GUEST = "guest"
 WORKSTREAM_MEMBER_CAPABILITIES = {
-    "owner": (True, True, True),
-    "editor": (True, True, False),
-    "commenter": (True, False, False),
-    "viewer": (True, False, False),
+    "owner": (True, True, True, True),
+    "editor": (True, True, True, False),
+    "commenter": (True, True, False, False),
+    "viewer": (True, False, False, False),
 }
-Capability = Literal["read", "edit", "manage"]
+Capability = Literal["read", "comment", "edit", "manage"]
 
 
 @dataclass(frozen=True)
 class WorkstreamAccess:
     workstream: dict[str, Any]
     can_read: bool
+    can_comment: bool
     can_edit: bool
     can_manage: bool
     role: str | None = None
@@ -45,6 +48,15 @@ def require_admin(user: dict[str, Any]) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+
+
+def require_paid_user(user: dict[str, Any]) -> None:
+    """Raise 403 for guest accounts before any paid or spending action."""
+    if (user.get("account_type") or ACCOUNT_TYPE_PAID).lower() == ACCOUNT_TYPE_GUEST:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guest accounts cannot perform this action",
         )
 
 
@@ -78,6 +90,7 @@ def get_workstream_access(
         return WorkstreamAccess(
             workstream=workstream,
             can_read=True,
+            can_comment=True,
             can_edit=True,
             can_manage=True,
             role="admin",
@@ -87,6 +100,7 @@ def get_workstream_access(
         return WorkstreamAccess(
             workstream=workstream,
             can_read=True,
+            can_comment=True,
             can_edit=True,
             can_manage=True,
             role="owner",
@@ -102,12 +116,13 @@ def get_workstream_access(
     )
     if member_response.data:
         role = member_response.data[0].get("role")
-        can_read, can_edit, can_manage = WORKSTREAM_MEMBER_CAPABILITIES.get(
-            role, (False, False, False)
+        can_read, can_comment, can_edit, can_manage = WORKSTREAM_MEMBER_CAPABILITIES.get(
+            role, (False, False, False, False)
         )
         return WorkstreamAccess(
             workstream=workstream,
             can_read=can_read,
+            can_comment=can_comment,
             can_edit=can_edit,
             can_manage=can_manage,
             role=role,
@@ -117,6 +132,7 @@ def get_workstream_access(
         return WorkstreamAccess(
             workstream=workstream,
             can_read=True,
+            can_comment=False,
             can_edit=False,
             can_manage=False,
             role="org_viewer",
@@ -125,6 +141,7 @@ def get_workstream_access(
     return WorkstreamAccess(
         workstream=workstream,
         can_read=False,
+        can_comment=False,
         can_edit=False,
         can_manage=False,
         role=None,
@@ -141,6 +158,7 @@ def require_workstream_access(
     access = get_workstream_access(supabase, workstream_id, user)
     allowed = {
         "read": access.can_read,
+        "comment": access.can_comment,
         "edit": access.can_edit,
         "manage": access.can_manage,
     }[capability]

@@ -21,6 +21,8 @@ import {
   Radar,
   Loader2,
   Lock,
+  Share2,
+  Users,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -42,6 +44,10 @@ import {
   type Driver,
 } from "../lib/frameworks-api";
 import { WORKSTREAM_OWNER_TYPE } from "../types/workstream";
+import { useCapabilities } from "../hooks/useCapabilities";
+import { ShareWorkstreamModal } from "../components/collaboration/ShareWorkstreamModal";
+import { MembersDrawer } from "../components/collaboration/MembersDrawer";
+import { RoleBadge } from "../components/collaboration/RoleBadge";
 
 // ============================================================================
 // Delete Confirmation Modal
@@ -418,6 +424,8 @@ interface WorkstreamCardProps {
   workstream: Workstream;
   onEdit: () => void;
   onDelete: () => void;
+  onShare: () => void;
+  onMembers: () => void;
   scanStatus?: WorkstreamScanStatusResponse | null;
   driversById?: Record<string, Driver>;
 }
@@ -428,14 +436,26 @@ const isOrgOwnedWorkstream = (workstream: Pick<Workstream, "owner_type">) =>
 const isUserOwnedWorkstream = (workstream: Pick<Workstream, "owner_type">) =>
   !isOrgOwnedWorkstream(workstream);
 
+const isMyWorkstream = (workstream: Workstream) =>
+  isUserOwnedWorkstream(workstream) && (!workstream.role || workstream.role === "owner");
+
+const isSharedWorkstream = (workstream: Workstream) =>
+  isUserOwnedWorkstream(workstream) &&
+  Boolean(workstream.role) &&
+  workstream.role !== "owner";
+
 function WorkstreamCard({
   workstream,
   onEdit,
   onDelete,
+  onShare,
+  onMembers,
   scanStatus,
   driversById,
 }: WorkstreamCardProps) {
   const isOrgOwned = isOrgOwnedWorkstream(workstream);
+  const { forWorkstream } = useCapabilities();
+  const capabilities = forWorkstream(workstream);
 
   // Format stage IDs for display
   const formatStages = (stageIds: string[]): string => {
@@ -501,6 +521,7 @@ function WorkstreamCard({
                 View only
               </span>
             )}
+            <RoleBadge role={workstream.role} />
             {/* Scan running indicator */}
             {scanStatus &&
               (scanStatus.status === "queued" ||
@@ -652,12 +673,36 @@ function WorkstreamCard({
             <span className="text-xs text-gray-500 dark:text-gray-400">
               Created {new Date(workstream.created_at).toLocaleDateString()}
             </span>
-            {isOrgOwned ? (
+            {!capabilities.canManage ? (
               <span className="text-xs text-gray-400 dark:text-gray-500 italic">
-                Managed by admins
+                Shared access
               </span>
             ) : (
               <div className="flex items-center gap-2">
+                <button
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onShare();
+                  }}
+                  className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-surface-elevated border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+                  aria-label={`Share ${workstream.name}`}
+                >
+                  <Share2 className="h-3.5 w-3.5 mr-1" />
+                  Share
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onMembers();
+                  }}
+                  className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-surface-elevated border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+                  aria-label={`Manage members for ${workstream.name}`}
+                >
+                  <Users className="h-3.5 w-3.5 mr-1" />
+                  Members
+                </button>
                 <button
                   onClick={handleEditClick}
                   className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-surface-elevated border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-brand-blue transition-colors"
@@ -689,6 +734,7 @@ function WorkstreamCard({
 
 const Workstreams: React.FC = () => {
   const { user } = useAuthContext();
+  const { canCreateWorkstream, forWorkstream } = useCapabilities();
   const navigate = useNavigate();
   const [workstreams, setWorkstreams] = useState<Workstream[]>([]);
   const [loading, setLoading] = useState(true);
@@ -702,6 +748,12 @@ const Workstreams: React.FC = () => {
     Workstream | undefined
   >(undefined);
   const [deletingWorkstream, setDeletingWorkstream] = useState<
+    Workstream | undefined
+  >(undefined);
+  const [sharingWorkstream, setSharingWorkstream] = useState<
+    Workstream | undefined
+  >(undefined);
+  const [membersWorkstream, setMembersWorkstream] = useState<
     Workstream | undefined
   >(undefined);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -967,16 +1019,18 @@ const Workstreams: React.FC = () => {
             </Link>
           </div>
         </div>
-        <button
-          onClick={() => {
-            setEditingWorkstream(undefined);
-            setShowForm(true);
-          }}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue transition-colors"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          New Workstream
-        </button>
+        {canCreateWorkstream && (
+          <button
+            onClick={() => {
+              setEditingWorkstream(undefined);
+              setShowForm(true);
+            }}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue transition-colors"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Workstream
+          </button>
+        )}
       </div>
 
       {/* Error Banner */}
@@ -1009,7 +1063,7 @@ const Workstreams: React.FC = () => {
             Create your first workstream to start tracking relevant
             intelligence.
           </p>
-          <div className="mt-6">
+          {canCreateWorkstream && <div className="mt-6">
             <button
               onClick={() => {
                 setEditingWorkstream(undefined);
@@ -1020,7 +1074,7 @@ const Workstreams: React.FC = () => {
               <Plus className="h-4 w-4 mr-2" />
               Create Workstream
             </button>
-          </div>
+          </div>}
         </div>
       ) : (
         <div className="space-y-10">
@@ -1045,6 +1099,8 @@ const Workstreams: React.FC = () => {
                       workstream={workstream}
                       onEdit={() => handleEditClick(workstream)}
                       onDelete={() => handleDeleteClick(workstream)}
+                      onShare={() => setSharingWorkstream(workstream)}
+                      onMembers={() => setMembersWorkstream(workstream)}
                       scanStatus={scanStatuses[workstream.id] || null}
                       driversById={driversById}
                     />
@@ -1063,16 +1119,18 @@ const Workstreams: React.FC = () => {
                 Research streams you've created.
               </p>
             </header>
-            {workstreams.some(isUserOwnedWorkstream) ? (
+            {workstreams.some(isMyWorkstream) ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {workstreams
-                  .filter(isUserOwnedWorkstream)
+                  .filter(isMyWorkstream)
                   .map((workstream) => (
                     <WorkstreamCard
                       key={workstream.id}
                       workstream={workstream}
                       onEdit={() => handleEditClick(workstream)}
                       onDelete={() => handleDeleteClick(workstream)}
+                      onShare={() => setSharingWorkstream(workstream)}
+                      onMembers={() => setMembersWorkstream(workstream)}
                       scanStatus={scanStatuses[workstream.id] || null}
                       driversById={driversById}
                     />
@@ -1088,6 +1146,32 @@ const Workstreams: React.FC = () => {
               </div>
             )}
           </section>
+          {workstreams.some(isSharedWorkstream) && (
+            <section>
+              <header className="mb-3">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Shared with me
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Workstreams where you have collaborator access.
+                </p>
+              </header>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {workstreams.filter(isSharedWorkstream).map((workstream) => (
+                  <WorkstreamCard
+                    key={workstream.id}
+                    workstream={workstream}
+                    onEdit={() => handleEditClick(workstream)}
+                    onDelete={() => handleDeleteClick(workstream)}
+                    onShare={() => setSharingWorkstream(workstream)}
+                    onMembers={() => setMembersWorkstream(workstream)}
+                    scanStatus={scanStatuses[workstream.id] || null}
+                    driversById={driversById}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -1107,6 +1191,22 @@ const Workstreams: React.FC = () => {
           onConfirm={handleDeleteConfirm}
           onCancel={handleDeleteCancel}
           isDeleting={isDeleting}
+        />
+      )}
+      {sharingWorkstream && (
+        <ShareWorkstreamModal
+          workstreamId={sharingWorkstream.id}
+          open={Boolean(sharingWorkstream)}
+          onClose={() => setSharingWorkstream(undefined)}
+          onChanged={loadWorkstreams}
+        />
+      )}
+      {membersWorkstream && (
+        <MembersDrawer
+          workstreamId={membersWorkstream.id}
+          open={Boolean(membersWorkstream)}
+          canManage={forWorkstream(membersWorkstream).canManage}
+          onClose={() => setMembersWorkstream(undefined)}
         />
       )}
     </div>

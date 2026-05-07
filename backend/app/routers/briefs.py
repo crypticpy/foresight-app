@@ -1,12 +1,13 @@
 """Executive briefs router."""
 
 import logging
-from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
+from app.activity_log import record_activity
+from app.authz import require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user, _safe_error, openai_client
 from app.brief_service import ExecutiveBriefService
 from app.export_service import ExportService
@@ -22,7 +23,6 @@ from app.models.briefs_extra import (
     BulkBriefCardStatus,
     BulkBriefStatusResponse,
 )
-from app.models.export import ExportFormat, EXPORT_CONTENT_TYPES, get_export_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["briefs"])
@@ -54,20 +54,8 @@ async def generate_executive_brief(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized to access workstream
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    require_paid_user(current_user)
+    require_workstream_access(supabase, workstream_id, current_user, "edit")
 
     # Verify card exists in workstream and get the workstream_cards record
     wsc_response = (
@@ -130,6 +118,15 @@ async def generate_executive_brief(
 
         brief_id = brief_record["id"]
         brief_version = brief_record.get("version", 1)
+        record_activity(
+            supabase,
+            workstream_id=workstream_id,
+            actor_id=current_user["id"],
+            action="brief.generated",
+            target_type="brief",
+            target_id=brief_id,
+            metadata={"card_id": card_id, "version": brief_version},
+        )
 
         return BriefGenerateResponse(
             id=brief_id,

@@ -34,6 +34,9 @@ const WorkstreamKanban = lazy(() => import("./pages/WorkstreamKanban"));
 const WorkstreamPortfolios = lazy(() => import("./pages/WorkstreamPortfolios"));
 const PortfolioDetail = lazy(() => import("./pages/PortfolioDetail"));
 const Portfolios = lazy(() => import("./pages/Portfolios"));
+const InviteAccept = lazy(() => import("./pages/InviteAccept"));
+const PublicShareViewer = lazy(() => import("./pages/PublicShareViewer"));
+const Notifications = lazy(() => import("./pages/Notifications"));
 
 // Standalone pages
 const Settings = lazy(() => import("./pages/Settings"));
@@ -68,9 +71,18 @@ export const supabase =
 
 export interface AuthContextType {
   user: User | null;
+  profile: UserProfile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  display_name?: string | null;
+  role?: string | null;
+  account_type?: "paid" | "guest";
 }
 
 // AuthContext is provided by AuthContextProvider from hooks/useAuthContext
@@ -89,12 +101,31 @@ function CardRedirect() {
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadProfile = async (nextUser: User | null) => {
+    if (!nextUser) {
+      setProfile(null);
+      return;
+    }
+    const { data } = await supabase
+      .from("users")
+      .select("id, email, display_name, role, account_type")
+      .eq("id", nextUser.id)
+      .single();
+    setProfile(
+      data
+        ? { ...data, account_type: data.account_type || "paid" }
+        : { id: nextUser.id, email: nextUser.email || "", account_type: "paid" },
+    );
+  };
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
+      await loadProfile(session?.user ?? null);
       setLoading(false);
     });
 
@@ -103,6 +134,7 @@ function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      loadProfile(session?.user ?? null);
     });
 
     return () => subscription.unsubscribe();
@@ -123,6 +155,7 @@ function App() {
 
   const authValue: AuthContextType = {
     user,
+    profile,
     loading,
     signIn,
     signOut,
@@ -159,6 +192,19 @@ function App() {
                 <Route
                   path="/login"
                   element={user ? <Navigate to="/" replace /> : <Login />}
+                />
+                <Route
+                  path="/share/:token"
+                  element={<PublicShareViewer />}
+                />
+                <Route
+                  path="/invite/:token"
+                  element={
+                    <ProtectedRoute
+                      element={<InviteAccept />}
+                      loadingMessage="Loading invitation..."
+                    />
+                  }
                 />
 
                 {/* Dashboard - synchronous landing page (critical path) */}
@@ -357,6 +403,15 @@ function App() {
                     <ProtectedRoute
                       element={<Settings />}
                       loadingMessage="Loading settings..."
+                    />
+                  }
+                />
+                <Route
+                  path="/notifications"
+                  element={
+                    <ProtectedRoute
+                      element={<Notifications />}
+                      loadingMessage="Loading notifications..."
                     />
                   }
                 />
