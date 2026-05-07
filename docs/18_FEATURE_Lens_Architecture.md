@@ -335,23 +335,24 @@ The lens picker is a saved-view config (JSON), not a DB schema. New lenses are a
 
 This PR lands the **load-bearing schema + planning + initial seeds**. Classification service, backfill worker, and frontend pieces follow as subsequent commits or separate PRs.
 
-In this PR (initial commits):
+Landed on this branch:
 
 - [x] `docs/18_FEATURE_Lens_Architecture.md` (this doc)
 - [x] `docs/13_FEATURE_Climate_Overlay.md` v0.3 update (URL cross-check + ATX Flood Pro + GIS for Climate hub)
-- [ ] Migration: ALTER `cards` columns + CREATE `strategic_anchors`, `csp_goals`, `csp_measures`
-- [ ] Seed: CSP framework row + 6 strategic_anchors rows
-- [ ] Seed: csp_goals + csp_measures (data extracted from plan PDF)
+- [x] Migration: ALTER `cards` columns + CREATE `strategic_anchors`, `csp_goals`, `csp_measures`
+- [x] Seed: CSP framework row + 6 strategic_anchors rows
+- [x] Seed: csp_goals + csp_measures (data extracted from plan PDF)
+- [x] `backend/app/lens_classification_service.py` (cascade — full core + mini anchors/CSP/triage with conditional dim prompts)
+- [x] Pydantic models for anchor_scores, budget_assessment, climate_assessment, user_metadata, plus effective-value helpers
+- [x] Wire into discovery pipeline for new cards (fire-and-forget after `_create_card_from_source` insert)
+- [x] Backfill admin endpoint (`POST /api/v1/admin/classify/backfill`)
 
-In follow-up commits to this PR:
+Still to come on this branch (or a follow-up PR):
 
-- [ ] `backend/app/lens_classification_service.py` (4-stage cascade)
-- [ ] Pydantic models for anchor_scores, budget_assessment, climate_assessment
-- [ ] Wire into discovery pipeline for new cards
-- [ ] Backfill worker job + admin endpoint
 - [ ] `lib/lens-api.ts` + lens picker component
 - [ ] Card-detail tagger UI + override form
 - [ ] User-added tag mutation endpoint(s)
+- [ ] Tests for the cascade service (mocked OpenAI responses)
 
 In separate PRs (out of scope here):
 
