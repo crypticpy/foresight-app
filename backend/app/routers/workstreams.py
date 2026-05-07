@@ -140,6 +140,13 @@ async def create_workstream(
         is_active=workstream.get("is_active", True),
         auto_scan=workstream.get("auto_scan", False),
         auto_add=workstream.get("auto_add", False),
+        framework_code=workstream.get("framework_code"),
+        framework_category_id=workstream.get("framework_category_id"),
+        driver_ids=workstream.get("driver_ids") or [],
+        top25_priority_ids=workstream.get("top25_priority_ids") or [],
+        budget_relevance=workstream.get("budget_relevance") or [],
+        purpose_statement=workstream.get("purpose_statement"),
+        owner_type=workstream.get("owner_type", "user"),
         auto_populated_count=auto_populated_count,
         scan_queued=scan_queued,
     )

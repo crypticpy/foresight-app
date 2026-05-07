@@ -24,6 +24,14 @@ export interface Workstream {
   is_active: boolean;
   auto_add: boolean;
   auto_scan?: boolean;
+  // FY26 framework / scoping fields (see docs/11_PRD_Scoped_Workstreams_and_Frameworks.md)
+  framework_code?: string | null;
+  framework_category_id?: string | null;
+  driver_ids?: string[];
+  top25_priority_ids?: string[];
+  budget_relevance?: string[];
+  purpose_statement?: string | null;
+  owner_type?: "user" | "org";
   created_at: string;
 }
 

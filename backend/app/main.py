@@ -27,6 +27,7 @@ from app.routers.cards import router as cards_router
 from app.routers.card_subresources import router as card_subresources_router
 from app.routers.card_review import router as card_review_router
 from app.routers.card_export import router as card_export_router
+from app.routers.frameworks import router as frameworks_router
 from app.routers.workstreams import router as workstreams_router
 from app.routers.workstream_kanban import router as workstream_kanban_router
 from app.routers.workstream_scans import router as workstream_scans_router
@@ -199,6 +200,7 @@ def create_app() -> FastAPI:
     application.include_router(card_subresources_router)
     application.include_router(card_review_router)
     application.include_router(card_export_router)
+    application.include_router(frameworks_router)
     application.include_router(workstreams_router)
     application.include_router(workstream_kanban_router)
     application.include_router(workstream_scans_router)
