@@ -12,7 +12,7 @@
  * - Dark mode support
  */
 
-import React, { memo, useState } from "react";
+import React, { memo, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
@@ -263,6 +263,45 @@ export const KanbanCard = memo(function KanbanCard({
     }
   };
 
+  // Quick-triage keyboard shortcuts — only active for inbox cards while
+  // the pointer is over the card. Keys: e/a accept (→ working), x/r dismiss
+  // (→ archived), w toggle watching. Ignored when typing in form fields.
+  const [isHovered, setIsHovered] = useState(false);
+  useEffect(() => {
+    if (!isHovered || columnId !== "inbox" || isDragOverlay || !cardActions) {
+      return;
+    }
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const k = e.key.toLowerCase();
+      if (k === "e" || k === "a") {
+        e.preventDefault();
+        cardActions.onMoveToColumn?.(card.id, "working");
+      } else if (k === "x" || k === "r") {
+        e.preventDefault();
+        cardActions.onMoveToColumn?.(card.id, "archived");
+      } else if (k === "w") {
+        e.preventDefault();
+        const next = !isWatching;
+        setOptimisticWatching(next);
+        Promise.resolve(cardActions.onToggleWatching?.(card.id, next)).catch(
+          () => setOptimisticWatching(null),
+        );
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isHovered, columnId, isDragOverlay, cardActions, card.id, isWatching]);
+
   // Brief-status chip — hidden when the card has no brief artifact yet.
   const briefChip = (() => {
     switch (card.brief_status) {
@@ -343,6 +382,8 @@ export const KanbanCard = memo(function KanbanCard({
       style={style}
       {...attributes}
       {...listeners}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       className={cn(
         // Base card styles
         "group relative bg-white dark:bg-dark-surface rounded-lg shadow-sm",
@@ -672,10 +713,13 @@ export const KanbanCard = memo(function KanbanCard({
                   cardActions.onMoveToColumn?.(card.id, "working");
                 }}
                 className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-md transition-colors"
-                title="Move to Working"
+                title="Move to Working (E or A)"
               >
                 <Check className="h-3.5 w-3.5" />
                 Accept
+                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-green-200 dark:border-green-800">
+                  E
+                </kbd>
               </button>
               <button
                 onClick={(e) => {
@@ -683,10 +727,13 @@ export const KanbanCard = memo(function KanbanCard({
                   cardActions.onMoveToColumn?.(card.id, "archived");
                 }}
                 className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-md transition-colors"
-                title="Move to Archived"
+                title="Move to Archived (X or R)"
               >
                 <X className="h-3.5 w-3.5" />
                 Dismiss
+                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-red-200 dark:border-red-800">
+                  X
+                </kbd>
               </button>
             </div>
           )}
