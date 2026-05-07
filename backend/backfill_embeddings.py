@@ -24,6 +24,8 @@ import time
 from typing import List
 
 from dotenv import load_dotenv
+from openai import AsyncOpenAI, AsyncAzureOpenAI
+from supabase import create_client, Client
 
 load_dotenv()
 
@@ -37,8 +39,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Supabase client
 # ---------------------------------------------------------------------------
-from supabase import create_client, Client
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
@@ -51,8 +51,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 # ---------------------------------------------------------------------------
 # OpenAI client — supports both standard and Azure
 # ---------------------------------------------------------------------------
-from openai import AsyncOpenAI, AsyncAzureOpenAI
-
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_KEY = os.getenv("AZURE_OPENAI_KEY") or os.getenv("AZURE_OPENAI_API_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")

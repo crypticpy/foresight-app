@@ -186,3 +186,13 @@ Test user credentials for local development:
 
 - **Railway** runs two services: web (FastAPI + embedded worker by default) and an optional standalone worker. Auto-deploys on push to `main`. Health checks: `/api/v1/health` (web), `/api/v1/worker/health` (worker).
 - **Vercel** auto-deploys the frontend from `main`. The Vercel project is `foresight-frontend` (not `foresight-app`).
+
+## Code hygiene: fix-as-you-go
+
+This codebase has no external contributors — only the maintainer and AI agents. There is no "someone else's code" to leave alone. Pre-existing lint warnings, dead imports, and small style issues compound if every agent ignores them, so the rule is: when you touch a file, leave it cleaner than you found it.
+
+- **Touched-file rule.** If you edit a file and `ruff check` or `eslint` reports issues in it, fix the in-file issues as part of the same change. Don't open a separate PR for trivia in the file you're already editing.
+- **Auto-fix what's safe.** `ruff check --fix` and `eslint --fix` for `F401` (unused imports), `F541` (f-strings without placeholders), unused `eslint-disable` directives, and similar mechanical fixes. Run them on the files you touched; don't blanket-apply across the repo in a feature PR.
+- **Don't bypass.** Do not silence with `# noqa`, `eslint-disable`, `// @ts-ignore`, or `--no-verify` to make a check pass. If a rule genuinely doesn't fit, change the rule config in `pyproject.toml` / `eslint.config.js` and explain why in the commit. The codebase shouldn't accumulate per-line escape hatches.
+- **Cleanup PRs are welcome.** When you notice a cluster of pre-existing issues outside the files you're touching (e.g., the `backend/scripts/` ruff backlog), open a separate small PR scoped to that cleanup rather than mixing it into a feature change. Document anything you deliberately leave alone (e.g. "intentional pattern to avoid re-render loop").
+- **`react-hooks/exhaustive-deps` deserves judgment.** Some of these warnings are intentional — adding the dep would cause a re-render loop. When you keep one, leave a one-line comment explaining why; don't just add `// eslint-disable-next-line`.

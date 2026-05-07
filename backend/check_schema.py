@@ -203,14 +203,14 @@ def check_schema():
         actual_cols = get_table_columns(table_name)
 
         if actual_cols == "TABLE_MISSING":
-            print(f"   ❌ TABLE MISSING!")
+            print("   ❌ TABLE MISSING!")
             missing_tables.append(table_name)
             continue
         elif isinstance(actual_cols, str) and actual_cols.startswith("ERROR"):
             print(f"   ⚠️  {actual_cols}")
             continue
         elif actual_cols is None:
-            print(f"   ⚠️  Table exists but is empty (can't verify columns)")
+            print("   ⚠️  Table exists but is empty (can't verify columns)")
             continue
 
         # Compare columns
@@ -224,7 +224,7 @@ def check_schema():
             print(f"   ❌ Missing columns: {missing}")
             missing_columns[table_name] = list(missing)
         else:
-            print(f"   ✅ All expected columns present")
+            print("   ✅ All expected columns present")
 
         if extra:
             print(f"   ℹ️  Extra columns (OK): {extra}")
@@ -242,7 +242,7 @@ def check_schema():
         print(f"\n❌ Missing tables: {missing_tables}")
 
     if missing_columns:
-        print(f"\n❌ Missing columns by table:")
+        print("\n❌ Missing columns by table:")
         for table, cols in missing_columns.items():
             print(f"   {table}: {cols}")
 

@@ -291,7 +291,7 @@ class ScoreHistoryBackfill:
             print(f"  Records to insert: {len(records)}")
 
             # Show cards that would be backfilled
-            print(f"\n  Cards to backfill:")
+            print("\n  Cards to backfill:")
             for i, card in enumerate(cards_to_backfill[:10]):
                 scores_summary = ", ".join(
                     f"{col.replace('_score', '')}={card.get(col)}"
