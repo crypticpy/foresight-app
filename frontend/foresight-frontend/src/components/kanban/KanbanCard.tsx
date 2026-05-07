@@ -28,6 +28,11 @@ import {
   CheckCircle2,
   AlertCircle,
   CheckCircle,
+  Eye,
+  EyeOff,
+  FileText,
+  Zap,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PillarBadge } from "../PillarBadge";
@@ -40,6 +45,7 @@ import { ExploratoryBadge } from "../badges/ExploratoryBadge";
 import { Tooltip } from "../ui/Tooltip";
 import { CardActions } from "./CardActions";
 import { getPillarByCode } from "../../data/taxonomy";
+import { formatRelativeTime } from "../CardDetail/utils";
 import type {
   WorkstreamCard as WorkstreamCardType,
   CardActionCallbacks,
@@ -230,6 +236,68 @@ export const KanbanCard = memo(function KanbanCard({
   const [isApproved, setIsApproved] = useState(false);
   const showNeedsReview =
     card.review_status === "pending_review" && !isApproved;
+
+  // Optimistic state for the watching toggle so the chip flips instantly
+  // even before the server round-trip resolves.
+  const [optimisticWatching, setOptimisticWatching] = useState<boolean | null>(
+    null,
+  );
+  const isWatching = optimisticWatching ?? card.is_watching;
+
+  const handleToggleWatching = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!cardActions?.onToggleWatching) return;
+    const next = !isWatching;
+    setOptimisticWatching(next);
+    try {
+      await cardActions.onToggleWatching(card.id, next);
+    } catch {
+      // Revert on failure — let the server state win.
+      setOptimisticWatching(null);
+    }
+  };
+
+  // Brief-status chip — hidden when the card has no brief artifact yet.
+  const briefChip = (() => {
+    switch (card.brief_status) {
+      case "draft":
+        return {
+          label: "Draft brief",
+          className:
+            "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800",
+        };
+      case "ready":
+        return {
+          label: "Brief ready",
+          className:
+            "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800",
+        };
+      case "exported":
+        return {
+          label: "Brief exported",
+          className:
+            "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800",
+        };
+      default:
+        return null;
+    }
+  })();
+
+  // Freshness chip — shown only when research has been run.
+  const freshnessChip =
+    card.last_research_depth !== "none" && card.last_research_at
+      ? {
+          icon:
+            card.last_research_depth === "deep" ? (
+              <FlaskConical className="h-3 w-3" />
+            ) : (
+              <Zap className="h-3 w-3" />
+            ),
+          label: `${
+            card.last_research_depth === "deep" ? "Deep" : "Quick"
+          } · ${formatRelativeTime(card.last_research_at)}`,
+        }
+      : null;
 
   /**
    * Handle card click navigation.
@@ -428,8 +496,63 @@ export const KanbanCard = memo(function KanbanCard({
           </div>
         )}
 
+        {/* v2 attribute chips: brief status, freshness. Watching lives in
+            the indicators row below so it sits next to the toggle target. */}
+        {(briefChip || freshnessChip) && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            {briefChip && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border",
+                  briefChip.className,
+                )}
+              >
+                <FileText className="h-3 w-3" />
+                {briefChip.label}
+              </span>
+            )}
+            {freshnessChip && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800"
+                title="Last research run"
+              >
+                {freshnessChip.icon}
+                {freshnessChip.label}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Indicators Row */}
         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+          {/* Watching toggle */}
+          {cardActions?.onToggleWatching && !isDragOverlay && (
+            <Tooltip
+              content={isWatching ? "Stop watching" : "Watch this card"}
+              side="top"
+              disabled={isDragOverlay}
+            >
+              <button
+                type="button"
+                onClick={handleToggleWatching}
+                className={cn(
+                  "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors",
+                  isWatching
+                    ? "text-pink-600 dark:text-pink-400 bg-pink-50 dark:bg-pink-900/20 hover:bg-pink-100 dark:hover:bg-pink-900/40"
+                    : "text-gray-400 dark:text-gray-500 hover:text-pink-600 dark:hover:text-pink-400 hover:bg-pink-50 dark:hover:bg-pink-900/20",
+                )}
+                aria-pressed={isWatching}
+                aria-label={isWatching ? "Stop watching" : "Watch this card"}
+              >
+                {isWatching ? (
+                  <Eye className="h-3 w-3" />
+                ) : (
+                  <EyeOff className="h-3 w-3" />
+                )}
+              </button>
+            </Tooltip>
+          )}
+
           {/* Notes Indicator */}
           {hasNotes && (
             <div

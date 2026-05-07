@@ -69,6 +69,7 @@ import {
   triggerDeepDive,
   autoPopulateWorkstream,
   fetchResearchStatus,
+  setWorkstreamCardWatching,
   exportBulkBriefs,
   startWorkstreamScan,
   type WorkstreamResearchStatus,
@@ -867,6 +868,40 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
+   * Toggle the watch flag on a card. The chip flips optimistically in the
+   * card; we update the canonical board state on success and revert on error.
+   */
+  const handleToggleWatching = useCallback(
+    async (cardId: string, isWatching: boolean) => {
+      if (!id) return;
+
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        throw new Error("Authentication required");
+      }
+
+      try {
+        await setWorkstreamCardWatching(token, id, cardId, isWatching);
+        setCards((prev) => {
+          const updated = { ...prev };
+          for (const status of Object.keys(updated) as KanbanStatus[]) {
+            updated[status] = updated[status].map((card) =>
+              card.id === cardId ? { ...card, is_watching: isWatching } : card,
+            );
+          }
+          return updated;
+        });
+      } catch (err) {
+        console.error("Error toggling watch:", err);
+        showToast("error", "Failed to update watch state");
+        throw err;
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
    * Handle deep dive request for a card.
    */
   const handleDeepDive = useCallback(
@@ -1169,6 +1204,7 @@ const WorkstreamKanban: React.FC = () => {
     onExportBrief: handleBriefExportFromCard,
     onCheckUpdates: handleCheckUpdates,
     onGenerateBrief: handleGenerateBrief,
+    onToggleWatching: handleToggleWatching,
   };
 
   /**
