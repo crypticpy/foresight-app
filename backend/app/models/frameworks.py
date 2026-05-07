@@ -21,6 +21,7 @@ class Driver(BaseModel):
     name: str
     description: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
+    tracked_metric_examples: List[str] = Field(default_factory=list)
     display_order: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
