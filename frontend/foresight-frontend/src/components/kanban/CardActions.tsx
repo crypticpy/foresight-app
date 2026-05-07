@@ -203,7 +203,7 @@ const NotesModal = memo(function NotesModal({
             <StickyNote className="h-5 w-5 text-amber-500 shrink-0" />
             <h2
               id="notes-modal-title"
-              className="text-lg font-semibold text-gray-900 dark:text-white truncate"
+              className="text-lg font-semibold leading-snug text-gray-900 dark:text-white break-words"
             >
               {initialNotes ? "Edit Notes" : "Add Notes"}
             </h2>

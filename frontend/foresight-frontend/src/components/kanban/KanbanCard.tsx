@@ -467,7 +467,7 @@ export const KanbanCard = memo(function KanbanCard({
         className="p-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-inset rounded-lg"
       >
         {/* Card Title */}
-        <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2 pr-6 line-clamp-2">
+        <h4 className="text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-7 break-words">
           {embeddedCard.name}
         </h4>
 

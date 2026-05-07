@@ -493,9 +493,9 @@ function WorkstreamCard({
 
       <div className="p-6">
         {/* Header */}
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start justify-between gap-3 mb-4 max-sm:flex-col">
           <div className="flex-1 min-w-0">
-            <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white truncate">
+            <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white break-words leading-snug">
               {workstream.name}
             </h3>
             {workstream.description && (
@@ -504,7 +504,7 @@ function WorkstreamCard({
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2 ml-4 flex-wrap justify-end">
+          <div className="flex items-center gap-2 sm:ml-4 flex-wrap justify-end max-sm:justify-start">
             {workstream.framework_code && (
               <FrameworkBadge
                 code={workstream.framework_code}

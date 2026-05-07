@@ -1776,8 +1776,8 @@ const WorkstreamKanban: React.FC = () => {
           {/* Title and Actions */}
           <div className="flex items-start justify-between flex-wrap gap-4">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <h1 className="text-2xl md:text-3xl font-bold text-brand-dark-blue dark:text-white truncate">
+              <div className="flex items-start gap-3 mb-2 flex-wrap">
+                <h1 className="min-w-0 max-w-full flex-[1_1_24rem] text-2xl md:text-3xl font-bold leading-tight text-brand-dark-blue dark:text-white break-words">
                   {workstream.name}
                 </h1>
                 <StatusBadge isActive={workstream.is_active} />

@@ -378,7 +378,7 @@ export default function PortfolioDetail() {
                 <div className="flex-1 min-w-0">
                   <Link
                     to={cardHref}
-                    className="block text-sm font-medium text-gray-900 dark:text-white hover:text-brand-blue truncate"
+                    className="block text-sm font-medium leading-snug text-gray-900 dark:text-white hover:text-brand-blue break-words"
                   >
                     {card?.name ?? "(card unavailable)"}
                   </Link>
