@@ -7,12 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.authz import (
-    get_workstream_access,
-    is_admin,
-    require_paid_user,
-    require_workstream_access,
-)
+from app.authz import is_admin, require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import public_share_enabled
 from app.models.workstream_collab import PublicSharePayload, ShareLinkCreate, ShareLinkResponse
@@ -63,7 +58,6 @@ def _authorize_share_target(target_type: str, target_id: str, user: dict) -> Non
             supabase.table("workstream_cards")
             .select("workstream_id")
             .eq("card_id", target_id)
-            .limit(100)
             .execute()
         )
         workstream_ids = [
@@ -71,9 +65,27 @@ def _authorize_share_target(target_type: str, target_id: str, user: dict) -> Non
             for row in (wsc.data or [])
             if row.get("workstream_id")
         ]
-        for ws_id in workstream_ids:
-            access = get_workstream_access(supabase, ws_id, user)
-            if access.can_manage:
+        if workstream_ids:
+            owned = (
+                supabase.table("workstreams")
+                .select("id")
+                .in_("id", workstream_ids)
+                .eq("user_id", user["id"])
+                .limit(1)
+                .execute()
+            )
+            if owned.data:
+                return
+            managed = (
+                supabase.table("workstream_members")
+                .select("workstream_id")
+                .in_("workstream_id", workstream_ids)
+                .eq("user_id", user["id"])
+                .eq("role", "owner")
+                .limit(1)
+                .execute()
+            )
+            if managed.data:
                 return
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
