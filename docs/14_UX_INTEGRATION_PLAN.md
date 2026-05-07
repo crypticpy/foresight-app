@@ -85,8 +85,8 @@ The page currently shows a flat list. We split into two visually distinct groups
 │ ━━ Organization (4) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │ ┌──────────────────────────┐ ┌──────────────────────────┐               │
 │ │ ▣ PPP · People           │ │ ▣ PPP · Place            │               │
-│ │ Future of Community      │ │ Future of Climate,       │               │
-│ │ Wellbeing & Social…      │ │ Infrastructure & Place…  │               │
+│ │ Community Wellbeing &    │ │ Climate, Infrastructure  │               │
+│ │ Social Resilience        │ │ & Place-Based Resilience │               │
 │ │ ─────────────────        │ │ ─────────────────        │               │
 │ │ 38 signals · 5 drivers   │ │ 41 signals · 4 drivers   │               │
 │ │ Informs: homelessness    │ │ Informs: wildfire resp., │               │
@@ -95,7 +95,7 @@ The page currently shows a flat list. We split into two visually distinct groups
 │ └──────────────────────────┘ └──────────────────────────┘               │
 │ ┌──────────────────────────┐ ┌──────────────────────────┐               │
 │ │ ▣ PPP · Partnerships     │ │ ◇ CSP · FY26–27 Priorities│              │
-│ │ Future of Intergov. &    │ │ Citywide Strategic Plan  │               │
+│ │ Intergovernmental &      │ │ Citywide Strategic Plan  │               │
 │ │ Civic Capacity           │ │ priority tracking        │               │
 │ │ 27 signals · 5 drivers   │ │ 36 signals · 25 prio.    │               │
 │ └──────────────────────────┘ └──────────────────────────┘               │
@@ -121,7 +121,7 @@ The detail page becomes a workspace.
 │ ◀ Workstreams                                                             │
 │                                                                          │
 │ ▣ PPP · People                                              [Edit] [⋯]  │
-│ Future of Community Wellbeing & Social Resilience                       │
+│ Community Wellbeing & Social Resilience                                 │
 │ Tracks emerging conditions affecting resident wellbeing, service        │
 │ demand, and social stability to inform future investments…              │
 │                                                                          │
@@ -215,7 +215,7 @@ Full-bleed inside the workstream tab. Three regions: **map canvas**, **layer pan
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ ◀ Future of Climate, Infrastructure & Place-Based Resilience            │
+│ ◀ Climate, Infrastructure & Place-Based Resilience                      │
 │ [Overview] [Kanban] [Map] [Quarterly Snapshot] [Settings]               │
 ├──────────┬──────────────────────────────────────────────────────────────┤
 │ Layers   │                                                              │

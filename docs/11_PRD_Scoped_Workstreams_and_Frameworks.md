@@ -36,9 +36,9 @@ Specifically:
 A user opening Foresight at the start of S3 sees:
 
 - **Four pre-seeded workstreams** under a new "Organization" workstream group:
-  - _Future of Community Wellbeing & Social Resilience_ (People)
-  - _Future of Climate, Infrastructure & Place-Based Resilience_ (Place)
-  - _Future of Intergovernmental & Civic Capacity_ (Partnerships)
+  - _Community Wellbeing & Social Resilience_ (People)
+  - _Climate, Infrastructure & Place-Based Resilience_ (Place)
+  - _Intergovernmental & Civic Capacity_ (Partnerships)
   - _Citywide Strategic Plan — FY26–27 Priorities_ (CSP)
 - Each workstream lists its **drivers** and **tracked metrics** in a header section, sourced from `strategic_frameworks` reference data.
 - Each workstream's discovery scan is bounded by a configurable monthly **scan budget** (default: low) and a **source-category whitelist** (default: government + RSS + academic).
@@ -200,7 +200,7 @@ frameworks:
     source_doc: "CMO Budget Message FY26–27, page 15"
     categories:
       - code: people
-        name: Future of Community Wellbeing & Social Resilience
+        name: Community Wellbeing & Social Resilience
         drivers:
           - code: cost_of_living
             name: Cost of Living
@@ -234,7 +234,7 @@ frameworks:
               - resident sentiment
               - trust measures
       - code: place
-        name: Future of Climate, Infrastructure & Place-Based Resilience
+        name: Climate, Infrastructure & Place-Based Resilience
         drivers:
           - code: climate_change
             name: Climate Change
@@ -257,7 +257,7 @@ frameworks:
             tracked_metric_examples:
               - park & field maintenance demand
       - code: partnerships
-        name: Future of Intergovernmental & Civic Capacity
+        name: Intergovernmental & Civic Capacity
         drivers:
           - code: state_federal_preemption
             name: State / Federal Preemption
@@ -296,7 +296,7 @@ frameworks:
       # ... HG, HH, MC, PS
 
 org_workstreams:
-  - name: Future of Community Wellbeing & Social Resilience (People)
+  - name: Community Wellbeing & Social Resilience (People)
     framework_code: PPP
     framework_category_code: people
     purpose_statement: >
@@ -314,7 +314,7 @@ org_workstreams:
     scan_budget:
       monthly_token_cap: 500000
       monthly_request_cap: 200
-  - name: Future of Climate, Infrastructure & Place-Based Resilience (Place)
+  - name: Climate, Infrastructure & Place-Based Resilience (Place)
     framework_code: PPP
     framework_category_code: place
     purpose_statement: >
@@ -327,7 +327,7 @@ org_workstreams:
       - Facility hardening
       - Climate adaptation and mitigation
     # ...
-  - name: Future of Intergovernmental & Civic Capacity (Partnerships)
+  - name: Intergovernmental & Civic Capacity (Partnerships)
     framework_code: PPP
     framework_category_code: partnerships
     purpose_statement: >
