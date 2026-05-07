@@ -19,9 +19,7 @@ Usage:
     csv_content = await export_service.generate_csv(card_data)
 """
 
-import io
 import logging
-import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,12 +35,12 @@ import numpy as np
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
 # ReportLab imports for PDF generation
 from reportlab.lib import colors as rl_colors
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
@@ -59,7 +57,7 @@ from reportlab.platypus import (
     PageTemplate,
     KeepTogether,
 )
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 from reportlab.pdfgen import canvas
 
 from supabase import Client
@@ -909,7 +907,6 @@ class MarkdownToPDFParser:
                 current_paragraph_lines = []
 
         for i, line in enumerate(lines):
-            original_line = line
             line_stripped = line.strip()
 
             # Handle code blocks
@@ -1440,7 +1437,7 @@ class ExportService:
             # Add legend
             ax.legend(
                 wedges,
-                [f"{l} ({v})" for l, v in zip(labels, values)],
+                [f"{label} ({value})" for label, value in zip(labels, values)],
                 title="Pillars",
                 loc="center left",
                 bbox_to_anchor=(1, 0, 0.5, 1),
@@ -1507,7 +1504,8 @@ class ExportService:
                 "H3": FORESIGHT_COLORS["secondary"],
             }
             colors = [
-                horizon_colors.get(l, FORESIGHT_COLORS["primary"]) for l in labels
+                horizon_colors.get(label, FORESIGHT_COLORS["primary"])
+                for label in labels
             ]
 
             x_pos = np.arange(len(labels))
@@ -4585,7 +4583,7 @@ The maturity stage reflects the current development status of this trend and hel
                 para = content_frame.add_paragraph()
 
             if (
-                is_bullet := line.startswith("•")
+                line.startswith("•")
                 or line.startswith("-")
                 or line.startswith("*")
             ):
@@ -4794,21 +4792,21 @@ The City of Austin is committed to transparent and responsible use of AI technol
             width = 0.25
 
             # Create bars
-            bars1 = ax.bar(
+            ax.bar(
                 x - width,
                 impacts,
                 width,
                 label="Impact",
                 color=COA_BRAND_COLORS["logo_blue"],
             )
-            bars2 = ax.bar(
+            ax.bar(
                 x,
                 relevances,
                 width,
                 label="Relevance",
                 color=COA_BRAND_COLORS["logo_green"],
             )
-            bars3 = ax.bar(
+            ax.bar(
                 x + width,
                 velocities,
                 width,
@@ -5424,7 +5422,6 @@ The City of Austin is committed to transparent and responsible use of AI technol
         """
         from pptx import Presentation
         from pptx.util import Inches, Pt
-        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
         from datetime import datetime, timezone
         import tempfile
 
@@ -5605,7 +5602,7 @@ The City of Austin is committed to transparent and responsible use of AI technol
             for i, brief in enumerate(briefs, 1):
                 # Generate score chart for this card if scores exist
                 card_chart_path = None
-                if has_scores := (
+                if (
                     (brief.impact_score and brief.impact_score > 0)
                     or (brief.relevance_score and brief.relevance_score > 0)
                     or (brief.velocity_score and brief.velocity_score > 0)
@@ -5748,8 +5745,6 @@ The City of Austin is committed to transparent and responsible use of AI technol
             Paragraph,
             Spacer,
             PageBreak,
-            Table,
-            TableStyle,
         )
         from reportlab.lib.units import inch
         from datetime import datetime, timezone

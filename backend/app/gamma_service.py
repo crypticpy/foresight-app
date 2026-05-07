@@ -706,7 +706,7 @@ class GammaService:
             if tag_lines:
                 # Format tags as a visual row with separators
                 title_section += "\n\n" + "  |  ".join(tag_lines)
-        title_section += f"\n\nCity of Austin Strategic Intelligence Brief"
+        title_section += "\n\nCity of Austin Strategic Intelligence Brief"
         title_section += f"\n{datetime.now(timezone.utc).strftime('%B %Y')}"
         sections = [title_section]
         # Slide 2: Executive Summary
@@ -1120,10 +1120,6 @@ def calculate_slides_per_card(card_count: int) -> int:
         Slides to allocate per card (2-4)
     """
     # Fixed slides: title(1) + overview(1) + priority(1) + themes(1) + actions(1) + disclosure(1) = 6
-    fixed_slides = 6
-    max_total = 55
-    available_for_cards = max_total - fixed_slides
-
     if card_count <= 3:
         return 4  # Detailed treatment
     elif card_count <= 7:

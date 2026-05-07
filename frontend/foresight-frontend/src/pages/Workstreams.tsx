@@ -796,10 +796,6 @@ const Workstreams: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    loadWorkstreams();
-  }, []);
-
   // Build a flat driver lookup map by fetching every framework once. Stays in
   // sync with the user's session — refetched if the page re-mounts.
   useEffect(() => {
@@ -886,7 +882,7 @@ const Workstreams: React.FC = () => {
     }
   }, []);
 
-  const loadWorkstreams = async () => {
+  const loadWorkstreams = useCallback(async () => {
     try {
       const {
         data: { session },
@@ -912,7 +908,11 @@ const Workstreams: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchScanStatuses]);
+
+  useEffect(() => {
+    loadWorkstreams();
+  }, [loadWorkstreams]);
 
   // Cleanup scan polling on unmount
   useEffect(() => {

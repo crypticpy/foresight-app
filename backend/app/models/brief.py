@@ -16,7 +16,6 @@ Database Table: executive_briefs
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, validator
-from uuid import UUID
 from enum import Enum
 import re
 

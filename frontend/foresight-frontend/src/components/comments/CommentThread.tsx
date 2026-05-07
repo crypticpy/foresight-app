@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MessageSquare } from "lucide-react";
 import { supabase } from "../../App";
 import {
@@ -33,12 +33,12 @@ export function CommentThread({
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const getToken = async () => {
+  const getToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token;
-  };
+  }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const token = await getToken();
     if (!token) return;
     try {
@@ -47,11 +47,11 @@ export function CommentThread({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load comments");
     }
-  };
+  }, [getToken, targetId, targetType, workstreamId]);
 
   useEffect(() => {
     load();
-  }, [targetType, targetId, workstreamId]);
+  }, [load]);
 
   const submit = async () => {
     const token = await getToken();

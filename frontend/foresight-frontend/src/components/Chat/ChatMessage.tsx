@@ -423,7 +423,7 @@ function parseInline(
   // 12: bare http(s) URL
   // 13: bare internal /path (preceded by start, whitespace, or punctuation)
   const regex =
-    /(\[([^\]]+)\]\(([^)]+)\))|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`(.+?)`)|(\[(\d+)\])|(\bhttps?:\/\/[^\s)\]]+)|(?:^|(?<=[\s(>,;!?]))(\/(?:signals|patterns|workstreams|discover|ask|feeds|compare|analytics|methodology|how-it-works|guide|cards)(?:\/[A-Za-z0-9_\-]+)?)(?=[\s).,;!?]|$)/g;
+    /(\[([^\]]+)\]\(([^)]+)\))|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`(.+?)`)|(\[(\d+)\])|(\bhttps?:\/\/[^\s)\]]+)|(?:^|(?<=[\s(>,;!?]))(\/(?:signals|patterns|workstreams|discover|ask|feeds|compare|analytics|methodology|how-it-works|guide|cards)(?:\/[A-Za-z0-9_-]+)?)(?=[\s).,;!?]|$)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 

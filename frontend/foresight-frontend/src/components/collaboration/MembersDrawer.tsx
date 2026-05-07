@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { X, Trash2 } from "lucide-react";
 import { supabase } from "../../App";
 import {
@@ -27,7 +27,7 @@ export function MembersDrawer({
   const [members, setMembers] = useState<WorkstreamMember[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return;
@@ -37,11 +37,11 @@ export function MembersDrawer({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load members");
     }
-  };
+  }, [workstreamId]);
 
   useEffect(() => {
     if (open) load();
-  }, [open, workstreamId]);
+  }, [load, open]);
 
   const changeRole = async (member: WorkstreamMember, role: string) => {
     const { data } = await supabase.auth.getSession();

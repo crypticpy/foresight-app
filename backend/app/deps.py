@@ -20,6 +20,8 @@ from supabase import create_client, Client
 
 from app.openai_provider import (
     azure_openai_client,
+    azure_openai_embedding_client as _azure_openai_embedding_client,
+    get_embedding_deployment as _get_embedding_deployment,
 )
 from app.security import (
     get_rate_limiter,
@@ -46,6 +48,8 @@ if _supabase_url and _supabase_service_key:
 # OpenAI alias
 # ---------------------------------------------------------------------------
 openai_client = azure_openai_client
+azure_openai_embedding_client = _azure_openai_embedding_client
+get_embedding_deployment = _get_embedding_deployment
 
 # ---------------------------------------------------------------------------
 # Rate limiter

@@ -24,19 +24,16 @@ Usage:
     result = await service.execute_scan(config)
 """
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta, timezone
-from typing import List, Optional, Dict, Any, Tuple
-from enum import Enum
-import uuid
+from typing import List, Optional, Dict, Tuple
 
 from supabase import Client
 import openai
 
-from .ai_service import AIService, AnalysisResult, TriageResult
+from .ai_service import AIService, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from . import domain_reputation_service
@@ -55,17 +52,15 @@ from .search_provider import (
     is_available as serper_available,
     SearchResult,
 )
-from .content_enricher import enrich_sources
-
-logger = logging.getLogger(__name__)
-
-# Import shared taxonomy constants
 from .taxonomy import (
     PILLAR_NAMES,
     STAGE_NUMBER_TO_ID,
     convert_pillar_id,
     convert_goal_id,
 )
+from .content_enricher import enrich_sources
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
