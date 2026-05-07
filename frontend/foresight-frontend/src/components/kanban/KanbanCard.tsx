@@ -71,6 +71,10 @@ export interface KanbanCardProps {
   onCardClick?: (card: WorkstreamCardType) => void;
   /** Optional card action callbacks */
   cardActions?: CardActionCallbacks;
+  /** Whether this card is part of the current bulk-action selection. */
+  isSelected?: boolean;
+  /** Toggle this card's selection in the bulk-action set. */
+  onToggleSelect?: (cardId: string) => void;
 }
 
 // =============================================================================
@@ -199,6 +203,8 @@ export const KanbanCard = memo(function KanbanCard({
   readOnly = false,
   onCardClick,
   cardActions,
+  isSelected = false,
+  onToggleSelect,
 }: KanbanCardProps) {
   const navigate = useNavigate();
 
@@ -349,10 +355,38 @@ export const KanbanCard = memo(function KanbanCard({
         // Drag states
         isDragging && "opacity-50 shadow-lg ring-2 ring-brand-blue/50",
         isDragOverlay && "shadow-xl scale-105 rotate-2 cursor-grabbing",
+        // Selection ring — wins over hover-shadow so the user can scan
+        // the selection at a glance.
+        isSelected &&
+          "ring-2 ring-brand-blue ring-offset-1 dark:ring-offset-dark-surface-deep",
         // Touch optimization and cursor
         "touch-none cursor-grab active:cursor-grabbing",
       )}
     >
+      {/* Selection checkbox — top-left. Always visible once any card is
+          selected, otherwise revealed on hover so cards stay clean. */}
+      {onToggleSelect && !isDragOverlay && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect(card.id);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            "absolute top-2 left-2 z-10 flex h-5 w-5 items-center justify-center rounded border transition-all",
+            isSelected
+              ? "bg-brand-blue border-brand-blue text-white opacity-100"
+              : "bg-white dark:bg-dark-surface border-gray-300 dark:border-gray-600 text-transparent opacity-0 group-hover:opacity-100 hover:border-brand-blue",
+          )}
+          role="checkbox"
+          aria-checked={isSelected}
+          aria-label={isSelected ? "Deselect card" : "Select card"}
+        >
+          <Check className="h-3.5 w-3.5" strokeWidth={3} />
+        </button>
+      )}
+
       {/* Top-right actions: Card Actions Menu */}
       <div
         className={cn(

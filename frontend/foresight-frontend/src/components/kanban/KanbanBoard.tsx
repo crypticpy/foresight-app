@@ -57,6 +57,10 @@ export interface KanbanBoardProps {
   onCardClick?: OnCardClickCallback;
   /** Optional card action callbacks */
   cardActions?: CardActionCallbacks;
+  /** Set of currently-selected workstream-card ids (for bulk actions). */
+  selectedCardIds?: Set<string>;
+  /** Toggle a card's membership in the bulk-action selection. */
+  onToggleSelect?: (cardId: string) => void;
   /** Optional additional class names */
   className?: string;
 }
@@ -111,6 +115,8 @@ export function KanbanBoard({
   readOnly = false,
   onCardClick,
   cardActions,
+  selectedCardIds,
+  onToggleSelect,
   className,
 }: KanbanBoardProps) {
   // Track the currently dragged card for the overlay
@@ -265,6 +271,8 @@ export function KanbanBoard({
             readOnly={readOnly}
             onCardClick={onCardClick}
             cardActions={cardActions}
+            selectedCardIds={selectedCardIds}
+            onToggleSelect={onToggleSelect}
           />
         ))}
       </div>

@@ -47,6 +47,7 @@ import { logger } from "../lib/logger";
 import {
   KanbanBoard,
   KanbanErrorBoundary,
+  SelectionToolbar,
   type KanbanStatus,
   type WorkstreamCard,
   type CardActionCallbacks,
@@ -423,6 +424,11 @@ const WorkstreamKanban: React.FC = () => {
   // Search/filter state for kanban board
   const [searchQuery, setSearchQuery] = useState("");
   const [filterPillar, setFilterPillar] = useState<string | null>(null);
+
+  // Bulk-selection state — drives the SelectionToolbar.
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Research status tracking
   const [researchStatuses, setResearchStatuses] = useState<
@@ -1192,6 +1198,25 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
+   * Toggle a card's membership in the bulk-selection set.
+   */
+  const handleToggleSelect = useCallback((cardId: string) => {
+    setSelectedCardIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) {
+        next.delete(cardId);
+      } else {
+        next.add(cardId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedCardIds(new Set());
+  }, []);
+
+  /**
    * Card action callbacks for KanbanBoard.
    */
   const cardActions: CardActionCallbacks = {
@@ -1945,6 +1970,14 @@ const WorkstreamKanban: React.FC = () => {
               showToast("error", "An error occurred in the Kanban board");
             }}
           >
+            <SelectionToolbar
+              workstreamId={id!}
+              selectedCardIds={Array.from(selectedCardIds)}
+              getAuthToken={getAuthToken}
+              showToast={showToast}
+              onClearSelection={handleClearSelection}
+              onCardsChanged={loadCards}
+            />
             <KanbanBoard
               cards={filteredCards}
               workstreamId={id!}
@@ -1952,6 +1985,8 @@ const WorkstreamKanban: React.FC = () => {
               readOnly={isOrgOwned}
               onCardClick={handleCardClick}
               cardActions={isOrgOwned ? undefined : cardActions}
+              selectedCardIds={isOrgOwned ? undefined : selectedCardIds}
+              onToggleSelect={isOrgOwned ? undefined : handleToggleSelect}
             />
           </KanbanErrorBoundary>
         )}

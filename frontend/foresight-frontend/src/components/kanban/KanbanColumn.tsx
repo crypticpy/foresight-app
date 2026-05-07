@@ -44,6 +44,10 @@ export interface KanbanColumnProps {
   readOnly?: boolean;
   onCardClick?: OnCardClickCallback;
   cardActions?: CardActionCallbacks;
+  /** Set of currently-selected workstream-card ids (for bulk actions). */
+  selectedCardIds?: Set<string>;
+  /** Toggle a card's membership in the bulk-action selection. */
+  onToggleSelect?: (cardId: string) => void;
 }
 
 // =============================================================================
@@ -127,6 +131,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   readOnly = false,
   onCardClick,
   cardActions,
+  selectedCardIds,
+  onToggleSelect,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id,
@@ -213,6 +219,8 @@ export const KanbanColumn = memo(function KanbanColumn({
                   readOnly={readOnly}
                   onCardClick={onCardClick}
                   cardActions={cardActions}
+                  isSelected={selectedCardIds?.has(card.id) ?? false}
+                  onToggleSelect={onToggleSelect}
                 />
               ))}
             </div>

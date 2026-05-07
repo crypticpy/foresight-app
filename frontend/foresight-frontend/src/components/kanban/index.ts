@@ -55,6 +55,7 @@ export { KanbanColumn } from "./KanbanColumn";
 export { KanbanCard } from "./KanbanCard";
 export { CardActions } from "./CardActions";
 export { KanbanErrorBoundary } from "./KanbanErrorBoundary";
+export { SelectionToolbar } from "./SelectionToolbar";
 
 // =============================================================================
 // Types
