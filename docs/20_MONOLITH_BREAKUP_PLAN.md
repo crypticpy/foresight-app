@@ -20,6 +20,37 @@ All work after this plan should follow this flow:
 
 No direct pushes to `main` for implementation work.
 
+## Ownership And Coordination
+
+Each PR must name one DRI in the PR description. The DRI owns scope control,
+review follow-up, validation, and merge readiness for that slice. If the work is
+done by Codex, the DRI is `Codex`; if a human takes over a slice, the PR body
+must be updated with that person's name before review.
+
+Planned ownership:
+
+| Slice | DRI | Coordination Notes |
+| --- | --- | --- |
+| PR 1: Quality Gate Baseline | Codex | Unblocks all later refactor PRs. |
+| PR 2: Export Service Split | Codex | Keep router-facing `ExportService` imports stable until the final extraction step. |
+| PR 3: Discovery Pipeline Boundaries | Codex | Do not overlap with PR 5 until shared fetch/query boundaries are reviewed. |
+| PR 4: Research Cost-Control Boundary | Codex | Coordinate with discovery telemetry so cost events use one schema. |
+| PR 5: Workstream Scan Consolidation | Codex | Start after PR 3 establishes shared discovery package boundaries. |
+| PR 6: Router Slimming | Codex | Start after service modules exist for the target domain. |
+| PR 7: Workstream Kanban Frontend Split | Codex | Avoid overlapping edits with backend Kanban router changes unless the PRs are stacked explicitly. |
+| PR 8: Secondary Frontend Bundle Cleanup | Codex | Start after large route shells have been split enough to make chunks meaningful. |
+
+Coordination rules:
+
+- Avoid parallel PRs that edit the same file unless one is explicitly stacked on
+  top of the other and the PR body names the dependency.
+- Discovery and workstream-scan refactors are sequential: discovery package
+  boundaries first, then scan consolidation.
+- Frontend Kanban and backend Kanban router changes should not ship in the same
+  PR unless the behavior change requires both sides.
+- Rebase or merge `main` into long-running refactor branches at least once per
+  review cycle to surface conflicts early.
+
 ## Current Hotspots
 
 Backend:
@@ -66,8 +97,8 @@ Scope:
 
 Checks:
 
-- `cd backend && venv/bin/python -m pytest`
-- `cd backend && venv/bin/ruff check app tests`
+- `cd backend && python -m pytest`
+- `cd backend && python -m ruff check app tests`
 - `cd frontend/foresight-frontend && npx tsc --noEmit`
 - `cd frontend/foresight-frontend && pnpm build`
 
@@ -235,8 +266,12 @@ A PR can merge only when:
 - All actionable review comments are resolved.
 - Any known residual risk is documented in the PR.
 - Deployment implications are clear.
+- High-risk refactor PRs include a rollback plan that names the exact commit,
+  file move, or feature flag to revert or toggle, plus the execution steps.
+- High-risk refactor PRs include observability requirements: the monitoring
+  signal, dashboard or log query, and alert threshold that will validate
+  post-merge safety.
 
 ## Initial Recommendation
 
 Start with PR 1 and PR 2. The export service is the largest module and has clearer extraction boundaries than discovery or research. Once the team is comfortable with the refactor pattern, move to discovery and research, where the payoff is higher but the blast radius is larger.
-
