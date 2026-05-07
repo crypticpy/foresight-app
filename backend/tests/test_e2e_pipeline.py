@@ -24,6 +24,8 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
+import pytest
+
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -60,6 +62,9 @@ def test_source_fetchers_public_api_contract() -> None:
 
 def test_discovery_service_public_api_contract() -> None:
     """Verify discovery_service keeps its public orchestration symbols."""
+    if importlib.util.find_spec("supabase") is None:
+        pytest.skip("supabase not available - skipping discovery_service contract test")
+
     module_name = "app.discovery_service"
     discovery_module = importlib.import_module(module_name)
 

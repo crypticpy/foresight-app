@@ -18,8 +18,8 @@ Frontend:
 
 ```bash
 cd frontend/foresight-frontend
-npx tsc --noEmit
-npx eslint . --max-warnings=24
+pnpm exec tsc --noEmit
+pnpm exec eslint . --max-warnings=24
 pnpm exec vite build
 ```
 
