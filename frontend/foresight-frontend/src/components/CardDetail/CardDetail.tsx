@@ -55,6 +55,13 @@ import {
   MaturityScorePanel,
   ActivityStatsPanel,
 } from "./tabs/OverviewTab";
+import { LensMetadataPanel } from "../lens/LensMetadataPanel";
+import type {
+  AnchorScores,
+  PillarCode,
+  SignalType,
+  UserMetadata,
+} from "../../lib/lens-api";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { TimelineTab } from "./tabs/TimelineTab";
 import { NotesTab } from "./tabs/NotesTab";
@@ -686,6 +693,17 @@ export const CardDetail: React.FC<CardDetailProps> = ({
               createdAt={card.created_at}
               updatedAt={card.updated_at}
               deepResearchAt={card.deep_research_at}
+            />
+            <LensMetadataPanel
+              cardId={card.id}
+              primaryPillar={(card.pillar_id as PillarCode) || null}
+              signalType={(card.signal_type as SignalType) ?? null}
+              llmSecondaryPillars={
+                (card.secondary_pillars ?? []) as PillarCode[]
+              }
+              llmAnchorScores={(card.anchor_scores as AnchorScores) ?? null}
+              llmIssueTags={card.issue_tags ?? []}
+              userMetadata={(card.user_metadata as UserMetadata) ?? null}
             />
             {/* Score History - Compact sidebar widget */}
             <ScoreTimelineChart
