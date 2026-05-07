@@ -15,8 +15,7 @@ import pytest
 import sys
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from typing import Dict, Any, List
 import uuid
 
 # Add backend to path for imports
@@ -283,7 +282,7 @@ class TestScoreHistoryResponseModel:
 
     def test_score_history_model_has_required_fields(self):
         """ScoreHistoryResponse should have all required fields."""
-        from app.models.history import ScoreHistoryResponse, ScoreHistory
+        from app.models.history import ScoreHistoryResponse
 
         # Test ScoreHistoryResponse structure
         assert hasattr(ScoreHistoryResponse, 'model_fields')

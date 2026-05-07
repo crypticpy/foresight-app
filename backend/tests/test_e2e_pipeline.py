@@ -15,10 +15,11 @@ Usage:
 """
 
 import asyncio
+import importlib.util
 import logging
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -106,15 +107,10 @@ class E2EPipelineTest:
         try:
             from app.source_fetchers import (
                 fetch_rss_sources,
-                FetchedArticle,
                 fetch_news_articles,
-                NewsArticle,
                 fetch_academic_papers,
-                AcademicPaper,
                 fetch_government_sources,
-                GovernmentDocument,
                 fetch_tech_blog_articles,
-                TechBlogArticle,
             )
 
             # Verify all expected exports exist
@@ -196,8 +192,6 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             from app.source_fetchers.news_fetcher import (
-                fetch_news_articles,
-                NewsArticle,
                 NewsFetcher,
                 NEWS_SOURCES
             )
@@ -229,9 +223,7 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             from app.source_fetchers.academic_fetcher import (
-                fetch_academic_papers,
-                AcademicPaper,
-                convert_to_raw_source
+                fetch_academic_papers
             )
 
             # Test arXiv search (small query)
@@ -280,7 +272,6 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             from app.source_fetchers.government_fetcher import (
-                fetch_government_sources,
                 GovernmentDocument,
                 GovernmentFetcher,
                 GOVERNMENT_SOURCES
@@ -316,8 +307,6 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             from app.source_fetchers.tech_blog_fetcher import (
-                fetch_tech_blog_articles,
-                TechBlogArticle,
                 TechBlogFetcher,
                 TECH_BLOG_SOURCES
             )
@@ -349,16 +338,12 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             # Check if supabase is available - this is the main external dependency
-            try:
-                import supabase
-            except ImportError:
+            if importlib.util.find_spec("supabase") is None:
                 # Supabase not installed - test configuration directly via mock
                 duration = (datetime.now() - start).total_seconds()
 
                 # We can still test the enum and config by importing just those
                 # Use importlib to bypass the supabase import at module level
-                import importlib.util
-                import sys
 
                 # Read the source file and extract just the enum and dataclass
                 spec_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'discovery_service.py')
@@ -386,14 +371,8 @@ class E2EPipelineTest:
                 return
 
             from app.discovery_service import (
-                DiscoveryService,
                 DiscoveryConfig,
                 SourceCategory,
-                SourceCategoryConfig,
-                MultiSourceFetchResult,
-                SourceDiversityMetrics,
-                ProcessingTimeMetrics,
-                APITokenUsage,
             )
 
             # Verify all 5 source categories are defined
@@ -430,9 +409,7 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             # Check if supabase is available
-            try:
-                import supabase
-            except ImportError:
+            if importlib.util.find_spec("supabase") is None:
                 # Supabase not installed - verify configuration via source inspection
                 duration = (datetime.now() - start).total_seconds()
 
@@ -544,11 +521,6 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             from app.models.validation import (
-                ClassificationValidation,
-                ClassificationValidationCreate,
-                ClassificationAccuracyMetrics,
-                ValidationSummary,
-                ClassificationConfusionMatrix,
                 VALID_PILLAR_CODES
             )
 
@@ -581,9 +553,7 @@ class E2EPipelineTest:
         start = datetime.now()
         try:
             # Check if supabase is available
-            try:
-                import supabase
-            except ImportError:
+            if importlib.util.find_spec("supabase") is None:
                 # Supabase not installed - verify metrics classes via source inspection
                 duration = (datetime.now() - start).total_seconds()
 

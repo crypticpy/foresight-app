@@ -563,7 +563,7 @@ def verify_scenario_4_score_transparency():
 
     print("\nScore Response Structure:")
     print(f"  discovery_score: {result['discovery_score']}")
-    print(f"  score_breakdown:")
+    print("  score_breakdown:")
     for key, value in result["score_breakdown"].items():
         print(f"    {key}: {value}")
 
@@ -625,7 +625,7 @@ def verify_weight_configuration():
 
     total = NOVELTY_WEIGHT + RELEVANCE_WEIGHT + ALIGNMENT_WEIGHT + CONTEXT_WEIGHT
 
-    print(f"\nScoring Weights:")
+    print("\nScoring Weights:")
     print(f"  NOVELTY_WEIGHT:   {NOVELTY_WEIGHT:.2f} ({NOVELTY_WEIGHT*100:.0f}%)")
     print(f"  RELEVANCE_WEIGHT: {RELEVANCE_WEIGHT:.2f} ({RELEVANCE_WEIGHT*100:.0f}%)")
     print(f"  ALIGNMENT_WEIGHT: {ALIGNMENT_WEIGHT:.2f} ({ALIGNMENT_WEIGHT*100:.0f}%)")
