@@ -38,6 +38,8 @@ export interface CardDetailHeaderProps {
   backLink?: string;
   /** Optional custom back link text (defaults to "Back to Discover") */
   backLinkText?: string;
+  /** Hide the back link when the detail view is embedded in a modal. */
+  showBackLink?: boolean;
   /** Optional children to render in the action buttons area */
   children?: React.ReactNode;
 }
@@ -63,6 +65,7 @@ export const CardDetailHeader: React.FC<CardDetailHeaderProps> = ({
   card,
   backLink = "/discover",
   backLinkText = "Back to Discover",
+  showBackLink = true,
   children,
 }) => {
   // Parse stage number from stage_id string
@@ -71,13 +74,15 @@ export const CardDetailHeader: React.FC<CardDetailHeaderProps> = ({
   return (
     <div className="mb-8">
       {/* Back Navigation Link */}
-      <Link
-        to={backLink}
-        className="inline-flex items-center text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-brand-blue dark:hover:text-brand-blue mb-6 transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4 mr-1.5" />
-        {backLinkText}
-      </Link>
+      {showBackLink && (
+        <Link
+          to={backLink}
+          className="inline-flex items-center text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-brand-blue dark:hover:text-brand-blue mb-6 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4 mr-1.5" />
+          {backLinkText}
+        </Link>
+      )}
 
       {/* Hero Section Container - optimized for quick scanning */}
       <div className="bg-white dark:bg-dark-surface/90 rounded-2xl border border-gray-200 dark:border-gray-700/70 shadow-sm overflow-hidden mb-6">

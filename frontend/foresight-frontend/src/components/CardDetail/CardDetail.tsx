@@ -94,6 +94,12 @@ import {
 export interface CardDetailProps {
   /** Optional custom className for the container */
   className?: string;
+  /** Optional slug for embedded views that do not own the route. */
+  slugOverride?: string;
+  /** Render inside another surface instead of as a full page. */
+  embedded?: boolean;
+  /** Optional related-card navigation override for embedded flows. */
+  onRelatedCardClick?: (cardSlug: string) => void;
 }
 
 /**
@@ -105,8 +111,14 @@ export interface CardDetailProps {
  * - Manages user interactions (following, notes)
  * - Renders sub-components in a tabbed layout
  */
-export const CardDetail: React.FC<CardDetailProps> = ({ className = "" }) => {
-  const { slug } = useParams<{ slug: string }>();
+export const CardDetail: React.FC<CardDetailProps> = ({
+  className = "",
+  slugOverride,
+  embedded = false,
+  onRelatedCardClick,
+}) => {
+  const { slug: routeSlug } = useParams<{ slug: string }>();
+  const slug = slugOverride ?? routeSlug;
   const { user } = useAuthContext();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -442,9 +454,14 @@ export const CardDetail: React.FC<CardDetailProps> = ({ className = "" }) => {
   // Handle related card click
   const handleRelatedCardClick = useCallback(
     (cardId: string, cardSlug: string) => {
-      if (cardSlug) navigate(`/signals/${cardSlug}`);
+      if (!cardSlug) return;
+      if (onRelatedCardClick) {
+        onRelatedCardClick(cardSlug);
+      } else {
+        navigate(`/signals/${cardSlug}`);
+      }
     },
-    [navigate],
+    [navigate, onRelatedCardClick],
   );
 
   // Effects
@@ -486,8 +503,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({ className = "" }) => {
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-brand-blue" />
+      <div
+        className={cn(
+          "min-h-screen flex items-center justify-center",
+          embedded && "min-h-[24rem]",
+        )}
+      >
+        <div className="animate-spin rounded-full h-16 w-16 sm:h-24 sm:w-24 border-b-2 border-brand-blue" />
       </div>
     );
   }
@@ -495,7 +517,12 @@ export const CardDetail: React.FC<CardDetailProps> = ({ className = "" }) => {
   // Not found state
   if (!card) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+      <div
+        className={cn(
+          "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16",
+          embedded && "px-0 sm:px-0 lg:px-0 py-10",
+        )}
+      >
         <div className="text-center bg-white dark:bg-dark-surface rounded-2xl shadow border border-gray-200 dark:border-gray-700 p-10">
           <div className="mx-auto h-14 w-14 rounded-full bg-brand-blue/10 dark:bg-brand-blue/20 flex items-center justify-center mb-5">
             <FileQuestion className="h-7 w-7 text-brand-blue" />
@@ -530,13 +557,18 @@ export const CardDetail: React.FC<CardDetailProps> = ({ className = "" }) => {
 
   return (
     <div
-      className={cn("max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8", className)}
+      className={cn(
+        "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8",
+        embedded && "max-w-none px-0 sm:px-0 lg:px-0 py-0",
+        className,
+      )}
     >
       {/* Header with action buttons */}
       <CardDetailHeader
         card={card}
         backLink={backLink}
         backLinkText={backLinkText}
+        showBackLink={!embedded}
       >
         <CardActionButtons
           card={card}

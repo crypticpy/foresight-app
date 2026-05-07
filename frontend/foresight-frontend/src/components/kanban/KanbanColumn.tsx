@@ -48,6 +48,8 @@ export interface KanbanColumnProps {
   selectedCardIds?: Set<string>;
   /** Toggle a card's membership in the bulk-action selection. */
   onToggleSelect?: (cardId: string) => void;
+  /** Optional additional class names for responsive board layouts. */
+  className?: string;
 }
 
 // =============================================================================
@@ -133,6 +135,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   cardActions,
   selectedCardIds,
   onToggleSelect,
+  className,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id,
@@ -155,14 +158,16 @@ export const KanbanColumn = memo(function KanbanColumn({
   return (
     <div
       ref={setNodeRef}
+      data-kanban-column={id}
       className={cn(
         "flex flex-col",
-        "w-72 min-w-72 flex-shrink-0",
+        "w-full md:w-72 md:min-w-72 xl:w-full xl:min-w-0 flex-shrink-0",
         "bg-gray-50 dark:bg-dark-surface-deep",
         "rounded-xl",
         "border border-gray-200 dark:border-gray-800",
         "transition-all duration-200",
         isOver && "ring-2 ring-brand-blue/50 border-brand-blue/50",
+        className,
       )}
     >
       {/* Column Header */}

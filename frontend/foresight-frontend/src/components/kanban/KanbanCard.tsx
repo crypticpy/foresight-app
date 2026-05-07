@@ -459,6 +459,7 @@ export const KanbanCard = memo(function KanbanCard({
 
       {/* Card Content - Clickable Area */}
       <div
+        data-kanban-card={card.id}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         role="button"

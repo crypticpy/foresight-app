@@ -94,6 +94,7 @@ import { ShareWorkstreamModal } from "../components/collaboration/ShareWorkstrea
 import { MembersDrawer } from "../components/collaboration/MembersDrawer";
 import { RoleBadge } from "../components/collaboration/RoleBadge";
 import { ActivityRail } from "../components/activity/ActivityRail";
+import { CardDetail } from "../components/CardDetail";
 
 // ============================================================================
 // Types
@@ -360,6 +361,74 @@ function FormModal({
   );
 }
 
+function SignalDetailModal({
+  slug,
+  onClose,
+}: {
+  slug: string | null;
+  onClose: () => void;
+}) {
+  const [detailSlug, setDetailSlug] = useState(slug);
+
+  useEffect(() => {
+    setDetailSlug(slug);
+  }, [slug]);
+
+  useEffect(() => {
+    if (!slug) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [slug, onClose]);
+
+  if (!slug || !detailSlug) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 lg:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Signal details"
+      onClick={onClose}
+    >
+      <div
+        className="relative z-10 flex max-h-[calc(100vh-1rem)] w-full max-w-[112rem] flex-col overflow-hidden rounded-lg bg-brand-faded-white shadow-2xl dark:bg-brand-dark-blue sm:max-h-[calc(100vh-2rem)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-dark-surface">
+          <Link
+            to={`/signals/${detailSlug}`}
+            className="inline-flex items-center gap-2 text-sm font-medium text-brand-blue hover:text-brand-dark-blue dark:hover:text-brand-green"
+          >
+            <FileText className="h-4 w-4" />
+            Open full signal page
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-surface-hover dark:hover:text-white"
+            aria-label="Close signal details"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
+          <CardDetail
+            key={detailSlug}
+            slugOverride={detailSlug}
+            embedded
+            onRelatedCardClick={setDetailSlug}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -409,6 +478,9 @@ const WorkstreamKanban: React.FC = () => {
   const [shareOpen, setShareOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [selectedSignalSlug, setSelectedSignalSlug] = useState<string | null>(
+    null,
+  );
 
   // Export state
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -843,13 +915,13 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
-   * Handle card click - navigate to card detail page.
+   * Handle card click - open the signal detail modal without leaving the board.
    */
   const handleCardClick = useCallback(
     (card: WorkstreamCard) => {
-      navigate(`/signals/${card.card.slug}`);
+      setSelectedSignalSlug(card.card.slug);
     },
-    [navigate],
+    [],
   );
 
   /**
@@ -2177,6 +2249,11 @@ const WorkstreamKanban: React.FC = () => {
           error={bulkExportError}
           onExport={handleExecuteBulkExport}
           isExporting={isBulkExporting}
+        />
+
+        <SignalDetailModal
+          slug={selectedSignalSlug}
+          onClose={() => setSelectedSignalSlug(null)}
         />
 
         {/* Workstream Chat Panel */}
