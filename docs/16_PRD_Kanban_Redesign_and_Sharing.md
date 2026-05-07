@@ -1,6 +1,6 @@
 # Kanban Redesign + Selection-Driven Actions + Sharing
 
-**Status:** Draft / In Progress
+**Status:** Shipped (all 7 phases landed on branch)
 **Author:** Claude + product owner
 **Date:** 2026-05-07
 **Branch:** `feat/kanban-redesign-and-sharing`
@@ -170,15 +170,27 @@ The single highest-leverage interaction. Replace drag with:
 
 ## Phased rollout (commit plan on this branch)
 
-1. **Foundation:** DB migration + backend enum collapse + card-attribute columns.
-2. **Frontend column collapse:** `KANBAN_COLUMNS` to 4, drop column-specific actions, update KanbanColumn / KanbanCard rendering.
-3. **Card attributes UI:** Watching toggle, brief-status chip, freshness badge.
-4. **Selection mode + bulk action bar:** infrastructure + Generate Portfolio + Bulk archive + Bulk Watching toggle.
-5. **Sharing v1:** `mailto:` email card, share-payload endpoint, bulk email.
-6. **Quick-triage:** hover bar + keyboard shortcuts on Inbox.
-7. **Tests + docs.**
+1. ✅ **Foundation:** DB migration + backend enum collapse + card-attribute columns. (`e2f2842`)
+2. ✅ **Frontend column collapse:** `KANBAN_COLUMNS` to 4, drop column-specific actions, update KanbanColumn / KanbanCard rendering. (`456e564`)
+3. ✅ **Card attributes UI:** Watching toggle, brief-status chip, freshness badge. (`7c6364f`)
+4. ✅ **Selection mode + bulk action bar:** infrastructure + Generate Portfolio + Bulk archive + Bulk Watching toggle + Email/Copy links. (`65ce50d`)
+5. ✅ **Sharing v1:** `mailto:` email card, share-payload endpoint, single-card copy link. (`2e73df1`)
+6. ✅ **Quick-triage:** keyboard shortcuts (E/A accept, X/R dismiss, W watch) on hovered Inbox cards. (`78a9963`)
+7. ✅ **Tests + docs:** SelectionToolbar unit tests, PRD checklist updated.
 
-Each phase ships as its own commit.
+Each phase shipped as its own commit.
+
+## Implementation reference
+
+- **Components:** `frontend/foresight-frontend/src/components/kanban/`
+  - `SelectionToolbar.tsx` — bulk-action bar, mounts when `selectedCardIds.size > 0`
+  - `KanbanCard.tsx` — selection checkbox, watching/brief/freshness chips, inbox keyboard handler
+  - `CardActions.tsx` — per-card menu with Email this card / Copy share link
+- **Page wiring:** `frontend/foresight-frontend/src/pages/WorkstreamKanban.tsx`
+  - `selectedCardIds` state, `handleToggleSelect`, `handleClearSelection`
+  - `handleShareCard` / `handleCopyShareLink` use `fetchWorkstreamCardSharePayload`
+- **Backend bulk endpoint:** `POST /api/v1/me/workstreams/{id}/bulk` accepts `BulkCardAction` ∈ {archive, restore, watch, unwatch, copy_share_links, email_selection, generate_portfolio, …}.
+- **Tests:** `src/components/kanban/__tests__/SelectionToolbar.test.tsx` (7 cases).
 
 ## Open questions / risks
 
