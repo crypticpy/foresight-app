@@ -56,17 +56,20 @@ async def get_workstream_cards(
     Raises:
         HTTPException 404: Workstream not found or not owned by user
     """
-    # Verify workstream belongs to user
+    # Verify workstream is accessible (owned by caller or org-owned).
+    # Mutations on org workstreams are blocked elsewhere by user_id checks +
+    # RLS; this read path only needs to confirm visibility.
     ws_response = (
         supabase.table("workstreams")
-        .select("id, user_id")
+        .select("id, user_id, owner_type")
         .eq("id", workstream_id)
         .execute()
     )
     if not ws_response.data:
         raise HTTPException(status_code=404, detail="Workstream not found")
 
-    if ws_response.data[0]["user_id"] != current_user["id"]:
+    ws_row = ws_response.data[0]
+    if ws_row.get("owner_type") != "org" and ws_row["user_id"] != current_user["id"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to access this workstream"
         )

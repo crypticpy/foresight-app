@@ -19,6 +19,7 @@ export interface Driver {
   name: string;
   description?: string | null;
   keywords: string[];
+  tracked_metric_examples: string[];
   display_order: number;
   created_at?: string | null;
   updated_at?: string | null;

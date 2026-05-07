@@ -407,6 +407,17 @@ export function groupCardsByStatus(
  * console.log(`${grouped.inbox.length} cards in inbox`);
  * ```
  */
+/**
+ * Fetch the caller's workstreams plus all org-owned workstreams.  The
+ * backend returns rows with ``owner_type`` set to either "user" or "org",
+ * which lets the UI split them into Strategic (org) vs My sections.
+ */
+export async function listWorkstreams<
+  T = Record<string, unknown> & { owner_type?: "user" | "org" },
+>(token: string): Promise<T[]> {
+  return apiRequest<T[]>("/api/v1/me/workstreams", token);
+}
+
 export async function fetchWorkstreamCards(
   token: string,
   workstreamId: string,

@@ -6,10 +6,16 @@
  * Controls for auto_scan and analyze_now.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Search, Radar, Zap, Pencil } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { ToggleSwitch } from "../ToggleSwitch";
+import { FrameworkBadge } from "../../FrameworkBadge";
+import { DriverChip } from "../../DriverChip";
+import {
+  getFramework,
+  type StrategicFramework,
+} from "../../../lib/frameworks-api";
 import type { FormData, FilterPreviewResult } from "../../../types/workstream";
 
 interface StepPreviewProps {
@@ -20,6 +26,8 @@ interface StepPreviewProps {
   onAutoScanChange: (value: boolean) => void;
   onAnalyzeNowChange: (value: boolean) => void;
   triggerPreviewFetch: () => void;
+  /** Auth token; if absent, the framework summary is hidden. */
+  frameworkToken?: string | null;
 }
 
 export function StepPreview({
@@ -30,6 +38,7 @@ export function StepPreview({
   onAutoScanChange,
   onAnalyzeNowChange,
   triggerPreviewFetch,
+  frameworkToken,
 }: StepPreviewProps) {
   // Trigger preview fetch when arriving at this step
   useEffect(() => {
@@ -38,12 +47,99 @@ export function StepPreview({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Lazily fetch the selected framework to render names/chips. Refetches when
+  // the user changes their selection in an earlier step.
+  const [framework, setFramework] = useState<StrategicFramework | null>(null);
+  useEffect(() => {
+    if (!frameworkToken || !formData.framework_code) {
+      setFramework(null);
+      return;
+    }
+    let cancelled = false;
+    getFramework(frameworkToken, formData.framework_code)
+      .then((fw) => {
+        if (!cancelled) setFramework(fw);
+      })
+      .catch(() => {
+        if (!cancelled) setFramework(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [frameworkToken, formData.framework_code]);
+
+  const selectedCategory =
+    framework && formData.framework_category_id
+      ? framework.categories.find(
+          (c) => c.id === formData.framework_category_id,
+        )
+      : null;
+  const selectedDrivers =
+    selectedCategory && formData.driver_ids.length > 0
+      ? selectedCategory.drivers.filter((d) =>
+          formData.driver_ids.includes(d.id),
+        )
+      : [];
+
   const matchCount = preview?.estimated_count ?? 0;
   const isLoading = previewLoading;
   const hasPreview = preview !== null && !isLoading;
 
   return (
     <div className="space-y-6">
+      {/* Framework summary */}
+      {framework && (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-surface-elevated p-4 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <FrameworkBadge
+              code={framework.code}
+              name={framework.name}
+              description={framework.description}
+              size="md"
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              {framework.name}
+            </span>
+            {selectedCategory && (
+              <>
+                <span className="text-gray-400 dark:text-gray-500">›</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  {selectedCategory.name}
+                </span>
+              </>
+            )}
+          </div>
+          {selectedDrivers.length > 0 ? (
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
+                Drivers ({selectedDrivers.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedDrivers.map((d) => (
+                  <DriverChip
+                    key={d.id}
+                    name={d.name}
+                    description={d.description}
+                    trackedMetricExamples={d.tracked_metric_examples}
+                    selected
+                    size="sm"
+                  />
+                ))}
+              </div>
+            </div>
+          ) : selectedCategory ? (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              No drivers selected — workstream will track the entire{" "}
+              {selectedCategory.name} category.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Framework selected, but no category chosen yet.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Preview Result */}
       <div
         className={cn(

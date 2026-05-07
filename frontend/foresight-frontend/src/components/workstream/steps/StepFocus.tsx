@@ -8,6 +8,10 @@
 import { cn } from "../../../lib/utils";
 import { PillarBadge } from "../../PillarBadge";
 import {
+  WorkstreamFrameworkPicker,
+  type WorkstreamFrameworkPickerValue,
+} from "../../WorkstreamFrameworkPicker";
+import {
   pillars,
   stages,
   horizons,
@@ -21,6 +25,9 @@ interface StepFocusProps {
   onGoalToggle: (goalCode: string) => void;
   onStageToggle: (stageNum: number) => void;
   onHorizonChange: (horizon: string) => void;
+  onFrameworkChange: (next: WorkstreamFrameworkPickerValue) => void;
+  /** Auth token for the framework picker; if absent, the picker is hidden. */
+  frameworkToken?: string | null;
 }
 
 export function StepFocus({
@@ -29,9 +36,24 @@ export function StepFocus({
   onGoalToggle,
   onStageToggle,
   onHorizonChange,
+  onFrameworkChange,
+  frameworkToken,
 }: StepFocusProps) {
   return (
     <div className="space-y-8">
+      {/* Section 0: Strategic framework (FY26) */}
+      {frameworkToken && (
+        <WorkstreamFrameworkPicker
+          token={frameworkToken}
+          value={{
+            framework_code: formData.framework_code,
+            framework_category_id: formData.framework_category_id,
+            driver_ids: formData.driver_ids,
+          }}
+          onChange={onFrameworkChange}
+        />
+      )}
+
       {/* Section 1: Pillars */}
       <div className="space-y-3">
         <div>

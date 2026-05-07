@@ -11,7 +11,7 @@
  * Types are imported from types/workstream.ts.
  */
 
-import React from "react";
+import { useEffect, useState } from "react";
 import {
   Plus,
   Loader2,
@@ -30,6 +30,8 @@ import { KeywordTag } from "./workstream/KeywordTag";
 import { ToggleSwitch } from "./workstream/ToggleSwitch";
 import { TemplateCard } from "./workstream/TemplateCard";
 import { WORKSTREAM_TEMPLATES } from "./workstream/steps/StepStart";
+import { WorkstreamFrameworkPicker } from "./WorkstreamFrameworkPicker";
+import { supabase } from "../App";
 
 // Re-export types for backward compatibility
 export type { Workstream, WorkstreamFormProps } from "../types/workstream";
@@ -50,6 +52,19 @@ export function WorkstreamForm({
     onSuccess,
     onCreatedWithZeroMatches,
   });
+
+  // Auth token for the framework picker. Fetched on mount; the picker
+  // hides until the token is available.
+  const [frameworkToken, setFrameworkToken] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!cancelled) setFrameworkToken(session?.access_token ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ============================================================================
   // Render
@@ -153,6 +168,19 @@ export function WorkstreamForm({
           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-brand-blue bg-white dark:bg-dark-surface-elevated dark:text-white dark:placeholder-gray-400 resize-none"
         />
       </div>
+
+      {/* Strategic Framework (FY26) — surfaces only once token is available */}
+      {frameworkToken && (
+        <WorkstreamFrameworkPicker
+          token={frameworkToken}
+          value={{
+            framework_code: form.formData.framework_code,
+            framework_category_id: form.formData.framework_category_id,
+            driver_ids: form.formData.driver_ids,
+          }}
+          onChange={form.handleFrameworkChange}
+        />
+      )}
 
       {/* Pillars Selection */}
       <FormSection

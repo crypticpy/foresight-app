@@ -51,6 +51,8 @@ export interface KanbanBoardProps {
   workstreamId: string;
   /** Callback when a card is moved */
   onCardMove: OnCardMoveCallback;
+  /** When true, drag-and-drop is disabled (e.g. org-owned read-only boards). */
+  readOnly?: boolean;
   /** Optional callback when a card is clicked */
   onCardClick?: OnCardClickCallback;
   /** Optional card action callbacks */
@@ -108,6 +110,7 @@ export function KanbanBoard({
   cards,
   workstreamId,
   onCardMove,
+  readOnly = false,
   onCardClick,
   cardActions,
   onBulkExport,
@@ -262,6 +265,7 @@ export function KanbanBoard({
             description={column.description}
             cards={column.cards}
             workstreamId={workstreamId}
+            readOnly={readOnly}
             onCardClick={onCardClick}
             cardActions={cardActions}
             onBulkExport={column.id === "brief" ? onBulkExport : undefined}

@@ -22,6 +22,7 @@ import {
   BookOpen,
   Radar,
   Loader2,
+  Lock,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -32,8 +33,16 @@ import { getGoalByCode } from "../data/taxonomy";
 import { cn } from "../lib/utils";
 import {
   getWorkstreamScanStatus,
+  listWorkstreams,
   type WorkstreamScanStatusResponse,
 } from "../lib/workstream-api";
+import { FrameworkBadge } from "../components/FrameworkBadge";
+import { DriverChip } from "../components/DriverChip";
+import {
+  listFrameworks,
+  getFramework,
+  type Driver,
+} from "../lib/frameworks-api";
 
 // ============================================================================
 // Delete Confirmation Modal
@@ -423,6 +432,7 @@ interface WorkstreamCardProps {
   onEdit: () => void;
   onDelete: () => void;
   scanStatus?: WorkstreamScanStatusResponse | null;
+  driversById?: Record<string, Driver>;
 }
 
 function WorkstreamCard({
@@ -430,7 +440,10 @@ function WorkstreamCard({
   onEdit,
   onDelete,
   scanStatus,
+  driversById,
 }: WorkstreamCardProps) {
+  const isOrgOwned = workstream.owner_type === "org";
+
   // Format stage IDs for display
   const formatStages = (stageIds: string[]): string => {
     if (stageIds.length === 0) return "";
@@ -479,6 +492,22 @@ function WorkstreamCard({
             )}
           </div>
           <div className="flex items-center gap-2 ml-4 flex-wrap justify-end">
+            {workstream.framework_code && (
+              <FrameworkBadge
+                code={workstream.framework_code}
+                size="sm"
+                disableTooltip
+              />
+            )}
+            {isOrgOwned && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-dark-surface-elevated dark:text-gray-400 border border-gray-200 dark:border-gray-700"
+                title="Managed by admins — cannot be edited"
+              >
+                <Lock className="h-3 w-3" />
+                View only
+              </span>
+            )}
             {/* Scan running indicator */}
             {scanStatus &&
               (scanStatus.status === "queued" ||
@@ -522,6 +551,38 @@ function WorkstreamCard({
               />
             </div>
           )}
+
+          {/* Drivers (FY26 framework) */}
+          {workstream.driver_ids &&
+            workstream.driver_ids.length > 0 &&
+            driversById && (
+              <div>
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide block mb-1.5">
+                  Drivers
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {workstream.driver_ids
+                    .map((id) => driversById[id])
+                    .filter((d): d is Driver => Boolean(d))
+                    .slice(0, 5)
+                    .map((d) => (
+                      <DriverChip
+                        key={d.id}
+                        name={d.name}
+                        description={d.description}
+                        trackedMetricExamples={d.tracked_metric_examples}
+                        selected
+                        size="sm"
+                      />
+                    ))}
+                  {workstream.driver_ids.length > 5 && (
+                    <span className="inline-flex px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs">
+                      +{workstream.driver_ids.length - 5} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Goals */}
           {workstream.goal_ids.length > 0 && (
@@ -598,24 +659,30 @@ function WorkstreamCard({
             <span className="text-xs text-gray-500 dark:text-gray-400">
               Created {new Date(workstream.created_at).toLocaleDateString()}
             </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleEditClick}
-                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-surface-elevated border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-brand-blue transition-colors"
-                aria-label={`Edit ${workstream.name}`}
-              >
-                <Pencil className="h-3.5 w-3.5 mr-1" />
-                Edit
-              </button>
-              <button
-                onClick={handleDeleteClick}
-                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-red-700 dark:text-red-400 bg-white dark:bg-dark-surface-elevated border border-red-300 dark:border-red-500/50 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-red-500 transition-colors"
-                aria-label={`Delete ${workstream.name}`}
-              >
-                <Trash2 className="h-3.5 w-3.5 mr-1" />
-                Delete
-              </button>
-            </div>
+            {isOrgOwned ? (
+              <span className="text-xs text-gray-400 dark:text-gray-500 italic">
+                Managed by admins
+              </span>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleEditClick}
+                  className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-surface-elevated border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-brand-blue transition-colors"
+                  aria-label={`Edit ${workstream.name}`}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1" />
+                  Edit
+                </button>
+                <button
+                  onClick={handleDeleteClick}
+                  className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium text-red-700 dark:text-red-400 bg-white dark:bg-dark-surface-elevated border border-red-300 dark:border-red-500/50 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-red-500 transition-colors"
+                  aria-label={`Delete ${workstream.name}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -650,6 +717,10 @@ const Workstreams: React.FC = () => {
   const [scanStatuses, setScanStatuses] = useState<
     Record<string, WorkstreamScanStatusResponse>
   >({});
+
+  // Resolved driver definitions, keyed by driver id, used to render driver
+  // chips on workstream cards. Populated once on mount.
+  const [driversById, setDriversById] = useState<Record<string, Driver>>({});
   const scanPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const workstreamsRef = useRef<Workstream[]>([]);
 
@@ -682,6 +753,41 @@ const Workstreams: React.FC = () => {
 
   useEffect(() => {
     loadWorkstreams();
+  }, []);
+
+  // Build a flat driver lookup map by fetching every framework once. Stays in
+  // sync with the user's session — refetched if the page re-mounts.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+        const summaries = await listFrameworks(token);
+        const frameworks = await Promise.all(
+          summaries.map((s) => getFramework(token, s.code).catch(() => null)),
+        );
+        if (cancelled) return;
+        const map: Record<string, Driver> = {};
+        for (const fw of frameworks) {
+          if (!fw) continue;
+          for (const cat of fw.categories) {
+            for (const driver of cat.drivers) {
+              map[driver.id] = driver;
+            }
+          }
+        }
+        setDriversById(map);
+      } catch {
+        // Silently ignore — chips simply won't render.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const fetchScanStatuses = useCallback(async () => {
@@ -737,13 +843,18 @@ const Workstreams: React.FC = () => {
 
   const loadWorkstreams = async () => {
     try {
-      const { data } = await supabase
-        .from("workstreams")
-        .select("*")
-        .eq("user_id", user?.id)
-        .order("created_at", { ascending: false });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        setWorkstreams([]);
+        workstreamsRef.current = [];
+        return;
+      }
 
-      const list = data || [];
+      // Includes both the caller's workstreams and any org-owned ones.
+      const list = (await listWorkstreams<Workstream>(token)) ?? [];
       setWorkstreams(list);
       workstreamsRef.current = list;
 
@@ -919,16 +1030,71 @@ const Workstreams: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {workstreams.map((workstream) => (
-            <WorkstreamCard
-              key={workstream.id}
-              workstream={workstream}
-              onEdit={() => handleEditClick(workstream)}
-              onDelete={() => handleDeleteClick(workstream)}
-              scanStatus={scanStatuses[workstream.id] || null}
-            />
-          ))}
+        <div className="space-y-10">
+          {/* Strategic (org-owned) workstreams — read-only, FY26 PPP framing. */}
+          {workstreams.some((ws) => ws.owner_type === "org") && (
+            <section>
+              <header className="mb-3">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Strategic workstreams
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Organization-wide workstreams aligned to the City's strategic
+                  framework. Available to everyone; only admins can edit them.
+                </p>
+              </header>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {workstreams
+                  .filter((ws) => ws.owner_type === "org")
+                  .map((workstream) => (
+                    <WorkstreamCard
+                      key={workstream.id}
+                      workstream={workstream}
+                      onEdit={() => handleEditClick(workstream)}
+                      onDelete={() => handleDeleteClick(workstream)}
+                      scanStatus={scanStatuses[workstream.id] || null}
+                      driversById={driversById}
+                    />
+                  ))}
+              </div>
+            </section>
+          )}
+
+          {/* User-owned workstreams. */}
+          <section>
+            <header className="mb-3">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                My workstreams
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Research streams you've created.
+              </p>
+            </header>
+            {workstreams.some((ws) => ws.owner_type !== "org") ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {workstreams
+                  .filter((ws) => ws.owner_type !== "org")
+                  .map((workstream) => (
+                    <WorkstreamCard
+                      key={workstream.id}
+                      workstream={workstream}
+                      onEdit={() => handleEditClick(workstream)}
+                      onDelete={() => handleDeleteClick(workstream)}
+                      scanStatus={scanStatuses[workstream.id] || null}
+                      driversById={driversById}
+                    />
+                  ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                You haven't created any workstreams yet. Click{" "}
+                <span className="font-medium text-gray-700 dark:text-gray-200">
+                  New Workstream
+                </span>{" "}
+                to start one.
+              </div>
+            )}
+          </section>
         </div>
       )}
 

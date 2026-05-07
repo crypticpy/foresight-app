@@ -30,15 +30,41 @@ router = APIRouter(prefix="/api/v1", tags=["workstreams"])
 
 @router.get("/me/workstreams")
 async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
-    """Get user's workstreams"""
-    response = (
+    """Get the caller's workstreams plus all org-owned workstreams.
+
+    Org workstreams (owner_type='org', user_id IS NULL) are visible to every
+    authenticated user.  RLS already enforces this; the frontend uses
+    ``owner_type`` to render the Org vs My split.
+    """
+    # Two-query fan-out keeps the supabase-py builder simple.  Both queries
+    # return small result sets (≤ tens of rows) so this is cheaper than
+    # learning the .or_() filter syntax.
+    own = (
         supabase.table("workstreams")
         .select("*")
         .eq("user_id", current_user["id"])
         .order("created_at", desc=True)
         .execute()
     )
-    return [Workstream(**ws) for ws in response.data]
+    org = (
+        supabase.table("workstreams")
+        .select("*")
+        .eq("owner_type", "org")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    # Org rows come first (more strategic), then user rows; dedupe by id in
+    # case a future change makes a workstream both org-owned and user-owned.
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for ws in (org.data or []) + (own.data or []):
+        if ws["id"] in seen:
+            continue
+        seen.add(ws["id"])
+        rows.append(ws)
+
+    return [Workstream(**ws) for ws in rows]
 
 
 @router.post("/me/workstreams", response_model=WorkstreamCreateResponse)
@@ -280,20 +306,22 @@ async def get_workstream_feed(
         List of Card objects matching workstream filters
 
     Raises:
-        HTTPException 404: Workstream not found or not owned by user
+        HTTPException 404: Workstream not found or not accessible
     """
-    # Verify workstream belongs to user
+    # Read access: owner OR any org-owned workstream.  Mutation routes still
+    # require user_id ownership.
     ws_response = (
         supabase.table("workstreams")
         .select("*")
         .eq("id", workstream_id)
-        .eq("user_id", current_user["id"])
         .execute()
     )
     if not ws_response.data:
         raise HTTPException(status_code=404, detail="Workstream not found")
 
     workstream = ws_response.data[0]
+    if workstream.get("owner_type") != "org" and workstream.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Workstream not found")
 
     # Build query based on workstream filters
     query = supabase.table("cards").select("*").eq("status", "active")

@@ -59,6 +59,8 @@ export interface KanbanCardProps {
   columnId?: KanbanStatus;
   /** Whether the card is currently being dragged (for overlay) */
   isDragOverlay?: boolean;
+  /** When true, drag-and-drop is disabled (org-owned read-only workstreams). */
+  readOnly?: boolean;
   /** Optional callback when card is clicked */
   onCardClick?: (card: WorkstreamCardType) => void;
   /** Optional card action callbacks */
@@ -188,12 +190,14 @@ export const KanbanCard = memo(function KanbanCard({
   workstreamId,
   columnId,
   isDragOverlay = false,
+  readOnly = false,
   onCardClick,
   cardActions,
 }: KanbanCardProps) {
   const navigate = useNavigate();
 
-  // Configure sortable behavior
+  // Configure sortable behavior — disabled in the drag overlay (already
+  // floating) and on read-only (org-owned) boards.
   const {
     attributes,
     listeners,
@@ -203,6 +207,7 @@ export const KanbanCard = memo(function KanbanCard({
     isDragging,
   } = useSortable({
     id: card.id,
+    disabled: isDragOverlay || readOnly,
     data: {
       type: "card",
       card,
