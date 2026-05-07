@@ -7,7 +7,7 @@ card_score_history and card_timeline tables respectively.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from supabase import Client
 

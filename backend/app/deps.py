@@ -7,13 +7,10 @@ without pulling in the heavyweight ``main`` module.
 """
 
 import asyncio
-import json
 import logging
 import os
 import time
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, status
@@ -23,18 +20,12 @@ from supabase import create_client, Client
 
 from app.openai_provider import (
     azure_openai_client,
-    azure_openai_embedding_client,
-    get_chat_deployment,
-    get_chat_mini_deployment,
-    get_embedding_deployment,
+    azure_openai_embedding_client as _azure_openai_embedding_client,
+    get_embedding_deployment as _get_embedding_deployment,
 )
 from app.security import (
     get_rate_limiter,
-    rate_limit_sensitive,
-    rate_limit_auth,
-    rate_limit_discovery,
     log_security_event,
-    get_client_ip,
 )
 
 load_dotenv()
@@ -57,6 +48,8 @@ if _supabase_url and _supabase_service_key:
 # OpenAI alias
 # ---------------------------------------------------------------------------
 openai_client = azure_openai_client
+azure_openai_embedding_client = _azure_openai_embedding_client
+get_embedding_deployment = _get_embedding_deployment
 
 # ---------------------------------------------------------------------------
 # Rate limiter
@@ -187,6 +180,7 @@ async def get_current_user(
             )
             if profile_response.data:
                 profile = profile_response.data[0]
+                profile["account_type"] = profile.get("account_type") or "paid"
                 _set_cached_profile(user_id, profile)
                 # Log successful auth for audit trail (info level, not warning)
                 logger.debug("Authenticated user: %s", user_id)

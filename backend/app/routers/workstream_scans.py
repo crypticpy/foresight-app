@@ -1,15 +1,17 @@
 """Workstream scan router."""
 
+import asyncio
 import json
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
+from app.authz import get_workstream_access
+from app.deps import supabase, get_current_user, _safe_error, openai_client
 from app.models.workstream import (
     WorkstreamScanResponse,
     WorkstreamScanStatusResponse,
@@ -19,6 +21,15 @@ from app.models.workstream import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["workstream-scans"])
+
+
+async def _require_readable_workstream(workstream_id: str, current_user: dict) -> None:
+    """Allow owners, admins, collaborators, and org-readable workstreams."""
+    access = await asyncio.to_thread(
+        get_workstream_access, supabase, workstream_id, current_user
+    )
+    if not access.can_read:
+        raise HTTPException(status_code=404, detail="Workstream not found")
 
 
 @router.post(
@@ -185,19 +196,7 @@ async def get_workstream_scan_status(
     Returns:
         WorkstreamScanStatusResponse with scan details and results
     """
-    user_id = current_user["id"]
-
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-    if ws_response.data[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    await _require_readable_workstream(workstream_id, current_user)
 
     # Get scan
     try:
@@ -212,7 +211,7 @@ async def get_workstream_scan_status(
         else:
             query = query.order("created_at", desc=True).limit(1)
 
-        result = query.execute()
+        result = await asyncio.to_thread(query.execute)
     except Exception as e:
         logger.error(f"Error querying workstream_scans: {e}")
         raise HTTPException(
@@ -276,28 +275,18 @@ async def get_workstream_scan_history(
 
     Returns recent scans and remaining daily quota.
     """
-    user_id = current_user["id"]
-
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-    if ws_response.data[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    await _require_readable_workstream(workstream_id, current_user)
 
     # Get scan history
-    result = (
-        supabase.table("workstream_scans")
-        .select("*")
-        .eq("workstream_id", workstream_id)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
+    result = await asyncio.to_thread(
+        lambda: (
+            supabase.table("workstream_scans")
+            .select("*")
+            .eq("workstream_id", workstream_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
     )
 
     scans = result.data or []

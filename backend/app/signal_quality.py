@@ -17,7 +17,7 @@ Scoring Components (weighted):
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from supabase import Client
 

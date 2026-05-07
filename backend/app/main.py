@@ -42,6 +42,13 @@ from app.routers.pattern_insights import router as pattern_insights_router
 from app.routers.admin import router as admin_router
 from app.routers.feeds import router as feeds_router
 from app.routers.usage import router as usage_router
+from app.routers.config import router as config_router
+from app.routers.workstream_members import router as workstream_members_router
+from app.routers.workstream_invites import router as workstream_invites_router
+from app.routers.comments import router as comments_router
+from app.routers.workstream_activity import router as workstream_activity_router
+from app.routers.workstream_presence import router as workstream_presence_router
+from app.routers.share_links import router as share_links_router
 
 load_dotenv()
 
@@ -217,6 +224,13 @@ def create_app() -> FastAPI:
     application.include_router(admin_router)
     application.include_router(feeds_router)
     application.include_router(usage_router)
+    application.include_router(config_router)
+    application.include_router(workstream_members_router)
+    application.include_router(workstream_invites_router)
+    application.include_router(comments_router)
+    application.include_router(workstream_activity_router)
+    application.include_router(workstream_presence_router)
+    application.include_router(share_links_router)
 
     return application
 

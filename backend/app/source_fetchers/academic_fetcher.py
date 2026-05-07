@@ -24,7 +24,7 @@ import asyncio
 import logging
 import urllib.parse
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 import aiohttp
 import feedparser

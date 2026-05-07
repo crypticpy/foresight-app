@@ -147,7 +147,7 @@ async def execute_discovery_run_background(
 
     Updates run status through lifecycle: running -> completed/failed
     """
-    from app.discovery_service import DiscoveryService, DiscoveryConfig
+    from app.discovery_service import DiscoveryConfig
 
     try:
         logger.info(f"Starting discovery run {run_id}")
@@ -328,12 +328,9 @@ async def trigger_discovery_run(
                 status_code=500, detail="Failed to create discovery run"
             )
 
-        run = result.data[0]
-        run_id = run["id"]
-
         # Discovery execution is handled by the background worker (see `app.worker`).
 
-        return DiscoveryRun(**run)
+        return DiscoveryRun(**result.data[0])
 
     except HTTPException:
         raise

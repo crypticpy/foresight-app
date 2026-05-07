@@ -5,7 +5,7 @@ configurations, and auto-queuing workstream scans.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import List
 
 from supabase import Client
 

@@ -3,9 +3,10 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 
 from app.authz import require_admin
 from app.deps import supabase, get_current_user, _safe_error, limiter
@@ -22,6 +23,70 @@ from app import quality_service, domain_reputation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin"])
+
+
+class AccountTypeUpdate(BaseModel):
+    account_type: Literal["paid", "guest"]
+
+
+@router.get("/admin/users/guests")
+async def list_guest_users(current_user: dict = Depends(get_current_user)):
+    """List guest accounts and attached workstreams for admin review."""
+    require_admin(current_user)
+
+    def load() -> list[dict]:
+        guests = (
+            supabase.table("users")
+            .select("id, email, display_name, account_type, created_at, updated_at")
+            .eq("account_type", "guest")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = guests.data or []
+        user_ids = [row["id"] for row in rows]
+        memberships_by_user: dict[str, list[dict]] = {user_id: [] for user_id in user_ids}
+        if user_ids:
+            memberships = (
+                supabase.table("workstream_members")
+                .select("user_id, role, workstream_id, workstreams(name)")
+                .in_("user_id", user_ids)
+                .execute()
+            )
+            for membership in memberships.data or []:
+                memberships_by_user.setdefault(membership["user_id"], []).append(membership)
+        for row in rows:
+            row["workstreams"] = memberships_by_user.get(row["id"], [])
+        return rows
+
+    return await asyncio.to_thread(load)
+
+
+@router.post("/admin/users/{user_id}/account_type")
+async def update_user_account_type(
+    user_id: str,
+    update: AccountTypeUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Upgrade or downgrade a user between paid and guest."""
+    require_admin(current_user)
+
+    def update_row() -> dict:
+        result = (
+            supabase.table("users")
+            .update(
+                {
+                    "account_type": update.account_type,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", user_id)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return result.data[0]
+
+    return await asyncio.to_thread(update_row)
 
 
 # ============================================================================

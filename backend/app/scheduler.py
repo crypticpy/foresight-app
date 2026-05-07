@@ -5,7 +5,6 @@ helpers ``start_scheduler()`` and ``shutdown_scheduler()``.
 """
 
 import logging
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -89,7 +88,7 @@ async def run_scheduled_workstream_scans():
                     continue
 
                 config = _build_workstream_scan_config(ws, "auto_scan_scheduler")
-                if queued := _auto_queue_workstream_scan(
+                if _auto_queue_workstream_scan(
                     supabase, ws["id"], ws["user_id"], config
                 ):
                     scans_queued += 1

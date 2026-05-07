@@ -5,7 +5,7 @@ import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from datetime import date as date_type
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -1448,9 +1448,6 @@ async def get_personal_stats(current_user: dict = Depends(get_current_user)):
         # -------------------------------------------------------------------------
         # Engagement Comparison
         # -------------------------------------------------------------------------
-
-        all_users = users_resp.data or []
-        total_users = len(all_users)
 
         # User follow counts per user
         user_follow_counts = Counter(

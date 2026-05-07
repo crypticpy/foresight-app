@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse

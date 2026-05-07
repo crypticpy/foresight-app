@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.authz import require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user, openai_client
 from app.models.workstream import (
     WorkstreamCardWithDetails,
@@ -28,6 +29,14 @@ from app.research_service import ResearchService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["workstream-kanban"])
+
+
+def _require_workstream_read(workstream_id: str, current_user: dict) -> None:
+    require_workstream_access(supabase, workstream_id, current_user, "read")
+
+
+def _require_workstream_edit(workstream_id: str, current_user: dict) -> None:
+    require_workstream_access(supabase, workstream_id, current_user, "edit")
 
 
 def _normalize_frontend_base_url(value: Optional[str]) -> str:
@@ -121,23 +130,7 @@ async def get_workstream_cards(
     Raises:
         HTTPException 404: Workstream not found or not owned by user
     """
-    # Verify workstream is accessible (owned by caller or org-owned).
-    # Mutations on org workstreams are blocked elsewhere by user_id checks +
-    # RLS; this read path only needs to confirm visibility.
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id, owner_type")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    ws_row = ws_response.data[0]
-    if ws_row.get("owner_type") != "org" and ws_row["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    _require_workstream_read(workstream_id, current_user)
 
     # Fetch all cards with joined card details, ordered by position
     cards_response = (
@@ -192,20 +185,7 @@ async def add_card_to_workstream(
         HTTPException 403: Not authorized
         HTTPException 409: Card already in workstream
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to add cards to this workstream"
-        )
+    _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists
     card_response = (
@@ -295,20 +275,7 @@ async def update_workstream_card(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to update cards in this workstream"
-        )
+    _require_workstream_edit(workstream_id, current_user)
 
     # Fetch the workstream card by its junction table ID (card_id param is actually workstream_card.id)
     # The frontend passes the workstream_card junction table ID, not the underlying card UUID
@@ -426,21 +393,7 @@ async def remove_card_from_workstream(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Not authorized to remove cards from this workstream",
-        )
+    _require_workstream_edit(workstream_id, current_user)
 
     # Check card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     existing = (
@@ -490,20 +443,8 @@ async def trigger_card_deep_dive(
         HTTPException 403: Not authorized
         HTTPException 429: Daily rate limit exceeded
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    require_paid_user(current_user)
+    _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = (
@@ -572,20 +513,8 @@ async def trigger_card_quick_update(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized
     """
-    # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    if ws_response.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    require_paid_user(current_user)
+    _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = (
@@ -673,21 +602,7 @@ async def get_workstream_research_status(
         HTTPException 404: Workstream not found
         HTTPException 403: Not authorized
     """
-    # Read access: owner OR any org-owned workstream.
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id, owner_type")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-
-    ws_row = ws_response.data[0]
-    if ws_row.get("owner_type") != "org" and ws_row["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    _require_workstream_read(workstream_id, current_user)
 
     # Get all card_ids in this workstream
     wsc_response = (
@@ -775,19 +690,8 @@ async def get_workstream_research_status(
 
 
 def _verify_workstream_owner(workstream_id: str, user_id: str) -> None:
-    """Raise HTTPException unless the user owns the workstream."""
-    ws_response = (
-        supabase.table("workstreams")
-        .select("id, user_id")
-        .eq("id", workstream_id)
-        .execute()
-    )
-    if not ws_response.data:
-        raise HTTPException(status_code=404, detail="Workstream not found")
-    if ws_response.data[0]["user_id"] != user_id:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this workstream"
-        )
+    """Backward-compatible edit guard for older v2 helper call sites."""
+    require_workstream_access(supabase, workstream_id, {"id": user_id}, "edit")
 
 
 @router.post(
@@ -801,7 +705,7 @@ async def toggle_workstream_card_watching(
     current_user: dict = Depends(get_current_user),
 ):
     """Toggle the `is_watching` flag on a workstream card."""
-    _verify_workstream_owner(workstream_id, current_user["id"])
+    _require_workstream_edit(workstream_id, current_user)
 
     wsc_response = (
         supabase.table("workstream_cards")
@@ -847,7 +751,7 @@ async def get_workstream_card_share_payload(
     so the body wording stays consistent regardless of which surface triggers
     the share.
     """
-    _verify_workstream_owner(workstream_id, current_user["id"])
+    _require_workstream_read(workstream_id, current_user)
 
     wsc_response = (
         supabase.table("workstream_cards")
@@ -905,7 +809,17 @@ async def bulk_workstream_card_action(
     Heavier actions (rerun_research, generate_portfolio, generate_combined_memo,
     export_raw) are stubbed out for now and return 501.
     """
-    _verify_workstream_owner(workstream_id, current_user["id"])
+    if body.action in {"copy_share_links", "email_selection"}:
+        _require_workstream_read(workstream_id, current_user)
+    else:
+        if body.action in {
+            "rerun_research",
+            "generate_portfolio",
+            "generate_combined_memo",
+            "export_raw",
+        }:
+            require_paid_user(current_user)
+        _require_workstream_edit(workstream_id, current_user)
 
     rows_response = (
         supabase.table("workstream_cards")

@@ -14,7 +14,7 @@ Supports:
 - InsightsResponse: Response for /api/v1/analytics/insights endpoint
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 

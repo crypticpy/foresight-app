@@ -19,7 +19,6 @@ Usage:
     await service.send_digest_email(to_email, digest["subject"], digest["html"])
 """
 
-import asyncio
 import json
 import logging
 import os

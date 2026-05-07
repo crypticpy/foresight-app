@@ -49,28 +49,21 @@ from .query_generator import QueryGenerator, QueryConfig
 from .ai_service import AIService, AnalysisResult, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
-from .story_clustering_service import cluster_sources, get_cluster_count
+from .story_clustering_service import cluster_sources
 from . import domain_reputation_service
 
 # Import multi-source content fetchers (5 categories)
 from .source_fetchers import (
     # RSS/Atom feeds
     fetch_rss_sources,
-    FetchedArticle,
-    # News outlets
     fetch_news_articles,
-    NewsArticle,
-    # Academic publications
     fetch_academic_papers,
-    AcademicPaper,
     convert_to_raw_source as convert_academic_to_raw,
     # Government sources
     fetch_government_sources,
-    GovernmentDocument,
     convert_government_to_raw_source,
     # Tech blogs
     fetch_tech_blog_articles,
-    TechBlogArticle,
 )
 
 logger = logging.getLogger(__name__)
@@ -2738,7 +2731,7 @@ class DiscoveryService:
 
                     # Python fallback: fetch cards with embeddings and calculate similarity locally
                     try:
-                        fallback_result = await self._python_vector_search(
+                        await self._python_vector_search(
                             source.embedding,
                             config,
                             suggested_name,
@@ -3814,7 +3807,7 @@ class DiscoveryService:
 """
 
         if errors:
-            report += f"\n## Errors\n"
+            report += "\n## Errors\n"
             for error in errors:
                 report += f"- {error}\n"
 

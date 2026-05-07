@@ -7,9 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.deps import supabase, get_current_user, _safe_error
+from app.deps import supabase, get_current_user
 from app.models.classification_models import (
-    VALID_PILLAR_CODES,
     ValidationSubmission,
     ValidationSubmissionResponse,
 )

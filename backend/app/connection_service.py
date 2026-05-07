@@ -8,7 +8,6 @@ based on embedding similarity and LLM-classified relationship types.
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
 
 from supabase import Client
 

@@ -234,6 +234,29 @@ from .portfolio import (
     PortfolioExportRequest,
 )
 
+from .workstream_collab import (
+    WorkstreamMember,
+    WorkstreamMemberCreate,
+    WorkstreamMemberUpdate,
+    WorkstreamInvite,
+    WorkstreamInviteCreate,
+    WorkstreamInviteCreateResponse,
+    WorkstreamInvitePreview,
+    InviteAcceptResponse,
+    CompleteSignupRequest,
+    CommentCreate,
+    CommentUpdate,
+    CommentReactionToggle,
+    CommentResponse,
+    ActivityEvent,
+    NotificationItem,
+    MarkNotificationsReadRequest,
+    ShareLinkCreate,
+    ShareLinkResponse,
+    PublicSharePayload,
+    PresenceHeartbeatResponse,
+)
+
 
 __all__ = [
     # validation
@@ -410,4 +433,25 @@ __all__ = [
     "AddItemsRequest",
     "ReorderItemsRequest",
     "PortfolioExportRequest",
+    # workstream_collab
+    "WorkstreamMember",
+    "WorkstreamMemberCreate",
+    "WorkstreamMemberUpdate",
+    "WorkstreamInvite",
+    "WorkstreamInviteCreate",
+    "WorkstreamInviteCreateResponse",
+    "WorkstreamInvitePreview",
+    "InviteAcceptResponse",
+    "CompleteSignupRequest",
+    "CommentCreate",
+    "CommentUpdate",
+    "CommentReactionToggle",
+    "CommentResponse",
+    "ActivityEvent",
+    "NotificationItem",
+    "MarkNotificationsReadRequest",
+    "ShareLinkCreate",
+    "ShareLinkResponse",
+    "PublicSharePayload",
+    "PresenceHeartbeatResponse",
 ]

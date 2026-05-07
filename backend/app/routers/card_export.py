@@ -3,7 +3,6 @@
 import io
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse, FileResponse

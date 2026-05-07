@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -10,7 +10,6 @@ from app.deps import supabase, get_current_user, limiter
 from app.helpers.score_history import (
     _record_score_history,
     _record_stage_history,
-    SCORE_FIELDS,
 )
 from app.models.review import CardReviewRequest, BulkReviewRequest, CardDismissRequest
 
