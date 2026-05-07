@@ -55,17 +55,17 @@ ON CONFLICT (code) DO UPDATE SET
 INSERT INTO framework_categories (framework_code, code, name, description, display_order)
 VALUES
     ('PPP', 'people',
-     'Future of Community Wellbeing & Social Resilience',
+     'Community Wellbeing & Social Resilience',
      'People-pillar drivers: cost of living, behavioral health & homelessness, '
      || 'youth & family needs, equity expectations.',
      1),
     ('PPP', 'place',
-     'Future of Climate, Infrastructure & Place-Based Resilience',
+     'Climate, Infrastructure & Place-Based Resilience',
      'Place-pillar drivers: climate change, aging infrastructure, energy '
      || 'transition, housing & land-use pressure.',
      2),
     ('PPP', 'partnerships',
-     'Future of Intergovernmental & Civic Capacity',
+     'Intergovernmental & Civic Capacity',
      'Partnerships-pillar drivers: state/federal preemption, regional '
      || 'interdependence, grant funding availability, civic trust, economic '
      || 'competitiveness.',
@@ -207,7 +207,7 @@ SELECT
     NOW(), NOW()
 FROM (VALUES
     ('people',
-     'Future of Community Wellbeing & Social Resilience (People)',
+     'Community Wellbeing & Social Resilience (People)',
      'PPP People-pillar organization workstream tracking emerging conditions affecting resident wellbeing, service demand, and social stability.',
      ARRAY[
          'Homelessness services',
@@ -218,7 +218,7 @@ FROM (VALUES
      ],
      'Track emerging conditions affecting resident wellbeing, service demand, and social stability to inform future investments in human-centered services.'),
     ('place',
-     'Future of Climate, Infrastructure & Place-Based Resilience (Place)',
+     'Climate, Infrastructure & Place-Based Resilience (Place)',
      'PPP Place-pillar organization workstream tracking environmental, infrastructure, and built-environment trends.',
      ARRAY[
          'Wildfire response / emergency management',
@@ -229,7 +229,7 @@ FROM (VALUES
      ],
      'Track environmental, infrastructure, and built-environment trends shaping Austin''s long-term livability and resilience.'),
     ('partnerships',
-     'Future of Intergovernmental & Civic Capacity (Partnerships)',
+     'Intergovernmental & Civic Capacity (Partnerships)',
      'PPP Partnerships-pillar organization workstream tracking the external ecosystem affecting Austin''s ability to govern, partner, and deliver services.',
      ARRAY[
          'Intergovernmental affairs capacity',
