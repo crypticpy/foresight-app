@@ -10,8 +10,8 @@ Backend:
 
 ```bash
 cd backend
-venv/bin/ruff check app tests
-venv/bin/python -m pytest
+ruff check app tests
+python -m pytest
 ```
 
 Frontend:
