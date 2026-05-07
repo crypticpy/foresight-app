@@ -654,18 +654,18 @@ export const BriefPreviewModal = memo(function BriefPreviewModal({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             <div
               className="p-2 rounded-lg bg-brand-blue/10 dark:bg-brand-blue/20"
               aria-hidden="true"
             >
               <FileText className="h-5 w-5 text-brand-blue dark:text-brand-light-blue" />
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start gap-2 flex-wrap">
                 <h2
                   id="brief-modal-title"
-                  className="text-lg font-semibold text-gray-900 dark:text-white truncate"
+                  className="text-lg font-semibold leading-snug text-gray-900 dark:text-white break-words"
                 >
                   Executive Brief
                 </h2>
@@ -675,7 +675,7 @@ export const BriefPreviewModal = memo(function BriefPreviewModal({
                   </span>
                 )}
               </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+              <p className="text-sm leading-snug text-gray-500 dark:text-gray-400 break-words">
                 {cardName}
               </p>
             </div>

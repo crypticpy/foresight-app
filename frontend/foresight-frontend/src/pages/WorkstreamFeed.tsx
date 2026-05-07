@@ -198,7 +198,7 @@ function CardItem({
     <div className="bg-white dark:bg-dark-surface rounded-lg shadow p-6 border-l-4 border-transparent transition-all duration-200 hover:-translate-y-1 hover:shadow-lg hover:border-l-brand-blue">
       <div className="flex items-start justify-between mb-4">
         <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2 truncate">
+          <h3 className="text-lg font-medium leading-snug text-gray-900 dark:text-white mb-2 break-words">
             <Link
               to={`/signals/${card.slug}`}
               className="hover:text-brand-blue transition-colors"

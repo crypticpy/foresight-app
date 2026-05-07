@@ -15,6 +15,7 @@
  */
 
 import { useState, useMemo, useCallback } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -121,6 +122,8 @@ export function KanbanBoard({
 }: KanbanBoardProps) {
   // Track the currently dragged card for the overlay
   const [activeCard, setActiveCard] = useState<WorkstreamCard | null>(null);
+  const [activeMobileColumn, setActiveMobileColumn] =
+    useState<KanbanStatus>("inbox");
 
   // Configure DnD sensors
   // Pointer sensor for mouse/touch with activation constraint
@@ -237,6 +240,28 @@ export function KanbanBoard({
     }));
   }, [cards]);
 
+  const activeMobileColumnIndex = columnsWithCards.findIndex(
+    (column) => column.id === activeMobileColumn,
+  );
+  const selectedMobileColumn =
+    columnsWithCards[activeMobileColumnIndex] ?? columnsWithCards[0];
+
+  const handlePreviousMobileColumn = useCallback(() => {
+    const nextIndex =
+      activeMobileColumnIndex <= 0
+        ? columnsWithCards.length - 1
+        : activeMobileColumnIndex - 1;
+    setActiveMobileColumn(columnsWithCards[nextIndex].id);
+  }, [activeMobileColumnIndex, columnsWithCards]);
+
+  const handleNextMobileColumn = useCallback(() => {
+    const nextIndex =
+      activeMobileColumnIndex >= columnsWithCards.length - 1
+        ? 0
+        : activeMobileColumnIndex + 1;
+    setActiveMobileColumn(columnsWithCards[nextIndex].id);
+  }, [activeMobileColumnIndex, columnsWithCards]);
+
   return (
     <DndContext
       sensors={sensors}
@@ -246,17 +271,65 @@ export function KanbanBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
+      <div className="md:hidden mb-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-dark-surface p-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handlePreviousMobileColumn}
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+            aria-label="Previous kanban column"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <label className="sr-only" htmlFor="mobile-kanban-column">
+            Kanban column
+          </label>
+          <select
+            id="mobile-kanban-column"
+            data-kanban-mobile-select
+            value={activeMobileColumn}
+            onChange={(event) =>
+              setActiveMobileColumn(event.target.value as KanbanStatus)
+            }
+            className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface-elevated px-3 py-2 text-sm font-medium text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
+          >
+            {columnsWithCards.map((column) => (
+              <option key={column.id} value={column.id}>
+                {column.title} ({column.cards.length})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleNextMobileColumn}
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+            aria-label="Next kanban column"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+        {selectedMobileColumn && (
+          <div className="mt-2 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+            <span className="truncate">{selectedMobileColumn.description}</span>
+            <span className="flex-shrink-0 font-medium">
+              {activeMobileColumnIndex + 1} of {columnsWithCards.length}
+            </span>
+          </div>
+        )}
+      </div>
+
       {/* Horizontal Scroll Container */}
       <div
+        data-kanban-board
         className={cn(
-          // Desktop: horizontal scroll
-          "flex gap-4 overflow-x-auto pb-4",
+          // Tablet: horizontal scroll. Desktop+: four fluid lanes.
+          "flex gap-4 overflow-x-auto pb-4 xl:grid xl:grid-cols-4 xl:overflow-x-visible 2xl:grid-cols-[repeat(4,minmax(18rem,32rem))] 2xl:justify-center",
           // Add padding for scroll shadow effect
           "px-1",
           // Thin scrollbar on desktop
           "scrollbar-thin",
-          // Mobile: stack vertically
-          "max-md:flex-col max-md:overflow-x-visible",
+          // Mobile: one selected lane at a time.
+          "max-md:block max-md:overflow-x-visible",
           className,
         )}
       >
@@ -273,6 +346,9 @@ export function KanbanBoard({
             cardActions={cardActions}
             selectedCardIds={selectedCardIds}
             onToggleSelect={onToggleSelect}
+            className={
+              column.id === activeMobileColumn ? "max-md:flex" : "max-md:hidden"
+            }
           />
         ))}
       </div>

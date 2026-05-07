@@ -97,11 +97,11 @@ export function WorkstreamChatPanel({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-          <div>
+          <div className="min-w-0">
             <h3 className="font-semibold text-sm text-gray-900 dark:text-white">
               Chat with Workstream
             </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[300px]">
+            <p className="max-w-[300px] text-xs leading-snug text-gray-500 dark:text-gray-400 break-words">
               {workstreamName}
             </p>
           </div>
