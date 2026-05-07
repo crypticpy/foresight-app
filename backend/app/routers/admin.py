@@ -580,3 +580,121 @@ async def trigger_velocity_calculation(
         "status": "started",
         "message": "Velocity calculation is running in the background.",
     }
+
+
+# ============================================================================
+# Lens classification backfill
+# ============================================================================
+
+
+class LensBackfillRequest(BaseModel):
+    """Targets for the lens classification cascade.
+
+    - ``card_ids``: explicit list of card UUIDs. Bypasses the version filter.
+    - ``limit``:    cap on candidates pulled from the version filter.
+                    Hard-capped at 500 to keep a single backfill run bounded.
+    - ``force``:    re-classify even when ``classifier_version`` already matches.
+    """
+
+    card_ids: Optional[list[str]] = None
+    limit: int = 100
+    force: bool = False
+
+
+@router.post("/admin/classify/backfill")
+async def trigger_lens_backfill(
+    body: LensBackfillRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-classify cards through the lens cascade. Runs in the background.
+
+    Selection rules:
+    - If ``card_ids`` is provided, those exact cards are processed (still
+      version-checked unless ``force=True``).
+    - Otherwise the endpoint pulls cards whose ``classifier_version`` is
+      NULL or does not match the current ``CLASSIFIER_VERSION`` constant.
+    - ``user_metadata`` is **never** overwritten by this endpoint — only
+      LLM-derived columns are written.
+
+    Idempotent: re-running with no version change is a no-op.
+    """
+    require_admin(current_user)
+
+    from app.lens_classification_service import (
+        CLASSIFIER_VERSION,
+        LensClassificationService,
+    )
+
+    target_version = CLASSIFIER_VERSION
+    capped_limit = max(1, min(body.limit, 500))
+
+    select_cols = "id, name, summary, pillar_id, horizon, stage_id"
+    query = supabase.table("cards").select(select_cols).limit(capped_limit)
+
+    if body.card_ids:
+        query = query.in_("id", body.card_ids)
+        if not body.force:
+            query = query.or_(
+                f"classifier_version.is.null,classifier_version.neq.{target_version}"
+            )
+    elif not body.force:
+        query = query.or_(
+            f"classifier_version.is.null,classifier_version.neq.{target_version}"
+        )
+
+    try:
+        cards_resp = await asyncio.to_thread(query.execute)
+    except Exception as exc:
+        logger.exception("Lens backfill candidate query failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=_safe_error("lens backfill candidate lookup", exc),
+        ) from exc
+
+    cards = cards_resp.data or []
+    if not cards:
+        return {
+            "status": "skipped",
+            "queued": 0,
+            "target_version": target_version,
+            "message": "No cards matched the version filter.",
+        }
+
+    async def _run_backfill():
+        from app.openai_provider import openai_async_client
+
+        service = LensClassificationService(openai_async_client, supabase)
+        succeeded = 0
+        failed = 0
+        for card in cards:
+            try:
+                result = await service.classify_card(card)
+                update = result.to_card_update()
+                update["classified_at"] = service.now_iso()
+                await asyncio.to_thread(
+                    lambda c=card, u=update: supabase.table("cards")
+                    .update(u)
+                    .eq("id", c["id"])
+                    .execute()
+                )
+                succeeded += 1
+            except Exception as exc:
+                logger.exception(
+                    "Lens backfill failed for card %s: %s", card.get("id"), exc
+                )
+                failed += 1
+        logger.info(
+            "Lens backfill complete: target=%s succeeded=%d failed=%d",
+            target_version,
+            succeeded,
+            failed,
+        )
+
+    asyncio.create_task(_run_backfill())
+
+    return {
+        "status": "started",
+        "queued": len(cards),
+        "target_version": target_version,
+        "force": body.force,
+    }

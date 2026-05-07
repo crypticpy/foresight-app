@@ -234,6 +234,26 @@ from .portfolio import (
     PortfolioExportRequest,
 )
 
+from .lens import (
+    VALID_ANCHOR_CODES,
+    VALID_BUDGET_CYCLES,
+    VALID_BUDGET_DIMENSIONS,
+    VALID_BUDGET_MAGNITUDE_BANDS,
+    VALID_CLIMATE_DRIVERS,
+    VALID_CLIMATE_HORIZONS,
+    VALID_ISSUE_TAGS,
+    VALID_SIGNAL_TYPES,
+    AnchorScores,
+    BudgetAssessment,
+    ClimateAssessment,
+    LensClassificationResult,
+    LensCoreClassification,
+    LensTriage,
+    UserMetadata,
+    effective_anchor_scores,
+    effective_array,
+)
+
 from .workstream_collab import (
     WorkstreamMember,
     WorkstreamMemberCreate,
@@ -433,6 +453,24 @@ __all__ = [
     "AddItemsRequest",
     "ReorderItemsRequest",
     "PortfolioExportRequest",
+    # lens
+    "VALID_ANCHOR_CODES",
+    "VALID_BUDGET_CYCLES",
+    "VALID_BUDGET_DIMENSIONS",
+    "VALID_BUDGET_MAGNITUDE_BANDS",
+    "VALID_CLIMATE_DRIVERS",
+    "VALID_CLIMATE_HORIZONS",
+    "VALID_ISSUE_TAGS",
+    "VALID_SIGNAL_TYPES",
+    "AnchorScores",
+    "BudgetAssessment",
+    "ClimateAssessment",
+    "LensClassificationResult",
+    "LensCoreClassification",
+    "LensTriage",
+    "UserMetadata",
+    "effective_anchor_scores",
+    "effective_array",
     # workstream_collab
     "WorkstreamMember",
     "WorkstreamMemberCreate",
