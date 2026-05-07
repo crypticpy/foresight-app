@@ -493,18 +493,17 @@ function WorkstreamCard({
 
       <div className="p-6">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 mb-4 max-sm:flex-col">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white break-words leading-snug">
-              {workstream.name}
-            </h3>
-            {workstream.description && (
-              <p className="text-gray-600 dark:text-gray-300 text-sm mt-1 line-clamp-2">
-                {workstream.description}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2 sm:ml-4 flex-wrap justify-end max-sm:justify-start">
+        <div className="mb-4">
+          <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white break-words leading-snug">
+            {workstream.name}
+          </h3>
+          {workstream.description && (
+            <p className="text-gray-600 dark:text-gray-300 text-sm mt-1 line-clamp-2">
+              {workstream.description}
+            </p>
+          )}
+
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
             {workstream.framework_code && (
               <FrameworkBadge
                 code={workstream.framework_code}
@@ -522,7 +521,6 @@ function WorkstreamCard({
               </span>
             )}
             <RoleBadge role={workstream.role} />
-            {/* Scan running indicator */}
             {scanStatus &&
               (scanStatus.status === "queued" ||
                 scanStatus.status === "running") && (
@@ -531,7 +529,6 @@ function WorkstreamCard({
                   Scanning...
                 </span>
               )}
-            {/* Auto-scan badge */}
             {workstream.auto_scan && (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
                 <Radar className="h-3 w-3" />
@@ -669,7 +666,7 @@ function WorkstreamCard({
 
         {/* Footer */}
         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start">
             <span className="text-xs text-gray-500 dark:text-gray-400">
               Created {new Date(workstream.created_at).toLocaleDateString()}
             </span>
@@ -678,7 +675,7 @@ function WorkstreamCard({
                 Shared access
               </span>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end max-sm:justify-start">
                 <button
                   onClick={(event) => {
                     event.preventDefault();
