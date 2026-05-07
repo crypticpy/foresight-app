@@ -14,6 +14,8 @@ from supabase import Client
 
 
 ADMIN_ROLES = {"admin", "service_role"}
+WORKSTREAM_OWNER_TYPE_ORG = "org"
+WORKSTREAM_OWNER_TYPE_USER = "user"
 WORKSTREAM_MEMBER_CAPABILITIES = {
     "owner": (True, True, True),
     "editor": (True, True, False),
@@ -111,7 +113,7 @@ def get_workstream_access(
             role=role,
         )
 
-    if workstream.get("owner_type") == "org":
+    if workstream.get("owner_type") == WORKSTREAM_OWNER_TYPE_ORG:
         return WorkstreamAccess(
             workstream=workstream,
             can_read=True,

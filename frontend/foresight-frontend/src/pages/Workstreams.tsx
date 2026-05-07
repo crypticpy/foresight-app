@@ -41,6 +41,7 @@ import {
   getFramework,
   type Driver,
 } from "../lib/frameworks-api";
+import { WORKSTREAM_OWNER_TYPE } from "../types/workstream";
 
 // ============================================================================
 // Delete Confirmation Modal
@@ -421,6 +422,12 @@ interface WorkstreamCardProps {
   driversById?: Record<string, Driver>;
 }
 
+const isOrgOwnedWorkstream = (workstream: Pick<Workstream, "owner_type">) =>
+  workstream.owner_type === WORKSTREAM_OWNER_TYPE.ORG;
+
+const isUserOwnedWorkstream = (workstream: Pick<Workstream, "owner_type">) =>
+  !isOrgOwnedWorkstream(workstream);
+
 function WorkstreamCard({
   workstream,
   onEdit,
@@ -428,7 +435,7 @@ function WorkstreamCard({
   scanStatus,
   driversById,
 }: WorkstreamCardProps) {
-  const isOrgOwned = workstream.owner_type === "org";
+  const isOrgOwned = isOrgOwnedWorkstream(workstream);
 
   // Format stage IDs for display
   const formatStages = (stageIds: string[]): string => {
@@ -777,7 +784,7 @@ const Workstreams: React.FC = () => {
   }, []);
 
   const fetchScanStatuses = useCallback(async () => {
-    const wsList = workstreamsRef.current;
+    const wsList = workstreamsRef.current.filter(isUserOwnedWorkstream);
     if (wsList.length === 0) return;
 
     const {
@@ -1018,7 +1025,7 @@ const Workstreams: React.FC = () => {
       ) : (
         <div className="space-y-10">
           {/* Strategic (org-owned) workstreams — read-only, FY26 PPP framing. */}
-          {workstreams.some((ws) => ws.owner_type === "org") && (
+          {workstreams.some(isOrgOwnedWorkstream) && (
             <section>
               <header className="mb-3">
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -1031,7 +1038,7 @@ const Workstreams: React.FC = () => {
               </header>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {workstreams
-                  .filter((ws) => ws.owner_type === "org")
+                  .filter(isOrgOwnedWorkstream)
                   .map((workstream) => (
                     <WorkstreamCard
                       key={workstream.id}
@@ -1056,10 +1063,10 @@ const Workstreams: React.FC = () => {
                 Research streams you've created.
               </p>
             </header>
-            {workstreams.some((ws) => ws.owner_type !== "org") ? (
+            {workstreams.some(isUserOwnedWorkstream) ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {workstreams
-                  .filter((ws) => ws.owner_type !== "org")
+                  .filter(isUserOwnedWorkstream)
                   .map((workstream) => (
                     <WorkstreamCard
                       key={workstream.id}
