@@ -49,6 +49,7 @@ from app.routers.comments import router as comments_router
 from app.routers.workstream_activity import router as workstream_activity_router
 from app.routers.workstream_presence import router as workstream_presence_router
 from app.routers.share_links import router as share_links_router
+from app.routers.lens import router as lens_router
 
 load_dotenv()
 
@@ -231,6 +232,7 @@ def create_app() -> FastAPI:
     application.include_router(workstream_activity_router)
     application.include_router(workstream_presence_router)
     application.include_router(share_links_router)
+    application.include_router(lens_router)
 
     return application
 
