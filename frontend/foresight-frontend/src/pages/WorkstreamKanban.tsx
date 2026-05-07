@@ -73,6 +73,7 @@ import {
   setWorkstreamCardWatching,
   exportBulkBriefs,
   startWorkstreamScan,
+  fetchWorkstreamCardSharePayload,
   type WorkstreamResearchStatus,
   type BulkBriefStatusResponse,
   type WorkstreamScanStatusResponse,
@@ -1198,6 +1199,62 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
+   * Email a single card via the user's mail client. Fetches the share-payload
+   * (subject/body/url) from the backend, then opens `mailto:`.
+   */
+  const handleShareCard = useCallback(
+    async (cardId: string) => {
+      if (!id) return;
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        return;
+      }
+      try {
+        const payload = await fetchWorkstreamCardSharePayload(
+          token,
+          id,
+          cardId,
+        );
+        const subject = encodeURIComponent(payload.subject);
+        const body = encodeURIComponent(payload.body);
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      } catch (err) {
+        console.error("share-payload fetch failed:", err);
+        showToast("error", "Could not prepare share email");
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
+   * Copy a single card's public share link to the clipboard.
+   */
+  const handleCopyShareLink = useCallback(
+    async (cardId: string) => {
+      if (!id) return;
+      const token = await getAuthToken();
+      if (!token) {
+        showToast("error", "Authentication required");
+        return;
+      }
+      try {
+        const payload = await fetchWorkstreamCardSharePayload(
+          token,
+          id,
+          cardId,
+        );
+        await navigator.clipboard.writeText(payload.url);
+        showToast("success", "Share link copied to clipboard");
+      } catch (err) {
+        console.error("copy share link failed:", err);
+        showToast("error", "Could not copy share link");
+      }
+    },
+    [id, getAuthToken, showToast],
+  );
+
+  /**
    * Toggle a card's membership in the bulk-selection set.
    */
   const handleToggleSelect = useCallback((cardId: string) => {
@@ -1230,6 +1287,8 @@ const WorkstreamKanban: React.FC = () => {
     onCheckUpdates: handleCheckUpdates,
     onGenerateBrief: handleGenerateBrief,
     onToggleWatching: handleToggleWatching,
+    onShareCard: handleShareCard,
+    onCopyShareLink: handleCopyShareLink,
   };
 
   /**

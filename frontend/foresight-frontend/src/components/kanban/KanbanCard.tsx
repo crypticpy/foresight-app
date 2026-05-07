@@ -410,6 +410,8 @@ export const KanbanCard = memo(function KanbanCard({
             onExportBrief={cardActions.onExportBrief}
             onCheckUpdates={cardActions.onCheckUpdates}
             onGenerateBrief={cardActions.onGenerateBrief}
+            onShareCard={cardActions.onShareCard}
+            onCopyShareLink={cardActions.onCopyShareLink}
           />
         )}
       </div>

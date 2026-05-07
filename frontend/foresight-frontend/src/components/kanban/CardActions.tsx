@@ -30,6 +30,8 @@ import {
   FileText,
   Presentation,
   RefreshCw,
+  Mail,
+  Link2,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
@@ -67,6 +69,10 @@ export interface CardActionsProps {
   onCheckUpdates?: (cardId: string) => Promise<void>;
   /** Callback for generating an executive brief (brief column) */
   onGenerateBrief?: (workstreamCardId: string, cardId: string) => void;
+  /** Callback to email the card via the user's mail client. */
+  onShareCard?: (cardId: string) => Promise<void> | void;
+  /** Callback to copy a public share URL for the card. */
+  onCopyShareLink?: (cardId: string) => Promise<void> | void;
 }
 
 // =============================================================================
@@ -363,6 +369,8 @@ export const CardActions = memo(function CardActions({
   onExportBrief,
   onCheckUpdates,
   onGenerateBrief,
+  onShareCard,
+  onCopyShareLink,
 }: CardActionsProps) {
   const navigate = useNavigate();
 
@@ -583,6 +591,22 @@ export const CardActions = memo(function CardActions({
     onRemove(card.id);
   }, [card.id, onRemove]);
 
+  // Handle share-card (email handoff). Wired by the parent which fetches
+  // the share-payload and opens `mailto:`.
+  const handleShare = useCallback(() => {
+    if (!onShareCard) return;
+    setIsOpen(false);
+    void onShareCard(card.id);
+  }, [card.id, onShareCard]);
+
+  // Handle copy-share-link (clipboard). Wired by the parent which fetches
+  // the share-payload and writes the URL to navigator.clipboard.
+  const handleCopyLink = useCallback(() => {
+    if (!onCopyShareLink) return;
+    setIsOpen(false);
+    void onCopyShareLink(card.id);
+  }, [card.id, onCopyShareLink]);
+
   // Disable per-card action buttons while any one of them is mid-flight.
   const isColumnActionLoading =
     isQuickUpdating || isExporting || isCheckingUpdates;
@@ -794,6 +818,35 @@ export const CardActions = memo(function CardActions({
               <StickyNote className="h-4 w-4 text-amber-500" />
               {hasExistingNotes ? "Edit Notes" : "Add Notes"}
             </button>
+
+            {/* Share Actions */}
+            {(onShareCard || onCopyShareLink) && (
+              <>
+                <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                {onShareCard && (
+                  <button
+                    onClick={handleShare}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    role="menuitem"
+                    title="Open your email client with a link to this card"
+                  >
+                    <Mail className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+                    Email this card
+                  </button>
+                )}
+                {onCopyShareLink && (
+                  <button
+                    onClick={handleCopyLink}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    role="menuitem"
+                    title="Copy a shareable link to your clipboard"
+                  >
+                    <Link2 className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+                    Copy share link
+                  </button>
+                )}
+              </>
+            )}
 
             {/* Divider */}
             <div className="my-1 border-t border-gray-200 dark:border-gray-700" />

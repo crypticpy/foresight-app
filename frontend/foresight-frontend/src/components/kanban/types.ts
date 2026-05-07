@@ -142,7 +142,8 @@ export type OnToggleWatchingCallback = (
   cardId: string,
   isWatching: boolean,
 ) => Promise<void> | void;
-export type OnShareCardCallback = (cardId: string) => void;
+export type OnShareCardCallback = (cardId: string) => Promise<void> | void;
+export type OnCopyShareLinkCallback = (cardId: string) => Promise<void> | void;
 
 /**
  * IMPORTANT: All `cardId` parameters refer to WorkstreamCard.id (the junction
@@ -161,6 +162,8 @@ export interface CardActionCallbacks {
   onApproveReview?: (cardId: string) => void;
   /** v2: toggle is_watching on a card. */
   onToggleWatching?: OnToggleWatchingCallback;
-  /** v2: open the share menu for a card (mailto, copy link). */
+  /** v2: open the user's email client with a single-card share payload. */
   onShareCard?: OnShareCardCallback;
+  /** v2: copy a public share URL for the card to the clipboard. */
+  onCopyShareLink?: OnCopyShareLinkCallback;
 }
