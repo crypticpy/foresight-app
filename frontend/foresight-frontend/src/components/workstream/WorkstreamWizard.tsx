@@ -187,6 +187,7 @@ export function WorkstreamWizard({
               form.setFormData((prev) => ({ ...prev, analyze_now: value }))
             }
             triggerPreviewFetch={form.triggerPreviewFetch}
+            frameworkToken={authToken}
           />
         );
       default:
