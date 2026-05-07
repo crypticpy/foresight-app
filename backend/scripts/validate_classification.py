@@ -35,7 +35,7 @@ import json
 import os
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -121,7 +121,7 @@ class ClassificationValidator:
 
             # Fallback: fetch cards directly
             url = f"{self.api_base_url}/api/v1/cards"
-            period_start = (datetime.now() - timedelta(days=days)).isoformat()
+            period_start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
             params = {
                 "limit": limit * 2,  # Fetch more to allow for random selection
@@ -339,7 +339,7 @@ async def export_mode(
 
     # Prepare export format
     export_data = {
-        "export_date": datetime.now().isoformat(),
+        "export_date": datetime.now(timezone.utc).isoformat(),
         "total_cards": len(cards),
         "pillar_definitions": PILLAR_DEFINITIONS,
         "cards": [
@@ -468,7 +468,7 @@ async def report_mode(
 ) -> None:
     """Generate a comprehensive validation report."""
     report_lines = []
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     report_lines.append("# Classification Accuracy Validation Report")
     report_lines.append(f"\n**Generated:** {timestamp}")
