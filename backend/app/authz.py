@@ -52,12 +52,26 @@ def require_admin(user: dict[str, Any]) -> None:
 
 
 def require_paid_user(user: dict[str, Any]) -> None:
-    """Raise 403 for guest accounts before any paid or spending action."""
-    if (user.get("account_type") or ACCOUNT_TYPE_PAID).lower() == ACCOUNT_TYPE_GUEST:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Guest accounts cannot perform this action",
-        )
+    """Raise 403 for any non-paid accounts before any paid or spending action.
+
+    Requires `account_type == "paid"` explicitly. Missing or unknown values
+    are treated as forbidden so a misconfigured profile can't silently bypass
+    the spending gate.
+    """
+    if is_admin(user):
+        return
+    account_type = (user.get("account_type") or "").lower()
+    if account_type == ACCOUNT_TYPE_PAID:
+        return
+    detail = (
+        f"Accounts of type '{account_type}' cannot perform this action"
+        if account_type
+        else "Only paid accounts can perform this action"
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+    )
 
 
 def get_workstream_access(

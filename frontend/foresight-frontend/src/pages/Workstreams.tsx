@@ -437,7 +437,8 @@ const isUserOwnedWorkstream = (workstream: Pick<Workstream, "owner_type">) =>
   !isOrgOwnedWorkstream(workstream);
 
 const isMyWorkstream = (workstream: Workstream) =>
-  isUserOwnedWorkstream(workstream) && (!workstream.role || workstream.role === "owner");
+  isUserOwnedWorkstream(workstream) &&
+  (!workstream.role || workstream.role === "owner");
 
 const isSharedWorkstream = (workstream: Workstream) =>
   isUserOwnedWorkstream(workstream) &&
@@ -672,7 +673,11 @@ function WorkstreamCard({
             </span>
             {!capabilities.canManage ? (
               <span className="text-xs text-gray-400 dark:text-gray-500 italic">
-                Shared access
+                {capabilities.role === "org_viewer"
+                  ? "Org access"
+                  : capabilities.role
+                    ? `Shared access (${capabilities.role})`
+                    : "Read-only"}
               </span>
             ) : (
               <div className="flex items-center gap-2 flex-wrap justify-end max-sm:justify-start">
@@ -1060,18 +1065,20 @@ const Workstreams: React.FC = () => {
             Create your first workstream to start tracking relevant
             intelligence.
           </p>
-          {canCreateWorkstream && <div className="mt-6">
-            <button
-              onClick={() => {
-                setEditingWorkstream(undefined);
-                setShowForm(true);
-              }}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue transition-colors"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create Workstream
-            </button>
-          </div>}
+          {canCreateWorkstream && (
+            <div className="mt-6">
+              <button
+                onClick={() => {
+                  setEditingWorkstream(undefined);
+                  setShowForm(true);
+                }}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-brand-blue hover:bg-brand-dark-blue focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue transition-colors"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Create Workstream
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-10">
@@ -1088,20 +1095,18 @@ const Workstreams: React.FC = () => {
                 </p>
               </header>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {workstreams
-                  .filter(isOrgOwnedWorkstream)
-                  .map((workstream) => (
-                    <WorkstreamCard
-                      key={workstream.id}
-                      workstream={workstream}
-                      onEdit={() => handleEditClick(workstream)}
-                      onDelete={() => handleDeleteClick(workstream)}
-                      onShare={() => setSharingWorkstream(workstream)}
-                      onMembers={() => setMembersWorkstream(workstream)}
-                      scanStatus={scanStatuses[workstream.id] || null}
-                      driversById={driversById}
-                    />
-                  ))}
+                {workstreams.filter(isOrgOwnedWorkstream).map((workstream) => (
+                  <WorkstreamCard
+                    key={workstream.id}
+                    workstream={workstream}
+                    onEdit={() => handleEditClick(workstream)}
+                    onDelete={() => handleDeleteClick(workstream)}
+                    onShare={() => setSharingWorkstream(workstream)}
+                    onMembers={() => setMembersWorkstream(workstream)}
+                    scanStatus={scanStatuses[workstream.id] || null}
+                    driversById={driversById}
+                  />
+                ))}
               </div>
             </section>
           )}
@@ -1118,20 +1123,18 @@ const Workstreams: React.FC = () => {
             </header>
             {workstreams.some(isMyWorkstream) ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {workstreams
-                  .filter(isMyWorkstream)
-                  .map((workstream) => (
-                    <WorkstreamCard
-                      key={workstream.id}
-                      workstream={workstream}
-                      onEdit={() => handleEditClick(workstream)}
-                      onDelete={() => handleDeleteClick(workstream)}
-                      onShare={() => setSharingWorkstream(workstream)}
-                      onMembers={() => setMembersWorkstream(workstream)}
-                      scanStatus={scanStatuses[workstream.id] || null}
-                      driversById={driversById}
-                    />
-                  ))}
+                {workstreams.filter(isMyWorkstream).map((workstream) => (
+                  <WorkstreamCard
+                    key={workstream.id}
+                    workstream={workstream}
+                    onEdit={() => handleEditClick(workstream)}
+                    onDelete={() => handleDeleteClick(workstream)}
+                    onShare={() => setSharingWorkstream(workstream)}
+                    onMembers={() => setMembersWorkstream(workstream)}
+                    scanStatus={scanStatuses[workstream.id] || null}
+                    driversById={driversById}
+                  />
+                ))}
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-6 text-center text-sm text-gray-500 dark:text-gray-400">

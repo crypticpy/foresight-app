@@ -59,13 +59,17 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
         for row in memberships.data or []
         if row.get("workstream_id")
     }
-    shared = (
-        supabase.table("workstreams")
-        .select("*")
-        .in_("id", list(member_role_by_ws) or ["00000000-0000-0000-0000-000000000000"])
-        .order("created_at", desc=True)
-        .execute()
-    )
+    shared_data: list[dict] = []
+    if member_role_by_ws:
+        shared_data = (
+            supabase.table("workstreams")
+            .select("*")
+            .in_("id", list(member_role_by_ws))
+            .order("created_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
     org = (
         supabase.table("workstreams")
         .select("*")
@@ -78,7 +82,7 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
     # case a future change makes a workstream both org-owned and user-owned.
     seen: set[str] = set()
     rows: list[dict] = []
-    for ws in (org.data or []) + (shared.data or []) + (own.data or []):
+    for ws in (org.data or []) + shared_data + (own.data or []):
         if ws["id"] in seen:
             continue
         seen.add(ws["id"])
