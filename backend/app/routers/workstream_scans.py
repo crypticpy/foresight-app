@@ -187,17 +187,18 @@ async def get_workstream_scan_status(
     """
     user_id = current_user["id"]
 
-    # Verify workstream belongs to user
+    # Verify workstream is visible to user (own, or org-owned read-only).
     ws_response = (
         supabase.table("workstreams")
-        .select("id, user_id")
+        .select("id, user_id, owner_type")
         .eq("id", workstream_id)
         .execute()
     )
     if not ws_response.data:
         raise HTTPException(status_code=404, detail="Workstream not found")
-    if ws_response.data[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    ws_row = ws_response.data[0]
+    if ws_row.get("owner_type") != "org" and ws_row.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Workstream not found")
 
     # Get scan
     try:
@@ -278,17 +279,18 @@ async def get_workstream_scan_history(
     """
     user_id = current_user["id"]
 
-    # Verify workstream belongs to user
+    # Verify workstream is visible to user (own, or org-owned read-only).
     ws_response = (
         supabase.table("workstreams")
-        .select("id, user_id")
+        .select("id, user_id, owner_type")
         .eq("id", workstream_id)
         .execute()
     )
     if not ws_response.data:
         raise HTTPException(status_code=404, detail="Workstream not found")
-    if ws_response.data[0]["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    ws_row = ws_response.data[0]
+    if ws_row.get("owner_type") != "org" and ws_row.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Workstream not found")
 
     # Get scan history
     result = (

@@ -480,9 +480,9 @@ function WorkstreamCard({
 
       <div className="p-6">
         {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white truncate">
+        <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex-1 min-w-[14rem]">
+            <h3 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white break-words">
               {workstream.name}
             </h3>
             {workstream.description && (
@@ -491,7 +491,7 @@ function WorkstreamCard({
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2 ml-4 flex-wrap justify-end">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {workstream.framework_code && (
               <FrameworkBadge
                 code={workstream.framework_code}
@@ -791,7 +791,11 @@ const Workstreams: React.FC = () => {
   }, []);
 
   const fetchScanStatuses = useCallback(async () => {
-    const wsList = workstreamsRef.current;
+    // Org-owned workstreams are read-only; users can't trigger scans on them,
+    // and the scan/status endpoint returns 404 for non-owners. Skip polling.
+    const wsList = workstreamsRef.current.filter(
+      (ws) => ws.owner_type !== "org",
+    );
     if (wsList.length === 0) return;
 
     const {
