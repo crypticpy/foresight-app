@@ -100,6 +100,20 @@ function CardRedirect() {
   );
 }
 
+function LoginRoute({ user }: { user: User | null }) {
+  const location = useLocation();
+  const requestedRedirect =
+    new URLSearchParams(location.search).get("redirect") || "/";
+  // Reject protocol-relative ("//host") and absolute-URL redirects.
+  // React Router treats `//host` as in-app today, but if anyone later
+  // swaps Navigate for window.location.assign this becomes an open
+  // redirect — guard at the source.
+  const isInternal =
+    requestedRedirect.startsWith("/") && !requestedRedirect.startsWith("//");
+  const redirect = isInternal ? requestedRedirect : "/";
+  return user ? <Navigate to={redirect} replace /> : <Login />;
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -195,11 +209,12 @@ function App() {
               <main id="main-content" className={user ? "pt-16" : ""}>
                 <Routes>
                   {/* Login route - public, redirects to home if already authenticated */}
-                  <Route
-                    path="/login"
-                    element={user ? <Navigate to="/" replace /> : <Login />}
-                  />
+                  <Route path="/login" element={<LoginRoute user={user} />} />
                   <Route path="/share/:token" element={<PublicShareViewer />} />
+                  <Route
+                    path="/shared/:token"
+                    element={<PublicShareViewer />}
+                  />
                   <Route
                     path="/invite/:token"
                     element={

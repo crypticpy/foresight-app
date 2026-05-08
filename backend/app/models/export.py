@@ -282,6 +282,7 @@ class CardExportData(BaseModel):
 
     # Deep Research
     deep_research_report: Optional[str] = Field(None, description="Latest deep research report markdown")
+    executive_brief_report: Optional[str] = Field(None, description="Latest executive brief markdown")
 
     def get_score_display(self, score_name: str) -> str:
         """

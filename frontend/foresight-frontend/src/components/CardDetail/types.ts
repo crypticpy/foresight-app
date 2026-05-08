@@ -108,6 +108,9 @@ export interface Card {
   } | null;
   classifier_version?: string | null;
   classified_at?: string | null;
+  follower_count?: number;
+  is_following?: boolean;
+  artifacts?: import("../../types/card").CardArtifacts;
 }
 
 /**

@@ -1,5 +1,6 @@
 """Card and workstream export router -- PDF, PPTX, CSV exports."""
 
+import asyncio
 import io
 import logging
 from pathlib import Path
@@ -31,6 +32,8 @@ async def export_card(
     card_id: str,
     format: str,
     include_charts: bool = True,
+    include_research: bool = True,
+    include_brief: bool = True,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -60,8 +63,8 @@ async def export_card(
         ) from e
 
     # Fetch card from database with joined reference data
-    response = (
-        supabase.table("cards")
+    response = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("*, pillars(name), goals(name), stages(name)")
         .eq("id", card_id)
         .single()
@@ -90,8 +93,8 @@ async def export_card(
     research_report = None
     research_reports = []
     try:
-        research_response = (
-            supabase.table("research_tasks")
+        research_response = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .select("id, task_type, result_summary, completed_at")
             .eq("card_id", card_id)
             .eq("status", "completed")
@@ -101,7 +104,7 @@ async def export_card(
             .execute()
         )
 
-        if research_response.data:
+        if include_research and research_response.data:
             research_reports.extend(
                 {
                     "completed_at": task.get("completed_at"),
@@ -115,6 +118,26 @@ async def export_card(
                 research_report = research_reports[0]["report"]
     except Exception as e:
         logger.warning(f"Failed to fetch research reports for export: {e}")
+
+    brief_report = None
+    if include_brief:
+        try:
+            brief_response = await asyncio.to_thread(
+                lambda: supabase.table("executive_briefs")
+                .select("content_markdown, summary, generated_at, updated_at")
+                .eq("card_id", card_id)
+                .eq("status", "completed")
+                .order("generated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if brief_response.data:
+                latest_brief = brief_response.data[0]
+                brief_report = latest_brief.get("content_markdown") or latest_brief.get(
+                    "summary"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to fetch executive brief for export: {e}")
 
     # Create CardExportData from raw data with enriched names and research
     try:
@@ -143,6 +166,7 @@ async def export_card(
             created_at=card_data.get("created_at"),
             updated_at=card_data.get("updated_at"),
             deep_research_report=research_report,
+            executive_brief_report=brief_report,
         )
     except Exception as e:
         logger.error(f"Failed to create CardExportData: {str(e)}")
@@ -268,8 +292,11 @@ async def export_workstream_report(
         max_cards = min(max(max_cards, 1), 100)
 
     # Verify workstream exists and belongs to user
-    ws_response = (
-        supabase.table("workstreams").select("*").eq("id", workstream_id).execute()
+    ws_response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
+        .select("*")
+        .eq("id", workstream_id)
+        .execute()
     )
     if not ws_response.data:
         raise HTTPException(

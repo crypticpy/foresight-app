@@ -12,7 +12,9 @@
 import React, { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Heart,
+  Share2,
+  UserCheck,
+  UserPlus,
   RefreshCw,
   Search,
   Loader2,
@@ -26,6 +28,7 @@ import {
 } from "lucide-react";
 import { Tooltip } from "../ui/Tooltip";
 import { AddToWorkstreamModal } from "./AddToWorkstreamModal";
+import { ShareSignalModal } from "../ShareSignalModal";
 import type { Card, ResearchTask } from "./types";
 import { API_BASE_URL } from "./utils";
 
@@ -37,6 +40,10 @@ export interface CardActionButtonsProps {
   card: Card;
   /** Whether the user is following this card */
   isFollowing: boolean;
+  /** Cross-system follower count for this card */
+  followerCount?: number;
+  /** Whether the follow toggle is saving */
+  followSaving?: boolean;
   /** Whether a research task is currently running */
   isResearching: boolean;
   /** The current research task (if any) */
@@ -67,6 +74,8 @@ type ExportFormat = "pdf" | "pptx" | "csv";
 export function CardActionButtons({
   card,
   isFollowing,
+  followerCount = 0,
+  followSaving = false,
   isResearching,
   researchTask,
   canDeepResearch,
@@ -84,6 +93,7 @@ export function CardActionButtons({
 
   // Workstream modal state
   const [showWorkstreamModal, setShowWorkstreamModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [workstreamSuccess, setWorkstreamSuccess] = useState<string | null>(
     null,
   );
@@ -324,6 +334,28 @@ export function CardActionButtons({
           )}
         </div>
 
+        {/* Share button */}
+        <Tooltip
+          content={
+            <div className="max-w-[200px]">
+              <p className="font-medium">Share Signal</p>
+              <p className="text-xs text-gray-500">
+                Create an authenticated share link or open your device share
+                sheet
+              </p>
+            </div>
+          }
+          side="bottom"
+        >
+          <button
+            onClick={() => setShowShareModal(true)}
+            className="inline-flex items-center justify-center min-h-[44px] sm:min-h-0 px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors active:scale-95"
+          >
+            <Share2 className="h-4 w-4 mr-2" />
+            Share
+          </button>
+        </Tooltip>
+
         {/* Add to Workstream button */}
         <Tooltip
           content={
@@ -346,19 +378,32 @@ export function CardActionButtons({
         </Tooltip>
 
         {/* Follow button */}
-        <button
-          onClick={handleFollowClick}
-          className={`inline-flex items-center justify-center min-h-[44px] sm:min-h-0 px-4 py-2 border rounded-md shadow-sm text-sm font-medium transition-colors active:scale-95 ${
-            isFollowing
-              ? "border-red-300 text-red-700 bg-red-50 hover:bg-red-100"
-              : "border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+        <Tooltip
+          content={`Followed by ${followerCount} ${
+            followerCount === 1 ? "person" : "people"
           }`}
+          side="bottom"
         >
-          <Heart
-            className={`h-4 w-4 mr-2 ${isFollowing ? "fill-current" : ""}`}
-          />
-          {isFollowing ? "Following" : "Follow"}
-        </button>
+          <button
+            onClick={handleFollowClick}
+            disabled={followSaving}
+            className={`inline-flex items-center justify-center min-h-[44px] sm:min-h-0 px-3 py-2 border rounded-md shadow-sm text-sm font-medium transition-colors active:scale-95 disabled:opacity-60 ${
+              isFollowing
+                ? "border-brand-green/40 text-brand-green bg-brand-green/10 hover:bg-brand-green hover:text-white"
+                : "border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+            }`}
+          >
+            {isFollowing ? (
+              <UserCheck className="h-4 w-4 mr-2" />
+            ) : (
+              <UserPlus className="h-4 w-4 mr-2" />
+            )}
+            {isFollowing ? "Following" : "Follow"}
+            <span className="ml-2 rounded-full bg-black/5 px-1.5 py-0.5 text-xs dark:bg-white/10">
+              {followerCount}
+            </span>
+          </button>
+        </Tooltip>
       </div>
 
       {/* Export Error Banner */}
@@ -412,6 +457,12 @@ export function CardActionButtons({
         cardId={card.id}
         cardName={card.name}
         onSuccess={handleWorkstreamSuccess}
+        getAuthToken={getAuthToken}
+      />
+      <ShareSignalModal
+        open={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        card={card}
         getAuthToken={getAuthToken}
       />
     </>

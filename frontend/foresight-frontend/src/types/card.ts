@@ -16,6 +16,16 @@ export type CardOrigin =
   | "workstream_scan"
   | "manual";
 
+export interface CardArtifacts {
+  has_deep_research: boolean;
+  has_brief: boolean;
+  has_scan: boolean;
+  deep_research_updated_at?: string | null;
+  brief_updated_at?: string | null;
+  scan_updated_at?: string | null;
+  pending_research?: boolean;
+}
+
 /**
  * Base card fields shared by every view.
  *
@@ -41,6 +51,9 @@ export interface BaseCard {
   signal_quality_score?: number | null;
   velocity_trend?: string | null;
   trend_direction?: string | null;
+  follower_count?: number;
+  is_following?: boolean;
+  artifacts?: CardArtifacts;
 }
 
 /**

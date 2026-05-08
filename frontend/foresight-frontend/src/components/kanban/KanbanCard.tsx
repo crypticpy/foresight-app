@@ -43,6 +43,7 @@ import { QualityBadge } from "../QualityBadge";
 import { VelocityBadge, type VelocityTrend } from "../VelocityBadge";
 import { ExploratoryBadge } from "../badges/ExploratoryBadge";
 import { Tooltip } from "../ui/Tooltip";
+import { ArtifactFolderTab, ArtifactRibbon } from "../ArtifactIndicator";
 import { CardActions } from "./CardActions";
 import { getPillarByCode } from "../../data/taxonomy";
 import { formatRelativeTime } from "../CardDetail/utils";
@@ -400,10 +401,17 @@ export const KanbanCard = memo(function KanbanCard({
         // the selection at a glance.
         isSelected &&
           "ring-2 ring-brand-blue ring-offset-1 dark:ring-offset-dark-surface-deep",
+        embeddedCard.artifacts?.has_deep_research && "mt-4",
         // Touch optimization and cursor
         "touch-none cursor-grab active:cursor-grabbing",
       )}
     >
+      <ArtifactFolderTab visible={embeddedCard.artifacts?.has_deep_research} />
+      <ArtifactRibbon
+        artifacts={embeddedCard.artifacts}
+        hideDeepResearch={embeddedCard.artifacts?.has_deep_research}
+        className="right-9"
+      />
       {/* Selection checkbox — top-left. Always visible once any card is
           selected, otherwise revealed on hover so cards stay clean. */}
       {onToggleSelect && !isDragOverlay && (

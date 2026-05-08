@@ -20,8 +20,10 @@ Usage:
 """
 
 import logging
+import re
 import tempfile
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -155,6 +157,21 @@ PDF_BODY_FONT_SIZE = 11
 PDF_SMALL_FONT_SIZE = 9
 PDF_CHART_WIDTH = 5.5 * inch
 PDF_CHART_HEIGHT = 4 * inch
+
+
+def _safe_md_paragraph(text: str) -> str:
+    """Escape user/LLM-generated text for ReportLab Paragraph, then promote
+    `**bold**` and `*italic*` markdown to the corresponding ReportLab tags.
+
+    ReportLab's Paragraph parses a mini-XML; raw `<`, `>`, or `&` from
+    markdown content (URLs, comparison operators, code) raises and aborts
+    PDF generation. Escape first, then re-introduce the only inline tags we
+    actually want.
+    """
+    safe = html_escape(text, quote=False)
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+    safe = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", safe)
+    return safe
 
 
 # ReportLab color conversion helper
@@ -2124,7 +2141,7 @@ class ExportService:
             if card_data.deep_research_report:
                 elements.append(PageBreak())
                 elements.append(
-                    Paragraph("Strategic Intelligence Report", styles["SectionHeading"])
+                    Paragraph("Deep Research", styles["SectionHeading"])
                 )
                 elements.append(Spacer(1, 8))
 
@@ -2143,11 +2160,9 @@ class ExportService:
 
                     if not line_stripped:
                         if current_paragraph:
-                            para_text = " ".join(current_paragraph)
-                            para_text = re.sub(
-                                r"\*\*(.+?)\*\*", r"<b>\1</b>", para_text
+                            para_text = _safe_md_paragraph(
+                                " ".join(current_paragraph)
                             )
-                            para_text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", para_text)
                             elements.append(Paragraph(para_text, styles["BodyText"]))
                             current_paragraph = []
                         continue
@@ -2156,35 +2171,47 @@ class ExportService:
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
                         elements.append(Spacer(1, 8))
                         elements.append(
-                            Paragraph(line_stripped[2:], styles["SectionHeading"])
+                            Paragraph(
+                                _safe_md_paragraph(line_stripped[2:]),
+                                styles["SectionHeading"],
+                            )
                         )
                     elif line_stripped.startswith("## "):
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
                         elements.append(
-                            Paragraph(line_stripped[3:], styles["SubsectionHeading"])
+                            Paragraph(
+                                _safe_md_paragraph(line_stripped[3:]),
+                                styles["SubsectionHeading"],
+                            )
                         )
                     elif line_stripped.startswith("### "):
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
                         elements.append(
-                            Paragraph(f"<b>{line_stripped[4:]}</b>", styles["BodyText"])
+                            Paragraph(
+                                f"<b>{_safe_md_paragraph(line_stripped[4:])}</b>",
+                                styles["BodyText"],
+                            )
                         )
                     elif line_stripped.startswith("- ") or line_stripped.startswith(
                         "* "
@@ -2192,13 +2219,12 @@ class ExportService:
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
-                        bullet_text = re.sub(
-                            r"\*\*(.+?)\*\*", r"<b>\1</b>", line_stripped[2:]
-                        )
+                        bullet_text = _safe_md_paragraph(line_stripped[2:])
                         elements.append(
                             Paragraph(f"• {bullet_text}", styles["BulletText"])
                         )
@@ -2206,16 +2232,23 @@ class ExportService:
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
-                        elements.append(Paragraph(line_stripped, styles["BulletText"]))
+                        elements.append(
+                            Paragraph(
+                                _safe_md_paragraph(line_stripped),
+                                styles["BulletText"],
+                            )
+                        )
                     elif line_stripped in ["---", "***"]:
                         if current_paragraph:
                             elements.append(
                                 Paragraph(
-                                    " ".join(current_paragraph), styles["BodyText"]
+                                    _safe_md_paragraph(" ".join(current_paragraph)),
+                                    styles["BodyText"],
                                 )
                             )
                             current_paragraph = []
@@ -2230,9 +2263,45 @@ class ExportService:
                         current_paragraph.append(line_stripped)
 
                 if current_paragraph:
-                    para_text = " ".join(current_paragraph)
-                    para_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", para_text)
+                    para_text = _safe_md_paragraph(" ".join(current_paragraph))
                     elements.append(Paragraph(para_text, styles["BodyText"]))
+
+            if card_data.executive_brief_report:
+                elements.append(PageBreak())
+                elements.append(Paragraph("Executive Brief", styles["SectionHeading"]))
+                elements.append(Spacer(1, 8))
+                brief = card_data.executive_brief_report
+                if len(brief) > 12000:
+                    brief = brief[:12000] + "\n\n... [Brief truncated for PDF export]"
+                for raw_line in brief.split("\n"):
+                    line = raw_line.strip()
+                    if not line:
+                        elements.append(Spacer(1, 6))
+                    elif line.startswith("# "):
+                        elements.append(
+                            Paragraph(
+                                _safe_md_paragraph(line[2:]),
+                                styles["SectionHeading"],
+                            )
+                        )
+                    elif line.startswith("## "):
+                        elements.append(
+                            Paragraph(
+                                _safe_md_paragraph(line[3:]),
+                                styles["SubsectionHeading"],
+                            )
+                        )
+                    elif line.startswith("- ") or line.startswith("* "):
+                        elements.append(
+                            Paragraph(
+                                f"• {_safe_md_paragraph(line[2:])}",
+                                styles["BulletText"],
+                            )
+                        )
+                    else:
+                        elements.append(
+                            Paragraph(_safe_md_paragraph(line), styles["BodyText"])
+                        )
 
             # Metadata footer
             elements.append(Spacer(1, 20))

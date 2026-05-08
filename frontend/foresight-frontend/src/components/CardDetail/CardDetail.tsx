@@ -18,7 +18,13 @@
  * @module CardDetail
  */
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  Suspense,
+} from "react";
 import {
   useParams,
   Link,
@@ -40,6 +46,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../../App";
 import { useAuthContext } from "../../hooks/useAuthContext";
+import { useFollowCard } from "../../hooks/useFollowCard";
 import { cn } from "../../lib/utils";
 
 // CardDetail sub-components
@@ -82,6 +89,7 @@ import type {
   CardDetailTab,
 } from "./types";
 import { API_BASE_URL } from "./utils";
+import { getCardArtifacts } from "../../lib/card-artifacts-api";
 
 // API Functions
 import {
@@ -105,6 +113,8 @@ export interface CardDetailProps {
   slugOverride?: string;
   /** Render inside another surface instead of as a full page. */
   embedded?: boolean;
+  /** Hide mutating controls for authenticated shared-link views. */
+  readOnly?: boolean;
   /** Optional related-card navigation override for embedded flows. */
   onRelatedCardClick?: (cardSlug: string) => void;
 }
@@ -122,6 +132,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   className = "",
   slugOverride,
   embedded = false,
+  readOnly = false,
   onRelatedCardClick,
 }) => {
   const { slug: routeSlug } = useParams<{ slug: string }>();
@@ -149,7 +160,6 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const [sources, setSources] = useState<Source[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [isFollowing, setIsFollowing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<CardDetailTab>("overview");
   const [newNote, setNewNote] = useState("");
@@ -318,43 +328,12 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     }
   }, [card?.id, getAuthToken]);
 
-  // Check following status
-  const checkIfFollowing = useCallback(async () => {
-    if (!user || !card?.id) return;
-    try {
-      const { data } = await supabase
-        .from("card_follows")
-        .select("id")
-        .eq("user_id", user.id)
-        .eq("card_id", card.id)
-        .maybeSingle();
-      setIsFollowing(!!data);
-    } catch {
-      setIsFollowing(false);
-    }
-  }, [user, card?.id]);
-
-  // Toggle follow status
-  const toggleFollow = useCallback(async () => {
-    if (!user || !card) return;
-    try {
-      if (isFollowing) {
-        await supabase
-          .from("card_follows")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("card_id", card.id);
-        setIsFollowing(false);
-      } else {
-        await supabase
-          .from("card_follows")
-          .insert({ user_id: user.id, card_id: card.id, priority: "medium" });
-        setIsFollowing(true);
-      }
-    } catch (error) {
-      console.error("Error toggling follow:", error);
-    }
-  }, [user, card, isFollowing]);
+  const {
+    isFollowing,
+    followerCount,
+    isSaving: followSaving,
+    toggleFollow,
+  } = useFollowCard(card?.id, getAuthToken, card ?? undefined);
 
   // Add note
   const addNote = useCallback(async () => {
@@ -471,13 +450,35 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     [navigate, onRelatedCardClick],
   );
 
+  const handleArtifactSelect = useCallback(
+    (type: "deep" | "brief" | "scan") => {
+      if (type === "deep" || type === "brief") {
+        setActiveTab("assets");
+      } else {
+        setActiveTab("timeline");
+      }
+    },
+    [],
+  );
+
   // Effects
   useEffect(() => {
     if (slug) loadCardDetail();
   }, [slug, loadCardDetail]);
   useEffect(() => {
-    if (card?.id && user) checkIfFollowing();
-  }, [card?.id, user, checkIfFollowing]);
+    if (!card?.id) return;
+    let cancelled = false;
+    getAuthToken()
+      .then((token) => (token ? getCardArtifacts(card.id, token) : null))
+      .then((artifacts) => {
+        if (!artifacts || cancelled) return;
+        setCard((current) => (current ? { ...current, artifacts } : current));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [card?.id, getAuthToken]);
   useEffect(() => {
     if (card?.id) {
       loadScoreHistory();
@@ -497,15 +498,31 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const canDeepResearch = card && (card.deep_research_count_today ?? 0) < 2;
 
   // Tab definitions
-  const tabs = [
-    { id: "overview" as const, name: "Overview", icon: Eye },
-    { id: "sources" as const, name: "Sources", icon: FileText },
-    { id: "timeline" as const, name: "Timeline", icon: Calendar },
-    { id: "notes" as const, name: "Notes", icon: TrendingUp },
-    { id: "related" as const, name: "Related", icon: GitBranch },
-    { id: "chat" as const, name: "Chat", icon: MessageSquare },
-    { id: "assets" as const, name: "Assets", icon: FolderOpen },
-  ];
+  const tabs = useMemo(
+    () => [
+      { id: "overview" as const, name: "Overview", icon: Eye },
+      { id: "sources" as const, name: "Sources", icon: FileText },
+      { id: "timeline" as const, name: "Timeline", icon: Calendar },
+      ...(!readOnly
+        ? [{ id: "notes" as const, name: "Notes", icon: TrendingUp }]
+        : []),
+      { id: "related" as const, name: "Related", icon: GitBranch },
+      ...(!readOnly
+        ? [{ id: "chat" as const, name: "Chat", icon: MessageSquare }]
+        : []),
+      { id: "assets" as const, name: "Assets", icon: FolderOpen },
+    ],
+    [readOnly],
+  );
+
+  // If readOnly hides the active tab (e.g. notes/chat for shared-link
+  // viewers), snap back to overview rather than rendering an orphaned
+  // panel with no corresponding tab button.
+  useEffect(() => {
+    if (!tabs.some((t) => t.id === activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [tabs, activeTab]);
 
   // Loading state
   if (loading) {
@@ -576,17 +593,22 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         backLink={backLink}
         backLinkText={backLinkText}
         showBackLink={!embedded}
+        onArtifactSelect={handleArtifactSelect}
       >
-        <CardActionButtons
-          card={card}
-          isFollowing={isFollowing}
-          isResearching={isResearching}
-          researchTask={researchTask}
-          canDeepResearch={canDeepResearch ?? false}
-          onTriggerResearch={triggerResearch}
-          onToggleFollow={toggleFollow}
-          getAuthToken={getAuthToken}
-        />
+        {!readOnly && (
+          <CardActionButtons
+            card={card}
+            isFollowing={isFollowing}
+            followerCount={followerCount}
+            followSaving={followSaving}
+            isResearching={isResearching}
+            researchTask={researchTask}
+            canDeepResearch={canDeepResearch ?? false}
+            onTriggerResearch={triggerResearch}
+            onToggleFollow={toggleFollow}
+            getAuthToken={getAuthToken}
+          />
+        )}
       </CardDetailHeader>
 
       {/* Research Status Banner */}

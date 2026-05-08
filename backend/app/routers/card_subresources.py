@@ -1,5 +1,6 @@
 """Card sub-resource router -- sources, timeline, history, related, follow, notes, assets, velocity."""
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -19,8 +20,19 @@ from app.models.history import (
 )
 from app.models.workstream import Note, NoteCreate
 from app.models.assets import CardAsset, CardAssetsResponse
+from app.models.card_followers import CardFollowerResponse, FollowToggleResponse
+from app.card_artifacts import (
+    enrich_cards_with_collab,
+    get_card_artifacts,
+    get_followed_card_ids,
+    get_follower_counts,
+)
 
 logger = logging.getLogger(__name__)
+
+# Cap for batch endpoints. Anything bigger usually indicates a paginated UI
+# bug; reject explicitly instead of silently dropping ids.
+BATCH_CARD_ID_LIMIT = 250
 
 router = APIRouter(prefix="/api/v1", tags=["card-subresources"])
 
@@ -44,6 +56,10 @@ class EntityListResponse(BaseModel):
     entities: List[EntityItem]
     total_count: int
     card_id: str
+
+
+class CardIdsRequest(BaseModel):
+    card_ids: List[str]
 
 
 # ============================================================================
@@ -366,34 +382,139 @@ async def get_related_cards(
 # ============================================================================
 
 
-@router.post("/cards/{card_id}/follow")
+def _card_follow_state(card_id: str, user_id: str) -> CardFollowerResponse:
+    counts = get_follower_counts(supabase, [card_id])
+    followed = get_followed_card_ids(supabase, user_id, [card_id])
+    return CardFollowerResponse(
+        follower_count=counts.get(card_id, 0),
+        is_following=card_id in followed,
+    )
+
+
+@router.get("/cards/{card_id}/followers", response_model=CardFollowerResponse)
+async def get_card_followers(
+    card_id: str, current_user: dict = Depends(get_current_user)
+):
+    """Return follower count and current user's follow state for a card."""
+    return await asyncio.to_thread(_card_follow_state, card_id, current_user["id"])
+
+
+def _check_batch_limit(card_ids: List[str]) -> None:
+    if len(card_ids) > BATCH_CARD_ID_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Batch size {len(card_ids)} exceeds limit of {BATCH_CARD_ID_LIMIT}. "
+                "Page the request from the client."
+            ),
+        )
+
+
+@router.post("/cards/follower-status")
+async def get_cards_follower_status(
+    request: CardIdsRequest, current_user: dict = Depends(get_current_user)
+):
+    """Batch follower count/status lookup for card lists."""
+    _check_batch_limit(request.card_ids)
+    card_ids = request.card_ids
+    counts, followed = await asyncio.gather(
+        asyncio.to_thread(get_follower_counts, supabase, card_ids),
+        asyncio.to_thread(get_followed_card_ids, supabase, current_user["id"], card_ids),
+    )
+    return {
+        card_id: {
+            "follower_count": counts.get(card_id, 0),
+            "is_following": card_id in followed,
+        }
+        for card_id in card_ids
+    }
+
+
+@router.get("/cards/{card_id}/artifacts")
+async def get_card_artifact_summary(
+    card_id: str, current_user: dict = Depends(get_current_user)
+):
+    """Return generated artifact indicators for one card."""
+    artifacts = await asyncio.to_thread(
+        get_card_artifacts, supabase, [card_id], current_user["id"]
+    )
+    artifact = artifacts.get(card_id)
+    return artifact.dict() if artifact else {}
+
+
+@router.post("/cards/artifacts")
+async def get_cards_artifact_summary(
+    request: CardIdsRequest, current_user: dict = Depends(get_current_user)
+):
+    """Batch artifact indicator lookup for card lists."""
+    _check_batch_limit(request.card_ids)
+    artifacts = await asyncio.to_thread(
+        get_card_artifacts, supabase, request.card_ids, current_user["id"]
+    )
+    return {card_id: artifact.dict() for card_id, artifact in artifacts.items()}
+
+
+@router.post(
+    "/cards/{card_id}/follow",
+    response_model=FollowToggleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def follow_card(card_id: str, current_user: dict = Depends(get_current_user)):
-    """Follow a card"""
-    supabase.table("card_follows").insert(
-        {"user_id": current_user["id"], "card_id": card_id}
-    ).execute()
-    try:
-        from app.signal_quality import update_signal_quality_score
+    """Follow a card. Idempotent for repeated clicks."""
 
-        update_signal_quality_score(supabase, card_id)
-    except Exception as e:
-        logger.warning(f"Failed to update signal quality score for {card_id}: {e}")
-    return {"status": "followed"}
+    def _follow() -> FollowToggleResponse:
+        # Don't include created_at in the payload: PostgREST upsert translates
+        # to ON CONFLICT DO UPDATE SET <every-column-in-payload>, which would
+        # overwrite the original follow timestamp on each re-click. The DB
+        # default fills it on first insert; on conflict we only refresh
+        # followed_at.
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("card_follows").upsert(
+            {
+                "user_id": current_user["id"],
+                "card_id": card_id,
+                "followed_at": now,
+            },
+            on_conflict="user_id,card_id",
+        ).execute()
+        try:
+            from app.signal_quality import update_signal_quality_score
+
+            update_signal_quality_score(supabase, card_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to update signal quality score for {card_id}: {e}"
+            )
+        return FollowToggleResponse(
+            **_card_follow_state(card_id, current_user["id"]).dict()
+        )
+
+    return await asyncio.to_thread(_follow)
 
 
-@router.delete("/cards/{card_id}/follow")
+@router.delete("/cards/{card_id}/follow", response_model=FollowToggleResponse)
 async def unfollow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Unfollow a card"""
-    supabase.table("card_follows").delete().eq("user_id", current_user["id"]).eq(
-        "card_id", card_id
-    ).execute()
-    try:
-        from app.signal_quality import update_signal_quality_score
 
-        update_signal_quality_score(supabase, card_id)
-    except Exception as e:
-        logger.warning(f"Failed to update signal quality score for {card_id}: {e}")
-    return {"status": "unfollowed"}
+    def _unfollow() -> FollowToggleResponse:
+        supabase.table("card_follows").delete().eq(
+            "user_id", current_user["id"]
+        ).eq("card_id", card_id).execute()
+        try:
+            from app.signal_quality import update_signal_quality_score
+
+            update_signal_quality_score(supabase, card_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to update signal quality score for {card_id}: {e}"
+            )
+        state = _card_follow_state(card_id, current_user["id"])
+        return FollowToggleResponse(
+            follower_count=state.follower_count,
+            is_following=False,
+        )
+
+    return await asyncio.to_thread(_unfollow)
 
 
 # ============================================================================
@@ -526,7 +647,9 @@ async def get_my_signals(
         cards_query = cards_query.gte("signal_quality_score", quality_min)
 
     cards_resp = cards_query.execute()
-    cards = cards_resp.data or []
+    cards = enrich_cards_with_collab(
+        supabase, cards_resp.data or [], current_user.get("id")
+    )
 
     # 6. Get user signal preferences (pins) -- gracefully degrade if table missing
     try:
