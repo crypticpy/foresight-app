@@ -308,6 +308,13 @@ def test_classify_card_stage_failure_falls_back(
     assert result.signal_type == "driver"
     assert result.anchor_scores.equity == 0
     assert result.anchor_scores.sustainability_resiliency == 0
+    # Required-stage failure (anchors) → classifier_version stays None so
+    # the backfill picks this card up again next pass.
+    assert result.classifier_version is None
+    # to_card_update() reflects that — classifier_version is null in the
+    # write payload and the caller must skip stamping classified_at.
+    update = result.to_card_update()
+    assert update["classifier_version"] is None
 
 
 def test_classify_card_to_card_update_shape(

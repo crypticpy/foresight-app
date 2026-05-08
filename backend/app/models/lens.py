@@ -293,11 +293,18 @@ class LensClassificationResult(BaseModel):
 
     Built up across stages. Only LLM-derived fields appear here;
     ``user_metadata`` is read separately and merged at read time.
+
+    ``classifier_version`` is set to the cascade's version string only
+    when all required stages (core, anchors, csp, dim_triage) succeeded.
+    On partial failure it stays ``None`` so the backfill worker (which
+    selects ``classifier_version.is.null OR neq <current>``) re-tries the
+    card on its next pass instead of treating zero/empty stage outputs as
+    permanent truth.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    classifier_version: str
+    classifier_version: Optional[str] = None
     signal_type: Optional[str] = None
     secondary_pillars: List[str] = Field(default_factory=list)
     anchor_scores: AnchorScores

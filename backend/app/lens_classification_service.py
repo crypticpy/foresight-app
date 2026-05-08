@@ -376,7 +376,7 @@ class LensClassificationService:
 
         # All four "always run" stages execute concurrently — they're
         # independent reads of the same card text.
-        core, anchors, csp, triage = await asyncio.gather(
+        core_raw, anchors_raw, csp_raw, triage_raw = await asyncio.gather(
             self._stage_core(text, pillar_code),
             self._stage_anchors(text),
             self._stage_csp_tagging(text, taxonomy),
@@ -384,14 +384,23 @@ class LensClassificationService:
             return_exceptions=True,
         )
 
-        core = self._unwrap(core, LensCoreClassification, "core")
-        anchors = self._unwrap_anchors(anchors)
-        csp_tuple: Tuple[List[str], List[str]] = (
-            csp if isinstance(csp, tuple) else ([], [])
+        # Track which "always-run" stages succeeded. The cascade only
+        # stamps ``classifier_version`` when all four did — otherwise the
+        # backfill picks the card up again next pass instead of leaving
+        # zero/empty outputs from a transient outage as permanent truth.
+        required_stages_ok = not any(
+            isinstance(v, Exception)
+            for v in (core_raw, anchors_raw, csp_raw, triage_raw)
         )
-        if isinstance(csp, Exception):
-            logger.warning("Lens stage csp_tagging failed: %s", csp)
-        triage = self._unwrap(triage, LensTriage, "dim_triage")
+
+        core = self._unwrap(core_raw, LensCoreClassification, "core")
+        anchors = self._unwrap_anchors(anchors_raw)
+        csp_tuple: Tuple[List[str], List[str]] = (
+            csp_raw if isinstance(csp_raw, tuple) else ([], [])
+        )
+        if isinstance(csp_raw, Exception):
+            logger.warning("Lens stage csp_tagging failed: %s", csp_raw)
+        triage = self._unwrap(triage_raw, LensTriage, "dim_triage")
 
         # Stage 5 — operational dims, parallel and conditional.
         dim_tasks: List[Any] = []
@@ -421,7 +430,9 @@ class LensClassificationService:
             issue_tags = []
 
         return LensClassificationResult(
-            classifier_version=self.classifier_version,
+            classifier_version=(
+                self.classifier_version if required_stages_ok else None
+            ),
             signal_type=core.signal_type,
             secondary_pillars=[
                 p for p in core.secondary_pillars if p != pillar_code

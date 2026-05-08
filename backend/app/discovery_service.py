@@ -839,7 +839,12 @@ class DiscoveryService:
             service = self._get_lens_service()
             result = await service.classify_card(card_dict)
             update = result.to_card_update()
-            update["classified_at"] = service.now_iso()
+            # Only stamp classified_at when classifier_version is set —
+            # which the cascade only does when all required stages
+            # succeeded. On partial failure, leave timestamps null so the
+            # backfill picks the card up again next pass.
+            if update.get("classifier_version") is not None:
+                update["classified_at"] = service.now_iso()
             await asyncio.to_thread(
                 lambda: self.supabase.table("cards")
                 .update(update)

@@ -665,28 +665,37 @@ async def trigger_lens_backfill(
 
         service = LensClassificationService(openai_async_client, supabase)
         succeeded = 0
+        partial = 0
         failed = 0
         for card in cards:
             try:
                 result = await service.classify_card(card)
                 update = result.to_card_update()
-                update["classified_at"] = service.now_iso()
+                # Only mark classified_at when the cascade actually
+                # stamped a version (i.e. all required stages succeeded).
+                # Partial failures keep classifier_version null so the
+                # next backfill pass re-tries them.
+                if update.get("classifier_version") is not None:
+                    update["classified_at"] = service.now_iso()
+                    succeeded += 1
+                else:
+                    partial += 1
                 await asyncio.to_thread(
                     lambda c=card, u=update: supabase.table("cards")
                     .update(u)
                     .eq("id", c["id"])
                     .execute()
                 )
-                succeeded += 1
             except Exception as exc:
                 logger.exception(
                     "Lens backfill failed for card %s: %s", card.get("id"), exc
                 )
                 failed += 1
         logger.info(
-            "Lens backfill complete: target=%s succeeded=%d failed=%d",
+            "Lens backfill complete: target=%s succeeded=%d partial=%d failed=%d",
             target_version,
             succeeded,
+            partial,
             failed,
         )
 
