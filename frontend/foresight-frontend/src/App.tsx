@@ -49,6 +49,7 @@ const Patterns = lazy(() => import("./pages/Patterns"));
 const PatternDetail = lazy(() => import("./pages/PatternDetail"));
 const AskForesight = lazy(() => import("./pages/AskForesight"));
 const Feeds = lazy(() => import("./pages/Feeds"));
+const AdminConsole = lazy(() => import("./pages/AdminConsole"));
 
 // Guide pages
 const GuideSignals = lazy(() => import("./pages/GuideSignals"));
@@ -424,6 +425,15 @@ function App() {
                       <ProtectedRoute
                         element={<Analytics />}
                         loadingMessage="Loading analytics..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/admin"
+                    element={
+                      <ProtectedRoute
+                        element={<AdminConsole />}
+                        loadingMessage="Loading administration..."
                       />
                     }
                   />

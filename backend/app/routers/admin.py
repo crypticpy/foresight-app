@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 
 from app.authz import require_admin
 from app.deps import supabase, get_current_user, _safe_error, limiter
@@ -32,6 +33,477 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 class AccountTypeUpdate(BaseModel):
     account_type: Literal["paid", "guest"]
+
+
+class AdminUserUpdate(BaseModel):
+    role: Optional[Literal["admin", "user", "service_role"]] = None
+    account_type: Optional[Literal["paid", "guest"]] = None
+    display_name: Optional[str] = Field(default=None, max_length=200)
+
+
+class AdminSettingUpdate(BaseModel):
+    value: Any
+
+
+SETTING_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "key": "OPENAI_CHAT_MODEL",
+        "group_name": "models",
+        "label": "Chat model",
+        "description": "Primary model for user-facing Ask Foresight responses.",
+        "value_type": "string",
+        "default": "gpt-5.4-2026-03-05",
+    },
+    {
+        "key": "OPENAI_CHAT_AGENT_MODEL",
+        "group_name": "models",
+        "label": "Agent model",
+        "description": "Model for agentic research and tool-heavy workflows.",
+        "value_type": "string",
+        "default": "gpt-5.4-2026-03-05",
+    },
+    {
+        "key": "OPENAI_CHAT_MINI_MODEL",
+        "group_name": "models",
+        "label": "Mini model",
+        "description": "Lower-cost model for classification and structured helper tasks.",
+        "value_type": "string",
+        "default": "gpt-5.4-mini-2026-03-17",
+    },
+    {
+        "key": "OPENAI_EMBEDDING_MODEL",
+        "group_name": "models",
+        "label": "Embedding model",
+        "description": "Embedding model used for vector search and deduplication.",
+        "value_type": "string",
+        "default": "text-embedding-ada-002",
+    },
+    {
+        "key": "OPENAI_REASONING_EFFORT",
+        "group_name": "models",
+        "label": "Reasoning effort",
+        "description": "Default reasoning effort passed to supported OpenAI models.",
+        "value_type": "string",
+        "default": "medium",
+    },
+    {
+        "key": "FORESIGHT_CHAT_QUOTA_ENABLED",
+        "group_name": "chat",
+        "label": "Chat quotas enabled",
+        "description": "Enable daily chat session and turn limits.",
+        "value_type": "boolean",
+        "default": True,
+    },
+    {
+        "key": "FORESIGHT_CHAT_DAILY_SESSIONS",
+        "group_name": "chat",
+        "label": "Daily chat sessions",
+        "description": "Maximum Ask Foresight sessions per user per day.",
+        "value_type": "number",
+        "default": 3,
+    },
+    {
+        "key": "FORESIGHT_CHAT_TURNS_PER_SESSION",
+        "group_name": "chat",
+        "label": "Turns per chat session",
+        "description": "Maximum user turns allowed in one chat session.",
+        "value_type": "number",
+        "default": 5,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_AI_RESEARCH",
+        "group_name": "research",
+        "label": "AI research enabled",
+        "description": "Allow user-triggered AI research tasks.",
+        "value_type": "boolean",
+        "default": True,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_DEEP_RESEARCH",
+        "group_name": "research",
+        "label": "Deep research enabled",
+        "description": "Allow comprehensive deep research tasks.",
+        "value_type": "boolean",
+        "default": True,
+    },
+    {
+        "key": "FORESIGHT_MAX_RESEARCH_TASK_ESTIMATED_COST_USD",
+        "group_name": "research",
+        "label": "Max research task cost",
+        "description": "Optional per-task estimated cost cap in USD.",
+        "value_type": "number",
+        "default": None,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_SCHEDULER",
+        "group_name": "runtime",
+        "label": "Scheduler enabled",
+        "description": "Controls APScheduler startup for nightly/weekly jobs.",
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_EMBED_WORKER",
+        "group_name": "runtime",
+        "label": "Embedded worker",
+        "description": "Run the background worker inside the API process.",
+        "value_type": "boolean",
+        "default": True,
+    },
+    {
+        "key": "FORESIGHT_DEMO_FREEZE",
+        "group_name": "runtime",
+        "label": "Demo freeze",
+        "description": "Suppress automatic scheduler and worker auto-fires during demos.",
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_PUBLIC_SHARE",
+        "group_name": "features",
+        "label": "Public/share links",
+        "description": "Enable share-link creation and viewing flows.",
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_COLLABORATION",
+        "group_name": "features",
+        "label": "Collaboration",
+        "description": "Enable workstream collaboration features.",
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_GUEST_ACCOUNTS",
+        "group_name": "features",
+        "label": "Guest accounts",
+        "description": "Enable guest-account invitation and collaboration flows.",
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_ENABLE_REALTIME",
+        "group_name": "features",
+        "label": "Realtime collaboration",
+        "description": "Enable realtime presence/collaboration surfaces.",
+        "value_type": "boolean",
+        "default": False,
+    },
+]
+
+
+def _parse_env_value(raw: str | None, value_type: str, default: Any) -> Any:
+    if raw is None or raw == "":
+        return default
+    if value_type == "boolean":
+        return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if value_type == "number":
+        try:
+            return float(raw) if "." in raw else int(raw)
+        except ValueError:
+            return default
+    return raw
+
+
+def _coerce_setting_value(value: Any, value_type: str) -> Any:
+    if value_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+    if value_type == "number":
+        if value is None or value == "":
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        text = str(value)
+        return float(text) if "." in text else int(text)
+    if value_type == "json":
+        return value
+    return "" if value is None else str(value)
+
+
+def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
+    return {item["key"]: item for item in SETTING_DEFINITIONS}
+
+
+@router.get("/admin/overview")
+async def get_admin_overview(current_user: dict = Depends(get_current_user)):
+    """Return high-level operational metrics for the admin console."""
+    require_admin(current_user)
+
+    def load() -> dict[str, Any]:
+        users = supabase.table("users").select("id, role, account_type").execute().data or []
+        cards = supabase.table("cards").select("id, status, created_at").execute().data or []
+        workstreams = (
+            supabase.table("workstreams")
+            .select("id, owner_type, is_active, auto_scan")
+            .execute()
+            .data
+            or []
+        )
+        tasks = (
+            supabase.table("research_tasks")
+            .select("id, status, task_type, created_at")
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute()
+            .data
+            or []
+        )
+        discovery_runs = (
+            supabase.table("discovery_runs")
+            .select("id, status, started_at, created_at")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+        scans = (
+            supabase.table("workstream_scans")
+            .select("id, status, created_at")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+
+        def counts_by(rows: list[dict], key: str) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for row in rows:
+                value = row.get(key) or "unknown"
+                counts[value] = counts.get(value, 0) + 1
+            return counts
+
+        one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        new_cards = 0
+        for card in cards:
+            try:
+                if datetime.fromisoformat(card["created_at"].replace("Z", "+00:00")) >= one_week_ago:
+                    new_cards += 1
+            except Exception:
+                continue
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "users": {
+                "total": len(users),
+                "by_account_type": counts_by(users, "account_type"),
+                "by_role": counts_by(users, "role"),
+            },
+            "cards": {
+                "total": len(cards),
+                "new_last_7d": new_cards,
+                "by_status": counts_by(cards, "status"),
+            },
+            "workstreams": {
+                "total": len(workstreams),
+                "active": sum(bool(row.get("is_active")) for row in workstreams),
+                "org_owned": sum(row.get("owner_type") == "org" for row in workstreams),
+                "auto_scan": sum(bool(row.get("auto_scan")) for row in workstreams),
+            },
+            "research_tasks": {
+                "total_sampled": len(tasks),
+                "by_status": counts_by(tasks, "status"),
+                "by_type": counts_by(tasks, "task_type"),
+            },
+            "discovery_runs": {
+                "recent_count": len(discovery_runs),
+                "by_status": counts_by(discovery_runs, "status"),
+            },
+            "workstream_scans": {
+                "recent_count": len(scans),
+                "by_status": counts_by(scans, "status"),
+            },
+            "runtime": {
+                "environment": os.getenv("ENVIRONMENT", "development"),
+                "scheduler_enabled": _parse_env_value(
+                    os.getenv("FORESIGHT_ENABLE_SCHEDULER"), "boolean", False
+                ),
+                "embedded_worker": _parse_env_value(
+                    os.getenv("FORESIGHT_EMBED_WORKER"), "boolean", True
+                ),
+                "demo_freeze": _parse_env_value(
+                    os.getenv("FORESIGHT_DEMO_FREEZE"), "boolean", False
+                ),
+            },
+        }
+
+    return await asyncio.to_thread(load)
+
+
+@router.get("/admin/users")
+async def list_admin_users(
+    search: Optional[str] = Query(default=None, max_length=120),
+    account_type: Optional[Literal["paid", "guest"]] = None,
+    role: Optional[str] = Query(default=None, max_length=40),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """List users for administration."""
+    require_admin(current_user)
+
+    def load() -> dict[str, Any]:
+        query = supabase.table("users").select(
+            "id, email, display_name, role, account_type, department, created_at, updated_at",
+            count="exact",
+        )
+        if search:
+            safe_search = search.replace("%", "\\%").replace("_", "\\_")
+            query = query.or_(
+                f"email.ilike.%{safe_search}%,display_name.ilike.%{safe_search}%"
+            )
+        if account_type:
+            query = query.eq("account_type", account_type)
+        if role:
+            query = query.eq("role", role)
+        result = (
+            query.order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return {"items": result.data or [], "total": result.count or 0}
+
+    return await asyncio.to_thread(load)
+
+
+@router.patch("/admin/users/{user_id}")
+async def update_admin_user(
+    user_id: str,
+    update: AdminUserUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update user role, account type, or display name."""
+    require_admin(current_user)
+
+    def update_row() -> dict[str, Any]:
+        data = update.model_dump(exclude_none=True)
+        if not data:
+            raise HTTPException(status_code=400, detail="No user fields provided")
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        result = supabase.table("users").update(data).eq("id", user_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return result.data[0]
+
+    return await asyncio.to_thread(update_row)
+
+
+@router.get("/admin/settings")
+async def list_admin_settings(current_user: dict = Depends(get_current_user)):
+    """List model, chat, research, and runtime settings with effective values."""
+    require_admin(current_user)
+
+    def load() -> dict[str, Any]:
+        rows = supabase.table("admin_settings").select("*").execute().data or []
+        overrides = {row["key"]: row for row in rows}
+        items = []
+        for definition in SETTING_DEFINITIONS:
+            key = definition["key"]
+            override = overrides.get(key)
+            env_value = _parse_env_value(
+                os.getenv(key), definition["value_type"], definition["default"]
+            )
+            value = override.get("value") if override else env_value
+            items.append(
+                {
+                    **definition,
+                    "env_value": env_value,
+                    "value": value,
+                    "has_override": override is not None,
+                    "updated_at": override.get("updated_at") if override else None,
+                    "updated_by": override.get("updated_by") if override else None,
+                }
+            )
+        return {"items": items}
+
+    return await asyncio.to_thread(load)
+
+
+@router.patch("/admin/settings/{key}")
+async def update_admin_setting(
+    key: str,
+    update: AdminSettingUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Persist an admin setting override and update process-local env for visibility."""
+    require_admin(current_user)
+    definitions = _setting_definitions_by_key()
+    definition = definitions.get(key)
+    if not definition:
+        raise HTTPException(status_code=404, detail="Unknown admin setting")
+
+    value = _coerce_setting_value(update.value, definition["value_type"])
+
+    def save() -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "key": key,
+            "value": value,
+            "value_type": definition["value_type"],
+            "group_name": definition["group_name"],
+            "label": definition["label"],
+            "description": definition.get("description"),
+            "updated_by": current_user["id"],
+            "updated_at": now,
+        }
+        result = supabase.table("admin_settings").upsert(row, on_conflict="key").execute()
+        if not result.data:
+            raise HTTPException(status_code=400, detail="Failed to save setting")
+        os.environ[key] = "" if value is None else str(value)
+        return result.data[0]
+
+    return await asyncio.to_thread(save)
+
+
+@router.get("/admin/jobs/recent")
+async def list_recent_admin_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return recent operational jobs across research, discovery, and scans."""
+    require_admin(current_user)
+
+    def load() -> dict[str, Any]:
+        research = (
+            supabase.table("research_tasks")
+            .select("id, task_type, status, card_id, workstream_id, created_at, started_at, completed_at, error_message")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        discovery = (
+            supabase.table("discovery_runs")
+            .select("id, status, triggered_by, started_at, completed_at, cards_created, cards_enriched, error_message, created_at")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        scans = (
+            supabase.table("workstream_scans")
+            .select("id, workstream_id, user_id, status, created_at, started_at, completed_at, error_message")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return {
+            "research_tasks": research,
+            "discovery_runs": discovery,
+            "workstream_scans": scans,
+        }
+
+    return await asyncio.to_thread(load)
 
 
 @router.get("/admin/users/guests")

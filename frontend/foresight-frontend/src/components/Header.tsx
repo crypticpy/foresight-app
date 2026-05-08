@@ -23,6 +23,7 @@ import {
   Wand2,
   Bell,
   Bug,
+  Shield,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -200,6 +201,10 @@ const Header: React.FC = () => {
     { name: "Discover Guide", href: "/guide/discover", icon: HelpCircle },
     { name: "Workstreams Guide", href: "/guide/workstreams", icon: HelpCircle },
   ];
+  const adminNavigation =
+    profile?.role === "admin" || profile?.role === "service_role"
+      ? [{ name: "Admin", href: "/admin", icon: Shield }]
+      : [];
 
   const handleSignOut = async () => {
     try {
@@ -269,7 +274,7 @@ const Header: React.FC = () => {
                 aria-haspopup="menu"
                 aria-expanded={isMoreDropdownOpen}
                 className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
-                  [...moreNavigation, ...guideNavigation].some(
+                  [...moreNavigation, ...guideNavigation, ...adminNavigation].some(
                     (item) => location.pathname === item.href,
                   )
                     ? "text-brand-blue bg-brand-blue/10"
@@ -305,6 +310,17 @@ const Header: React.FC = () => {
                     onNavigate={() => setIsMoreDropdownOpen(false)}
                     currentPath={location.pathname}
                   />
+                  {adminNavigation.length > 0 && (
+                    <>
+                      <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+                      <NavLinkItem
+                        items={adminNavigation}
+                        variant="dropdown"
+                        onNavigate={() => setIsMoreDropdownOpen(false)}
+                        currentPath={location.pathname}
+                      />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -487,6 +503,14 @@ const Header: React.FC = () => {
                 onNavigate={() => setIsMenuOpen(false)}
                 currentPath={location.pathname}
               />
+              {adminNavigation.length > 0 && (
+                <NavLinkItem
+                  items={adminNavigation}
+                  variant="mobile"
+                  onNavigate={() => setIsMenuOpen(false)}
+                  currentPath={location.pathname}
+                />
+              )}
             </div>
 
             {/* Settings */}
