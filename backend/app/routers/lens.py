@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.authz import require_paid_user
+from app.authz import require_card_research_access, require_paid_user
 from app.deps import _safe_error, get_current_user, supabase
 from app.models.lens import UserMetadata
 
@@ -162,11 +162,25 @@ async def patch_card_user_metadata(
 ) -> UserMetadata:
     """Merge a partial user-metadata patch into ``cards.user_metadata``.
 
-    Only paid accounts can edit. Browse-only / guest users get 403. The
-    classifier cascade never touches this column, so edits here are
-    durable across re-classification.
+    Only paid accounts with edit access to this card can write. Both
+    "card does not exist" and "user cannot access this card" return 404
+    so card existence isn't leaked to non-members. The classifier cascade
+    never touches this column, so edits here are durable across
+    re-classification.
     """
     require_paid_user(current_user)
+
+    # Authz before any card-specific lookup so we don't leak existence.
+    # Note: require_card_research_access raises 403 for "card exists but no
+    # access" — convert to 404 here per project convention.
+    try:
+        await asyncio.to_thread(
+            require_card_research_access, supabase, card_id, current_user
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise HTTPException(status_code=404, detail="Card not found") from exc
+        raise
 
     try:
         existing_resp = await asyncio.to_thread(
