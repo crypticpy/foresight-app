@@ -254,8 +254,10 @@ async def patch_card_user_metadata(
     if body.removed is not None:
         current = current.model_copy(update={"removed": body.removed})
 
-    # Re-validate the merged shape (catches bad value types in overrides).
-    merged = UserMetadata(**current.model_dump())
+    # Both ``UserMetadataPatch`` and ``UserMetadata`` validate inner-key
+    # vocab via field validators, so the merged shape is already safe —
+    # no re-validation round-trip needed.
+    merged = current
 
     try:
         await asyncio.to_thread(

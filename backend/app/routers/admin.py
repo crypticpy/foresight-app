@@ -640,11 +640,11 @@ async def trigger_lens_backfill(
         query = query.in_("id", body.card_ids)
         if not body.force:
             query = query.or_(
-                f"classifier_version.is.null,classifier_version.neq.{target_version}"
+                f'classifier_version.is.null,classifier_version.neq."{target_version}"'
             )
     elif not body.force:
         query = query.or_(
-            f"classifier_version.is.null,classifier_version.neq.{target_version}"
+            f'classifier_version.is.null,classifier_version.neq."{target_version}"'
         )
 
     try:

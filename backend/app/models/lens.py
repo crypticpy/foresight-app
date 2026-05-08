@@ -384,16 +384,21 @@ def effective_array(
 ) -> List[str]:
     """Apply user added/removed overlays to an LLM-derived array field.
 
-    Result preserves order: LLM values first (filtered by ``removed``),
-    then user-added values not already present.
+    Result preserves order: LLM values first (filtered by ``removed`` and
+    de-duplicated), then user-added values not already present. The JS
+    counterpart in ``lens-api.ts:effectiveArray`` uses the same semantics.
     """
     removed = set(user_metadata.removed.get(field, []))
     added = user_metadata.added.get(field, [])
 
-    out: List[str] = [v for v in llm_values if v not in removed]
-    seen = set(out)
+    out: List[str] = []
+    seen: set[str] = set()
+    for v in llm_values:
+        if v not in removed and v not in seen:
+            out.append(v)
+            seen.add(v)
     for v in added:
-        if v not in seen and v not in removed:
+        if v not in removed and v not in seen:
             out.append(v)
             seen.add(v)
     return out

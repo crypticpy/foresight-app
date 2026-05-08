@@ -329,7 +329,16 @@ class LensClassificationService:
     def __init__(self, openai_client: openai.AsyncOpenAI, supabase: Any):
         self.client = openai_client
         self.supabase = supabase
+        # CSP taxonomy is loaded lazily on first card and cached for the
+        # lifetime of this service instance — there's no TTL or
+        # invalidation. Edits to ``csp_goals`` / ``csp_measures`` require
+        # a worker restart (or a new instance) to take effect. That's
+        # acceptable for the pilot since seed data is deploy-time.
         self._taxonomy: Optional[_CspTaxonomy] = None
+        # The lock binds to whichever event loop first acquires it; in
+        # practice the cascade is always called from the worker / API
+        # loop so this is fine. Don't reuse the same instance across
+        # loops without re-binding.
         self._taxonomy_lock = asyncio.Lock()
 
     # -- Public API ---------------------------------------------------------
@@ -622,7 +631,7 @@ class LensClassificationService:
     # -- Stage 5a: Budget --------------------------------------------------
 
     @with_retry()
-    async def _stage_budget(self, text: str) -> BudgetAssessment:
+    async def _stage_budget(self, text: str) -> Optional[BudgetAssessment]:
         prompt = _BUDGET_PROMPT.format(card_text=text[:_MINI_TEXT_LIMIT])
         response = await self.client.chat.completions.create(
             model=get_chat_mini_deployment(),
@@ -649,6 +658,11 @@ class LensClassificationService:
         if notes is not None:
             notes = notes[:500]
 
+        # Triage said budget might apply, but the LLM revised relevance to
+        # zero with no other signal — skip persisting an empty assessment.
+        if relevance == 0 and not dimensions and magnitude_band is None and cycle is None:
+            return None
+
         return BudgetAssessment(
             relevance=relevance,
             dimensions=dimensions,
@@ -660,7 +674,7 @@ class LensClassificationService:
     # -- Stage 5b: Climate -------------------------------------------------
 
     @with_retry()
-    async def _stage_climate(self, text: str) -> ClimateAssessment:
+    async def _stage_climate(self, text: str) -> Optional[ClimateAssessment]:
         prompt = _CLIMATE_PROMPT.format(card_text=text[:_MINI_TEXT_LIMIT])
         response = await self.client.chat.completions.create(
             model=get_chat_mini_deployment(),
@@ -683,6 +697,11 @@ class LensClassificationService:
         notes = (str(data.get("notes")) if data.get("notes") else None)
         if notes is not None:
             notes = notes[:500]
+
+        # Same as budget: triage said maybe-climate, but the LLM revised
+        # relevance to zero with no drivers — skip the empty assessment.
+        if relevance == 0 and not drivers and horizon is None:
+            return None
 
         return ClimateAssessment(
             relevance=relevance,
@@ -777,11 +796,14 @@ def _safe_json(content: Optional[str], *, stage: str) -> Dict[str, Any]:
     try:
         return json.loads(content)
     except json.JSONDecodeError as exc:
+        # Log only the JSON parse error and the body length — the body
+        # itself can echo card text into application logs, which we'd
+        # rather not retain at warn level.
         logger.warning(
-            "Lens stage %s returned non-JSON body (%s): %s",
+            "Lens stage %s returned non-JSON body (%s, %d chars)",
             stage,
             exc,
-            content[:200],
+            len(content),
         )
         return {}
 
