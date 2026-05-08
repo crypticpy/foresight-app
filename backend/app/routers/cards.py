@@ -70,8 +70,8 @@ async def get_cards(
         query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     )
 
-    enriched = enrich_cards_with_collab(
-        supabase, response.data or [], current_user.get("id")
+    enriched = await asyncio.to_thread(
+        enrich_cards_with_collab, supabase, response.data or [], current_user.get("id")
     )
     return [Card(**card) for card in enriched]
 
@@ -251,10 +251,15 @@ async def get_card(
     card_id: uuid.UUID, current_user: dict = Depends(get_current_user)
 ):
     """Get specific card"""
-    response = supabase.table("cards").select("*").eq("id", str(card_id)).execute()
+    response = await asyncio.to_thread(
+        lambda: supabase.table("cards").select("*").eq("id", str(card_id)).execute()
+    )
     if response.data:
-        enriched = enrich_cards_with_collab(
-            supabase, [response.data[0]], current_user.get("id")
+        enriched = await asyncio.to_thread(
+            enrich_cards_with_collab,
+            supabase,
+            [response.data[0]],
+            current_user.get("id"),
         )
         return Card(**enriched[0])
     else:

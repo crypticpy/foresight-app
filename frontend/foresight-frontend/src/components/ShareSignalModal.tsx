@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Download, Loader2, Share2, X } from "lucide-react";
 import { API_BASE_URL } from "../lib/config";
 import { useToast } from "./ui/Toast";
@@ -27,6 +27,19 @@ export function ShareSignalModal({
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const titleId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Close on Escape and move focus into the dialog when it opens.
+  useEffect(() => {
+    if (!open) return;
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
 
   const getOrCreateShareUrl = useCallback(async () => {
     if (shareUrl) return shareUrl;
@@ -62,7 +75,12 @@ export function ShareSignalModal({
         text: card.summary || "Foresight signal",
         url,
       };
-      if (navigator.canShare?.(shareData)) {
+      // Prefer the native share sheet when present. canShare() is more
+      // restrictive than share() and returns false on browsers (e.g. some
+      // desktop Safari builds) where share() would actually work — so we
+      // gate on share() availability and let the platform reject if it
+      // can't handle the payload.
+      if (typeof navigator.share === "function") {
         await navigator.share(shareData);
         pushToast("Share sheet opened", { variant: "success" });
       } else {
@@ -85,7 +103,9 @@ export function ShareSignalModal({
     try {
       const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
-      const includeResearch = card.artifacts?.has_deep_research ? "true" : "false";
+      const includeResearch = card.artifacts?.has_deep_research
+        ? "true"
+        : "false";
       const response = await fetch(
         `${API_BASE_URL}/api/v1/cards/${card.id}/export/pdf?include_research=${includeResearch}&include_brief=true`,
         { headers: { Authorization: `Bearer ${token}` } },
@@ -107,18 +127,37 @@ export function ShareSignalModal({
     } finally {
       setDownloading(false);
     }
-  }, [card.artifacts?.has_deep_research, card.id, card.slug, getAuthToken, pushToast]);
+  }, [
+    card.artifacts?.has_deep_research,
+    card.id,
+    card.slug,
+    getAuthToken,
+    pushToast,
+  ]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-dark-surface">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-md rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-dark-surface"
+      >
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+          <h2
+            id={titleId}
+            className="text-lg font-semibold text-gray-900 dark:text-white"
+          >
             Share signal
           </h2>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-white"
@@ -129,7 +168,9 @@ export function ShareSignalModal({
         </div>
         <div className="space-y-4 px-5 py-4">
           <div>
-            <p className="font-medium text-gray-900 dark:text-white">{card.name}</p>
+            <p className="font-medium text-gray-900 dark:text-white">
+              {card.name}
+            </p>
             <p className="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">
               {card.summary}
             </p>
@@ -146,7 +187,11 @@ export function ShareSignalModal({
               disabled={loading}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-dark-blue disabled:opacity-60"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Share2 className="h-4 w-4" />
+              )}
               Share
             </button>
             <button
@@ -155,7 +200,11 @@ export function ShareSignalModal({
               disabled={downloading}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-gray-200"
             >
-              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {downloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
               Download PDF
             </button>
           </div>
@@ -164,4 +213,3 @@ export function ShareSignalModal({
     </div>
   );
 }
-

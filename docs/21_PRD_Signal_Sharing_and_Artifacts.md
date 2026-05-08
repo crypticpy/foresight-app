@@ -106,6 +106,14 @@ Single branch `feat/signal-collab`, four phases as separate commits. Merge as on
 
 ### Phase 1 — Cross-system signal followers
 
+> **Implementation note (post-merge).** The shipped code reuses the existing
+> `card_follows` table (`user_id`, `card_id`, `followed_at`) rather than
+> introducing a new `card_followers` table — the existing schema already
+> covered the requirements. The planned `card_follower_counts` RPC was added
+> against `card_follows`, and the planned router was renamed
+> `backend/app/routers/card_subresources.py`. The schema sketch below is
+> kept for historical context.
+
 #### Schema
 
 ```sql
@@ -249,7 +257,7 @@ This is the visual-design phase. The brief from product: **show that a signal ha
 
 A small horizontal pill anchored to the **top-right** corner of the card. Holds up to three monochrome icons stacked horizontally. Tooltip on hover lists artifact names with last-updated dates.
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │                                  ┌──────┐   │  ← top-right ribbon
 │ [Pillar] [Horizon]               │📖 🔬 │   │
@@ -270,7 +278,7 @@ A small horizontal pill anchored to the **top-right** corner of the card. Holds 
 
 When a card has deep research, the existing top accent bar gets a **small folder-tab protrusion** extending above the top edge of the card. This is the visually compelling cue specifically for the user's "researched" badge ask.
 
-```
+```text
         ┌─────────────┐
         │ 🔬 Deep Dive│        ← folder tab protrusion
 ┌───────┴─────────────┴───────────────────────┐
@@ -292,7 +300,7 @@ When a card has deep research, the existing top accent bar gets a **small folder
 
 In the detail view, real estate is no longer scarce. Show full chips below the card summary, in the existing badges row:
 
-```
+```text
 ┌───────────────────────────────────────────────────────────────┐
 │ Card Title                                                     │
 │ Summary lorem ipsum...                                         │

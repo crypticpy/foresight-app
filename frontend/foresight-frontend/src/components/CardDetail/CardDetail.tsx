@@ -18,7 +18,13 @@
  * @module CardDetail
  */
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  Suspense,
+} from "react";
 import {
   useParams,
   Link,
@@ -322,8 +328,12 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     }
   }, [card?.id, getAuthToken]);
 
-  const { isFollowing, followerCount, isSaving: followSaving, toggleFollow } =
-    useFollowCard(card?.id, getAuthToken, card ?? undefined);
+  const {
+    isFollowing,
+    followerCount,
+    isSaving: followSaving,
+    toggleFollow,
+  } = useFollowCard(card?.id, getAuthToken, card ?? undefined);
 
   // Add note
   const addNote = useCallback(async () => {
@@ -488,19 +498,31 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const canDeepResearch = card && (card.deep_research_count_today ?? 0) < 2;
 
   // Tab definitions
-  const tabs = [
-    { id: "overview" as const, name: "Overview", icon: Eye },
-    { id: "sources" as const, name: "Sources", icon: FileText },
-    { id: "timeline" as const, name: "Timeline", icon: Calendar },
-    ...(!readOnly
-      ? [{ id: "notes" as const, name: "Notes", icon: TrendingUp }]
-      : []),
-    { id: "related" as const, name: "Related", icon: GitBranch },
-    ...(!readOnly
-      ? [{ id: "chat" as const, name: "Chat", icon: MessageSquare }]
-      : []),
-    { id: "assets" as const, name: "Assets", icon: FolderOpen },
-  ];
+  const tabs = useMemo(
+    () => [
+      { id: "overview" as const, name: "Overview", icon: Eye },
+      { id: "sources" as const, name: "Sources", icon: FileText },
+      { id: "timeline" as const, name: "Timeline", icon: Calendar },
+      ...(!readOnly
+        ? [{ id: "notes" as const, name: "Notes", icon: TrendingUp }]
+        : []),
+      { id: "related" as const, name: "Related", icon: GitBranch },
+      ...(!readOnly
+        ? [{ id: "chat" as const, name: "Chat", icon: MessageSquare }]
+        : []),
+      { id: "assets" as const, name: "Assets", icon: FolderOpen },
+    ],
+    [readOnly],
+  );
+
+  // If readOnly hides the active tab (e.g. notes/chat for shared-link
+  // viewers), snap back to overview rather than rendering an orphaned
+  // panel with no corresponding tab button.
+  useEffect(() => {
+    if (!tabs.some((t) => t.id === activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [tabs, activeTab]);
 
   // Loading state
   if (loading) {

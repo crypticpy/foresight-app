@@ -128,27 +128,32 @@ def get_card_artifacts(
                 row.get("completed_at") or row.get("created_at")
             )
 
-    # Workstream scans are workstream scoped. Treat cards in a scanned workstream
-    # as having scan context; this keeps the indicator cheap and conservative enough
-    # for the current schema, which stores scan summaries as JSON.
+    # Workstream scans add new cards to a workstream's inbox. There is no
+    # explicit per-card scan join, so we approximate by checking that the
+    # card's workstream_cards.added_at falls at or after a completed scan's
+    # started_at on that same workstream. Without this guard, every card in
+    # any scanned workstream would be tagged has_scan, even cards added by
+    # other flows long before/after the scan.
     wc_rows = (
         client.table("workstream_cards")
-        .select("card_id, workstream_id")
+        .select("card_id, workstream_id, added_at")
         .in_("card_id", ids)
         .execute()
         .data
         or []
     )
-    workstream_to_cards: dict[str, list[str]] = defaultdict(list)
+    workstream_to_card_added: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
     for row in wc_rows:
-        if row.get("workstream_id") and row.get("card_id"):
-            workstream_to_cards[row["workstream_id"]].append(row["card_id"])
+        ws_id = row.get("workstream_id")
+        cid = row.get("card_id")
+        if ws_id and cid:
+            workstream_to_card_added[ws_id].append((cid, row.get("added_at")))
 
-    if workstream_to_cards:
+    if workstream_to_card_added:
         scan_rows = (
             client.table("workstream_scans")
-            .select("workstream_id, status, completed_at, created_at")
-            .in_("workstream_id", list(workstream_to_cards.keys()))
+            .select("workstream_id, status, started_at, completed_at, created_at")
+            .in_("workstream_id", list(workstream_to_card_added.keys()))
             .eq("status", "completed")
             .order("completed_at", desc=True)
             .execute()
@@ -156,12 +161,20 @@ def get_card_artifacts(
             or []
         )
         for row in scan_rows:
-            updated_at = row.get("completed_at") or row.get("created_at")
-            for card_id in workstream_to_cards.get(row.get("workstream_id"), []):
-                current = artifacts[card_id]
+            ws_id = row.get("workstream_id")
+            scan_start = row.get("started_at") or row.get("created_at")
+            scan_finished = row.get("completed_at") or row.get("created_at")
+            if not ws_id or not scan_start:
+                continue
+            for cid, added_at in workstream_to_card_added.get(ws_id, []):
+                # Card must have been added during or after the scan window;
+                # missing added_at is treated as "unknown", not "covered".
+                if not added_at or added_at < scan_start:
+                    continue
+                current = artifacts[cid]
                 if not current.has_scan:
                     current.has_scan = True
-                    current.scan_updated_at = updated_at
+                    current.scan_updated_at = scan_finished
 
     _artifact_cache[cache_key] = (now, artifacts)
     _artifact_cache.move_to_end(cache_key)

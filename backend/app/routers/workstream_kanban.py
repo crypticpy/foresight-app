@@ -1,5 +1,6 @@
 """Workstream kanban card management router."""
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
@@ -134,8 +135,8 @@ async def get_workstream_cards(
     _require_workstream_read(workstream_id, current_user)
 
     # Fetch all cards with joined card details, ordered by position
-    cards_response = (
-        supabase.table("workstream_cards")
+    cards_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("workstream_id", workstream_id)
         .order("position")
@@ -144,8 +145,11 @@ async def get_workstream_cards(
     rows = cards_response.data or []
     joined_cards = [row.get("cards") for row in rows if row.get("cards")]
     if joined_cards:
-        enriched_cards = enrich_cards_with_collab(
-            supabase, joined_cards, current_user.get("id")
+        enriched_cards = await asyncio.to_thread(
+            enrich_cards_with_collab,
+            supabase,
+            joined_cards,
+            current_user.get("id"),
         )
         enriched_by_id = {card["id"]: card for card in enriched_cards}
         for row in rows:

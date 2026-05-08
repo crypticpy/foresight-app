@@ -1,5 +1,6 @@
 """Card and workstream export router -- PDF, PPTX, CSV exports."""
 
+import asyncio
 import io
 import logging
 from pathlib import Path
@@ -62,8 +63,8 @@ async def export_card(
         ) from e
 
     # Fetch card from database with joined reference data
-    response = (
-        supabase.table("cards")
+    response = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("*, pillars(name), goals(name), stages(name)")
         .eq("id", card_id)
         .single()
@@ -92,8 +93,8 @@ async def export_card(
     research_report = None
     research_reports = []
     try:
-        research_response = (
-            supabase.table("research_tasks")
+        research_response = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .select("id, task_type, result_summary, completed_at")
             .eq("card_id", card_id)
             .eq("status", "completed")
@@ -121,8 +122,8 @@ async def export_card(
     brief_report = None
     if include_brief:
         try:
-            brief_response = (
-                supabase.table("executive_briefs")
+            brief_response = await asyncio.to_thread(
+                lambda: supabase.table("executive_briefs")
                 .select("content_markdown, summary, generated_at, updated_at")
                 .eq("card_id", card_id)
                 .eq("status", "completed")
@@ -291,8 +292,11 @@ async def export_workstream_report(
         max_cards = min(max(max_cards, 1), 100)
 
     # Verify workstream exists and belongs to user
-    ws_response = (
-        supabase.table("workstreams").select("*").eq("id", workstream_id).execute()
+    ws_response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
+        .select("*")
+        .eq("id", workstream_id)
+        .execute()
     )
     if not ws_response.data:
         raise HTTPException(

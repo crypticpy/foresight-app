@@ -1,5 +1,6 @@
 """Card sub-resource router -- sources, timeline, history, related, follow, notes, assets, velocity."""
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,10 @@ from app.card_artifacts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cap for batch endpoints. Anything bigger usually indicates a paginated UI
+# bug; reject explicitly instead of silently dropping ids.
+BATCH_CARD_ID_LIMIT = 250
 
 router = APIRouter(prefix="/api/v1", tags=["card-subresources"])
 
@@ -391,7 +396,18 @@ async def get_card_followers(
     card_id: str, current_user: dict = Depends(get_current_user)
 ):
     """Return follower count and current user's follow state for a card."""
-    return _card_follow_state(card_id, current_user["id"])
+    return await asyncio.to_thread(_card_follow_state, card_id, current_user["id"])
+
+
+def _check_batch_limit(card_ids: List[str]) -> None:
+    if len(card_ids) > BATCH_CARD_ID_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Batch size {len(card_ids)} exceeds limit of {BATCH_CARD_ID_LIMIT}. "
+                "Page the request from the client."
+            ),
+        )
 
 
 @router.post("/cards/follower-status")
@@ -399,9 +415,12 @@ async def get_cards_follower_status(
     request: CardIdsRequest, current_user: dict = Depends(get_current_user)
 ):
     """Batch follower count/status lookup for card lists."""
-    card_ids = request.card_ids[:250]
-    counts = get_follower_counts(supabase, card_ids)
-    followed = get_followed_card_ids(supabase, current_user["id"], card_ids)
+    _check_batch_limit(request.card_ids)
+    card_ids = request.card_ids
+    counts, followed = await asyncio.gather(
+        asyncio.to_thread(get_follower_counts, supabase, card_ids),
+        asyncio.to_thread(get_followed_card_ids, supabase, current_user["id"], card_ids),
+    )
     return {
         card_id: {
             "follower_count": counts.get(card_id, 0),
@@ -416,9 +435,10 @@ async def get_card_artifact_summary(
     card_id: str, current_user: dict = Depends(get_current_user)
 ):
     """Return generated artifact indicators for one card."""
-    artifact = get_card_artifacts(supabase, [card_id], current_user["id"]).get(
-        card_id
+    artifacts = await asyncio.to_thread(
+        get_card_artifacts, supabase, [card_id], current_user["id"]
     )
+    artifact = artifacts.get(card_id)
     return artifact.dict() if artifact else {}
 
 
@@ -427,8 +447,9 @@ async def get_cards_artifact_summary(
     request: CardIdsRequest, current_user: dict = Depends(get_current_user)
 ):
     """Batch artifact indicator lookup for card lists."""
-    artifacts = get_card_artifacts(
-        supabase, request.card_ids[:250], current_user["id"]
+    _check_batch_limit(request.card_ids)
+    artifacts = await asyncio.to_thread(
+        get_card_artifacts, supabase, request.card_ids, current_user["id"]
     )
     return {card_id: artifact.dict() for card_id, artifact in artifacts.items()}
 
@@ -440,48 +461,60 @@ async def get_cards_artifact_summary(
 )
 async def follow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Follow a card. Idempotent for repeated clicks."""
-    # Don't include created_at in the payload: PostgREST upsert translates
-    # to ON CONFLICT DO UPDATE SET <every-column-in-payload>, which would
-    # overwrite the original follow timestamp on each re-click. The DB
-    # default fills it on first insert; on conflict we only refresh
-    # followed_at.
-    now = datetime.now(timezone.utc).isoformat()
-    supabase.table("card_follows").upsert(
-        {
-            "user_id": current_user["id"],
-            "card_id": card_id,
-            "followed_at": now,
-        },
-        on_conflict="user_id,card_id",
-    ).execute()
-    try:
-        from app.signal_quality import update_signal_quality_score
 
-        update_signal_quality_score(supabase, card_id)
-    except Exception as e:
-        logger.warning(f"Failed to update signal quality score for {card_id}: {e}")
-    return FollowToggleResponse(
-        **_card_follow_state(card_id, current_user["id"]).dict()
-    )
+    def _follow() -> FollowToggleResponse:
+        # Don't include created_at in the payload: PostgREST upsert translates
+        # to ON CONFLICT DO UPDATE SET <every-column-in-payload>, which would
+        # overwrite the original follow timestamp on each re-click. The DB
+        # default fills it on first insert; on conflict we only refresh
+        # followed_at.
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("card_follows").upsert(
+            {
+                "user_id": current_user["id"],
+                "card_id": card_id,
+                "followed_at": now,
+            },
+            on_conflict="user_id,card_id",
+        ).execute()
+        try:
+            from app.signal_quality import update_signal_quality_score
+
+            update_signal_quality_score(supabase, card_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to update signal quality score for {card_id}: {e}"
+            )
+        return FollowToggleResponse(
+            **_card_follow_state(card_id, current_user["id"]).dict()
+        )
+
+    return await asyncio.to_thread(_follow)
 
 
 @router.delete("/cards/{card_id}/follow", response_model=FollowToggleResponse)
 async def unfollow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Unfollow a card"""
-    supabase.table("card_follows").delete().eq("user_id", current_user["id"]).eq(
-        "card_id", card_id
-    ).execute()
-    try:
-        from app.signal_quality import update_signal_quality_score
 
-        update_signal_quality_score(supabase, card_id)
-    except Exception as e:
-        logger.warning(f"Failed to update signal quality score for {card_id}: {e}")
-    state = _card_follow_state(card_id, current_user["id"])
-    return FollowToggleResponse(
-        follower_count=state.follower_count,
-        is_following=False,
-    )
+    def _unfollow() -> FollowToggleResponse:
+        supabase.table("card_follows").delete().eq(
+            "user_id", current_user["id"]
+        ).eq("card_id", card_id).execute()
+        try:
+            from app.signal_quality import update_signal_quality_score
+
+            update_signal_quality_score(supabase, card_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to update signal quality score for {card_id}: {e}"
+            )
+        state = _card_follow_state(card_id, current_user["id"])
+        return FollowToggleResponse(
+            follower_count=state.follower_count,
+            is_following=False,
+        )
+
+    return await asyncio.to_thread(_unfollow)
 
 
 # ============================================================================

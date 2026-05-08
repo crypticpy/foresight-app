@@ -6,14 +6,14 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.authz import require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import public_share_enabled
 from app.models.workstream_collab import PublicSharePayload, ShareLinkCreate, ShareLinkResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["share-links"])
 
@@ -222,7 +222,7 @@ async def public_share(token: str, _current_user: dict = Depends(get_current_use
             )
         creator = (
             supabase.table("users")
-            .select("display_name, email")
+            .select("display_name")
             .eq("id", link["created_by"])
             .limit(1)
             .execute()
@@ -235,7 +235,6 @@ async def public_share(token: str, _current_user: dict = Depends(get_current_use
             target_id=target_id,
             data=payload,
             created_by_name=creator_row.get("display_name"),
-            created_by_email=creator_row.get("email"),
             expires_at=link.get("expires_at"),
         )
 

@@ -5,54 +5,59 @@ export interface CardFollowerState {
   is_following: boolean;
 }
 
-export async function getCardFollowers(
-  cardId: string,
+async function apiRequest<T>(
+  endpoint: string,
   token: string,
-): Promise<CardFollowerState> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/cards/${cardId}/followers`, {
-    headers: { Authorization: `Bearer ${token}` },
+  options: RequestInit = {},
+) {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...((options.headers as Record<string, string>) ?? {}),
+    },
   });
-  if (!response.ok) throw new Error("Failed to load follower state");
-  return response.json();
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Request failed" }));
+    throw new Error(error.detail || `API error: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
 }
 
-export async function followCard(
-  cardId: string,
-  token: string,
-): Promise<CardFollowerState> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/cards/${cardId}/follow`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!response.ok) throw new Error("Failed to follow signal");
-  return response.json();
+export function getCardFollowers(cardId: string, token: string) {
+  return apiRequest<CardFollowerState>(
+    `/api/v1/cards/${cardId}/followers`,
+    token,
+  );
 }
 
-export async function unfollowCard(
-  cardId: string,
-  token: string,
-): Promise<CardFollowerState> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/cards/${cardId}/follow`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!response.ok) throw new Error("Failed to unfollow signal");
-  return response.json();
+export function followCard(cardId: string, token: string) {
+  return apiRequest<CardFollowerState>(
+    `/api/v1/cards/${cardId}/follow`,
+    token,
+    { method: "POST" },
+  );
 }
 
-export async function getCardsFollowerStatus(
+export function unfollowCard(cardId: string, token: string) {
+  return apiRequest<CardFollowerState>(
+    `/api/v1/cards/${cardId}/follow`,
+    token,
+    { method: "DELETE" },
+  );
+}
+
+export function getCardsFollowerStatus(
   cardIds: string[],
   token: string,
 ): Promise<Record<string, CardFollowerState>> {
-  if (cardIds.length === 0) return {};
-  const response = await fetch(`${API_BASE_URL}/api/v1/cards/follower-status`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ card_ids: cardIds }),
-  });
-  if (!response.ok) throw new Error("Failed to load follower states");
-  return response.json();
+  if (cardIds.length === 0) return Promise.resolve({});
+  return apiRequest<Record<string, CardFollowerState>>(
+    `/api/v1/cards/follower-status`,
+    token,
+    { method: "POST", body: JSON.stringify({ card_ids: cardIds }) },
+  );
 }

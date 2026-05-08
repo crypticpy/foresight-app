@@ -88,11 +88,16 @@ export function ArtifactRibbon({
   return (
     <Tooltip content={tooltipContent(items)} side="top">
       <div
+        role="img"
+        aria-label="Generated artifacts available"
         className={cn(
-          "absolute top-2 right-2 z-10 inline-flex h-6 items-center gap-1 rounded-md border border-gray-200 bg-white/90 px-1.5 text-brand-green shadow-sm backdrop-blur-sm dark:border-gray-700 dark:bg-dark-surface/90",
+          // pointer-events-none keeps the absolutely-positioned ribbon
+          // from swallowing clicks meant for the card link beneath it.
+          // The Tooltip wrapper still gets hover events because it sits
+          // above this element in the DOM.
+          "pointer-events-none absolute top-2 right-2 z-10 inline-flex h-6 items-center gap-1 rounded-md border border-gray-200 bg-white/90 px-1.5 text-brand-green shadow-sm backdrop-blur-sm dark:border-gray-700 dark:bg-dark-surface/90",
           className,
         )}
-        aria-label="Generated artifacts available"
       >
         {visible.map((item) =>
           artifacts?.pending_research && item.type === "deep" ? (
@@ -101,7 +106,9 @@ export function ArtifactRibbon({
             <item.icon key={item.type} className="h-3.5 w-3.5" />
           ),
         )}
-        {extra > 0 && <span className="text-[10px] font-semibold">+{extra}</span>}
+        {extra > 0 && (
+          <span className="text-[10px] font-semibold">+{extra}</span>
+        )}
       </div>
     </Tooltip>
   );
@@ -117,8 +124,10 @@ export function ArtifactFolderTab({
   if (!visible) return null;
   return (
     <div
+      role="img"
+      aria-label="Deep dive research available"
       className={cn(
-        "absolute right-4 -top-4 z-10 inline-flex items-center gap-1 rounded-t-md bg-brand-green px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition-transform group-hover:scale-105",
+        "pointer-events-none absolute right-4 -top-4 z-10 inline-flex items-center gap-1 rounded-t-md bg-brand-green px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition-transform group-hover:scale-105",
         className,
       )}
     >

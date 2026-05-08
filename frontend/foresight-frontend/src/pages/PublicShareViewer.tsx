@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
-import { fetchPublicShare, type PublicSharePayload } from "../lib/share-links-api";
+import {
+  fetchPublicShare,
+  type PublicSharePayload,
+} from "../lib/share-links-api";
 import { CardDetail } from "../components/CardDetail";
 
 export default function PublicShareViewer() {
@@ -12,16 +15,28 @@ export default function PublicShareViewer() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Clear prior payload/error so a token change doesn't briefly render
+    // the previous share's card while the new fetch is in flight.
+    setPayload(null);
+    setError(null);
     if (!token || !user) return;
+    let cancelled = false;
     supabase.auth
       .getSession()
       .then(({ data }) =>
         fetchPublicShare(token, data.session?.access_token ?? undefined),
       )
-      .then(setPayload)
+      .then((next) => {
+        if (!cancelled) setPayload(next);
+      })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "Share unavailable");
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Share unavailable");
+        }
       });
+    return () => {
+      cancelled = true;
+    };
   }, [token, user]);
 
   if (loading) return null;
@@ -30,8 +45,7 @@ export default function PublicShareViewer() {
     return <Navigate to={`/login?redirect=/shared/${token}`} replace />;
   }
 
-  const sender =
-    payload?.created_by_name || payload?.created_by_email || "the sender";
+  const sender = payload?.created_by_name || "the sender";
   const cardSlug =
     payload?.target_type === "card" && typeof payload.data.slug === "string"
       ? payload.data.slug
