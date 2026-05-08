@@ -18,10 +18,10 @@ export function useFollowCard(
   );
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    setIsFollowing(Boolean(initialState?.is_following));
-    setFollowerCount(initialState?.follower_count ?? 0);
-  }, [initialState?.is_following, initialState?.follower_count]);
+  // Note: we deliberately do NOT re-seed from initialState on every change.
+  // After an optimistic toggle, parent rerenders carry the pre-toggle
+  // initialState and would clobber the local truth. Seed once via useState
+  // above; the effect below fetches authoritative state from the server.
 
   useEffect(() => {
     if (!cardId) return;

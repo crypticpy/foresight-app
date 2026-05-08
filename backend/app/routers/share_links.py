@@ -1,9 +1,12 @@
 """Public share-link management and viewer endpoints."""
 
 import asyncio
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -206,12 +209,17 @@ async def public_share(token: str, _current_user: dict = Depends(get_current_use
         else:
             data = supabase.table("executive_briefs").select("*").eq("id", target_id).limit(1).execute().data
             payload = data[0] if data else {}
-        supabase.table("share_links").update(
-            {
-                "view_count": (link.get("view_count") or 0) + 1,
-                "last_viewed_at": _now().isoformat(),
-            }
-        ).eq("id", link["id"]).execute()
+        # Atomic increment to avoid the read-then-write race when multiple
+        # recipients open the same link concurrently.
+        try:
+            supabase.rpc(
+                "increment_share_link_view", {"link_id": link["id"]}
+            ).execute()
+        except Exception as exc:
+            # Don't fail the share read if the analytics update errors.
+            logger.warning(
+                f"increment_share_link_view failed for {link['id']}: {exc}"
+            )
         creator = (
             supabase.table("users")
             .select("display_name, email")

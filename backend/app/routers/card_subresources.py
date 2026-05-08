@@ -440,13 +440,17 @@ async def get_cards_artifact_summary(
 )
 async def follow_card(card_id: str, current_user: dict = Depends(get_current_user)):
     """Follow a card. Idempotent for repeated clicks."""
+    # Don't include created_at in the payload: PostgREST upsert translates
+    # to ON CONFLICT DO UPDATE SET <every-column-in-payload>, which would
+    # overwrite the original follow timestamp on each re-click. The DB
+    # default fills it on first insert; on conflict we only refresh
+    # followed_at.
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("card_follows").upsert(
         {
             "user_id": current_user["id"],
             "card_id": card_id,
             "followed_at": now,
-            "created_at": now,
         },
         on_conflict="user_id,card_id",
     ).execute()

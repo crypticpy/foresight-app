@@ -20,3 +20,19 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.card_follower_counts(UUID[]) TO authenticated;
+
+-- Atomic increment for share_link.view_count. The previous read-then-write
+-- pattern raced under concurrent loads of the same token and undercounted.
+CREATE OR REPLACE FUNCTION public.increment_share_link_view(link_id UUID)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    UPDATE public.share_links
+    SET view_count = COALESCE(view_count, 0) + 1,
+        last_viewed_at = NOW()
+    WHERE id = link_id;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.increment_share_link_view(UUID) TO authenticated;
