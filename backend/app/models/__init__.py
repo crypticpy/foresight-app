@@ -142,6 +142,13 @@ from .core import (
     BlockedTopic,
 )
 
+from .card_artifacts import CardArtifacts
+
+from .card_followers import (
+    CardFollowerResponse,
+    FollowToggleResponse,
+)
+
 from .workstream import (
     Workstream,
     WorkstreamCreate,
@@ -393,6 +400,9 @@ __all__ = [
     "CardCreate",
     "SimilarCard",
     "BlockedTopic",
+    "CardArtifacts",
+    "CardFollowerResponse",
+    "FollowToggleResponse",
     # workstream
     "Workstream",
     "WorkstreamCreate",

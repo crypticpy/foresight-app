@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, validator
 
+from .card_artifacts import CardArtifacts
+
 
 class UserProfile(BaseModel):
     id: str
@@ -41,6 +43,9 @@ class Card(BaseModel):
     status: str = "active"
     created_at: datetime
     updated_at: datetime
+    follower_count: int = 0
+    is_following: bool = False
+    artifacts: CardArtifacts = Field(default_factory=CardArtifacts)
 
 
 class CardCreate(BaseModel):

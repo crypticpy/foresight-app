@@ -177,6 +177,9 @@ class PublicSharePayload(BaseModel):
     target_type: str
     target_id: str
     data: dict[str, Any]
+    created_by_name: str | None = None
+    created_by_email: str | None = None
+    expires_at: datetime | str | None = None
     watermark: str = "Foresight - City of Austin"
 
 

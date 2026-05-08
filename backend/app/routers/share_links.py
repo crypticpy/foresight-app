@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.authz import is_admin, require_paid_user, require_workstream_access
+from app.authz import require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import public_share_enabled
 from app.models.workstream_collab import PublicSharePayload, ShareLinkCreate, ShareLinkResponse
@@ -36,7 +36,7 @@ def _serialize(row: dict, include_token: bool = True) -> ShareLinkResponse:
     return ShareLinkResponse(
         **row,
         token=token,
-        share_url=f"{_frontend_base_url()}/share/{row['token']}" if include_token else None,
+        share_url=f"{_frontend_base_url()}/shared/{row['token']}" if include_token else None,
     )
 
 
@@ -52,45 +52,9 @@ def _authorize_share_target(target_type: str, target_id: str, user: dict) -> Non
         )
         if not card.data:
             raise HTTPException(status_code=404, detail="Card not found")
-        if is_admin(user) or card.data[0].get("created_by") == user["id"]:
-            return
-        wsc = (
-            supabase.table("workstream_cards")
-            .select("workstream_id")
-            .eq("card_id", target_id)
-            .execute()
-        )
-        workstream_ids = [
-            row["workstream_id"]
-            for row in (wsc.data or [])
-            if row.get("workstream_id")
-        ]
-        if workstream_ids:
-            owned = (
-                supabase.table("workstreams")
-                .select("id")
-                .in_("id", workstream_ids)
-                .eq("user_id", user["id"])
-                .limit(1)
-                .execute()
-            )
-            if owned.data:
-                return
-            managed = (
-                supabase.table("workstream_members")
-                .select("workstream_id")
-                .in_("workstream_id", workstream_ids)
-                .eq("user_id", user["id"])
-                .eq("role", "owner")
-                .limit(1)
-                .execute()
-            )
-            if managed.data:
-                return
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to share this card",
-        )
+        # Signal share links are auth-gated. Any paid user who can view the
+        # signal library can mint a signal-level share link.
+        return
     if target_type == "portfolio":
         portfolio = (
             supabase.table("portfolios")
@@ -212,7 +176,7 @@ async def revoke_share_link(
     response_model=PublicSharePayload,
     dependencies=[Depends(public_share_enabled)],
 )
-async def public_share(token: str):
+async def public_share(token: str, _current_user: dict = Depends(get_current_user)):
     def load() -> PublicSharePayload:
         result = supabase.table("share_links").select("*").eq("token", token).limit(1).execute()
         if not result.data:
@@ -248,6 +212,32 @@ async def public_share(token: str):
                 "last_viewed_at": _now().isoformat(),
             }
         ).eq("id", link["id"]).execute()
-        return PublicSharePayload(target_type=target_type, target_id=target_id, data=payload)
+        creator = (
+            supabase.table("users")
+            .select("display_name, email")
+            .eq("id", link["created_by"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        creator_row = creator[0] if creator else {}
+        return PublicSharePayload(
+            target_type=target_type,
+            target_id=target_id,
+            data=payload,
+            created_by_name=creator_row.get("display_name"),
+            created_by_email=creator_row.get("email"),
+            expires_at=link.get("expires_at"),
+        )
 
     return await asyncio.to_thread(load)
+
+
+@router.get(
+    "/share/{token}",
+    response_model=PublicSharePayload,
+    dependencies=[Depends(public_share_enabled)],
+)
+async def authed_share(token: str, current_user: dict = Depends(get_current_user)):
+    return await public_share(token, current_user)

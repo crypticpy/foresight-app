@@ -1,0 +1,177 @@
+"""Batch helpers for card follower and artifact response enrichment."""
+
+from __future__ import annotations
+
+import time
+from collections import defaultdict
+from typing import Any
+
+from app.models.card_artifacts import CardArtifacts
+
+_ARTIFACT_CACHE_TTL_SECONDS = 60
+_artifact_cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, CardArtifacts]]] = {}
+
+
+def _dedupe_card_ids(card_ids: list[str]) -> list[str]:
+    return [cid for cid in dict.fromkeys(str(card_id) for card_id in card_ids if card_id)]
+
+
+def get_follower_counts(client: Any, card_ids: list[str]) -> dict[str, int]:
+    """Return follower counts keyed by card id using the existing card_follows table."""
+    ids = _dedupe_card_ids(card_ids)
+    if not ids:
+        return {}
+
+    try:
+        rows = client.rpc("card_follower_counts", {"card_ids": ids}).execute().data or []
+        return {row["card_id"]: int(row.get("follower_count") or 0) for row in rows}
+    except Exception:
+        # Local/dev databases may not have the RPC until migrations are pushed.
+        rows = (
+            client.table("card_follows")
+            .select("card_id")
+            .in_("card_id", ids)
+            .execute()
+            .data
+            or []
+        )
+        counts: dict[str, int] = defaultdict(int)
+        for row in rows:
+            if row.get("card_id"):
+                counts[row["card_id"]] += 1
+        return dict(counts)
+
+
+def get_followed_card_ids(client: Any, user_id: str, card_ids: list[str]) -> set[str]:
+    ids = _dedupe_card_ids(card_ids)
+    if not ids:
+        return set()
+    rows = (
+        client.table("card_follows")
+        .select("card_id")
+        .eq("user_id", user_id)
+        .in_("card_id", ids)
+        .execute()
+        .data
+        or []
+    )
+    return {row["card_id"] for row in rows if row.get("card_id")}
+
+
+def get_card_artifacts(
+    client: Any, card_ids: list[str], cache_key_user_id: str | None = None
+) -> dict[str, CardArtifacts]:
+    """Return generated artifact summaries keyed by card id."""
+    ids = _dedupe_card_ids(card_ids)
+    if not ids:
+        return {}
+
+    cache_key = (cache_key_user_id or "global", tuple(sorted(ids)))
+    cached = _artifact_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] < _ARTIFACT_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    artifacts = {card_id: CardArtifacts() for card_id in ids}
+
+    brief_rows = (
+        client.table("executive_briefs")
+        .select("card_id, status, generated_at, updated_at, created_at")
+        .in_("card_id", ids)
+        .order("updated_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    for row in brief_rows:
+        card_id = row.get("card_id")
+        if not card_id or card_id not in artifacts:
+            continue
+        if row.get("status") == "completed":
+            current = artifacts[card_id]
+            if not current.has_brief:
+                current.has_brief = True
+                current.brief_updated_at = (
+                    row.get("generated_at") or row.get("updated_at") or row.get("created_at")
+                )
+
+    research_rows = (
+        client.table("research_tasks")
+        .select("card_id, status, task_type, completed_at, created_at")
+        .in_("card_id", ids)
+        .eq("task_type", "deep_research")
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    for row in research_rows:
+        card_id = row.get("card_id")
+        if not card_id or card_id not in artifacts:
+            continue
+        current = artifacts[card_id]
+        if row.get("status") in {"queued", "processing"}:
+            current.pending_research = True
+        elif row.get("status") == "completed" and not current.has_deep_research:
+            current.has_deep_research = True
+            current.deep_research_updated_at = (
+                row.get("completed_at") or row.get("created_at")
+            )
+
+    # Workstream scans are workstream scoped. Treat cards in a scanned workstream
+    # as having scan context; this keeps the indicator cheap and conservative enough
+    # for the current schema, which stores scan summaries as JSON.
+    wc_rows = (
+        client.table("workstream_cards")
+        .select("card_id, workstream_id")
+        .in_("card_id", ids)
+        .execute()
+        .data
+        or []
+    )
+    workstream_to_cards: dict[str, list[str]] = defaultdict(list)
+    for row in wc_rows:
+        if row.get("workstream_id") and row.get("card_id"):
+            workstream_to_cards[row["workstream_id"]].append(row["card_id"])
+
+    if workstream_to_cards:
+        scan_rows = (
+            client.table("workstream_scans")
+            .select("workstream_id, status, completed_at, created_at")
+            .in_("workstream_id", list(workstream_to_cards.keys()))
+            .eq("status", "completed")
+            .order("completed_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
+        for row in scan_rows:
+            updated_at = row.get("completed_at") or row.get("created_at")
+            for card_id in workstream_to_cards.get(row.get("workstream_id"), []):
+                current = artifacts[card_id]
+                if not current.has_scan:
+                    current.has_scan = True
+                    current.scan_updated_at = updated_at
+
+    _artifact_cache[cache_key] = (now, artifacts)
+    return artifacts
+
+
+def enrich_cards_with_collab(
+    client: Any, cards: list[dict[str, Any]], user_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Merge follower state and artifacts into raw card dictionaries."""
+    card_ids = [card.get("id") for card in cards if card.get("id")]
+    counts = get_follower_counts(client, card_ids)
+    followed = get_followed_card_ids(client, user_id, card_ids) if user_id else set()
+    artifacts = get_card_artifacts(client, card_ids, cache_key_user_id=user_id)
+
+    enriched: list[dict[str, Any]] = []
+    for card in cards:
+        card_id = card.get("id")
+        item = dict(card)
+        item["follower_count"] = counts.get(card_id, 0)
+        item["is_following"] = card_id in followed
+        item["artifacts"] = (artifacts.get(card_id) or CardArtifacts()).dict()
+        enriched.append(item)
+    return enriched

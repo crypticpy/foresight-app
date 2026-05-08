@@ -33,6 +33,7 @@ from app.helpers.search_utils import (
     _apply_search_filters,
     _extract_highlights,
 )
+from app.card_artifacts import enrich_cards_with_collab
 from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,10 @@ async def get_cards(
         query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     )
 
-    return [Card(**card) for card in response.data]
+    enriched = enrich_cards_with_collab(
+        supabase, response.data or [], current_user.get("id")
+    )
+    return [Card(**card) for card in enriched]
 
 
 # NOTE: This route MUST be before /cards/{card_id} to avoid route matching issues
@@ -249,7 +253,10 @@ async def get_card(
     """Get specific card"""
     response = supabase.table("cards").select("*").eq("id", str(card_id)).execute()
     if response.data:
-        return Card(**response.data[0])
+        enriched = enrich_cards_with_collab(
+            supabase, [response.data[0]], current_user.get("id")
+        )
+        return Card(**enriched[0])
     else:
         raise HTTPException(status_code=404, detail="Card not found")
 

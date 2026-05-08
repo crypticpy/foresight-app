@@ -21,6 +21,7 @@ import { StageBadge } from "../StageBadge";
 import { AnchorBadge } from "../AnchorBadge";
 import { Top25Badge } from "../Top25Badge";
 import { TrendBadge, type TrendDirection } from "../TrendBadge";
+import { ArtifactChips } from "../ArtifactIndicator";
 
 // Types
 import type { Card } from "./types";
@@ -42,6 +43,8 @@ export interface CardDetailHeaderProps {
   showBackLink?: boolean;
   /** Optional children to render in the action buttons area */
   children?: React.ReactNode;
+  /** Called when an artifact chip is selected. */
+  onArtifactSelect?: (type: "deep" | "brief" | "scan") => void;
 }
 
 /**
@@ -67,6 +70,7 @@ export const CardDetailHeader: React.FC<CardDetailHeaderProps> = ({
   backLinkText = "Back to Discover",
   showBackLink = true,
   children,
+  onArtifactSelect,
 }) => {
   // Parse stage number from stage_id string
   const stageNumber = parseStageNumber(card.stage_id);
@@ -157,6 +161,10 @@ export const CardDetailHeader: React.FC<CardDetailHeaderProps> = ({
             <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
               Created: {new Date(card.created_at).toLocaleDateString()}
             </span>
+            <ArtifactChips
+              artifacts={card.artifacts}
+              onSelect={onArtifactSelect}
+            />
           </div>
         </div>
       </div>

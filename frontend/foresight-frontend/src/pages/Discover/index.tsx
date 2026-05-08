@@ -69,6 +69,8 @@ import {
   type AdvancedSearchRequest,
   type SavedSearchQueryConfig,
 } from "../../lib/discovery-api";
+import { getCardsArtifacts } from "../../lib/card-artifacts-api";
+import { getCardsFollowerStatus } from "../../lib/card-followers-api";
 
 // Local imports from modular structure
 import type { Card, Pillar, Stage, SortOption, FilterState } from "./types";
@@ -405,6 +407,27 @@ const Discover: React.FC = () => {
     }
   };
 
+  const hydrateCardCollab = useCallback(async (rawCards: Card[]): Promise<Card[]> => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token || rawCards.length === 0) return rawCards;
+    try {
+      const cardIds = rawCards.map((card) => card.id);
+      const [artifacts, followerStatus] = await Promise.all([
+        getCardsArtifacts(cardIds, token),
+        getCardsFollowerStatus(cardIds, token),
+      ]);
+      return rawCards.map((card) => ({
+        ...card,
+        artifacts: artifacts[card.id],
+        follower_count: followerStatus[card.id]?.follower_count ?? 0,
+        is_following: followerStatus[card.id]?.is_following ?? false,
+      }));
+    } catch {
+      return rawCards;
+    }
+  }, []);
+
   const loadCards = async () => {
     setLoading(true);
     setError(null);
@@ -454,7 +477,7 @@ const Discover: React.FC = () => {
         const { data } = await query.order(sortConfig.column, {
           ascending: sortConfig.ascending,
         });
-        setCards(data || []);
+        setCards(await hydrateCardCollab(data || []));
         setLoading(false);
         return;
       }
@@ -552,7 +575,7 @@ const Discover: React.FC = () => {
             return sortConfig.ascending ? comparison : -comparison;
           });
 
-          setCards(mappedCards);
+          setCards(await hydrateCardCollab(mappedCards));
           recordSearch(currentQueryConfig, mappedCards.length);
           setLoading(false);
           return;
@@ -616,7 +639,7 @@ const Discover: React.FC = () => {
         ascending: sortConfig.ascending,
       });
 
-      setCards(data || []);
+      setCards(await hydrateCardCollab(data || []));
 
       if (!quickFilter) {
         recordSearch(currentQueryConfig, (data || []).length);

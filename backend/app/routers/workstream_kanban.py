@@ -25,6 +25,7 @@ from app.models.workstream import (
 )
 from app.models.research import ResearchTask
 from app.research_service import ResearchService
+from app.card_artifacts import enrich_cards_with_collab
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,17 @@ async def get_workstream_cards(
         .order("position")
         .execute()
     )
+    rows = cards_response.data or []
+    joined_cards = [row.get("cards") for row in rows if row.get("cards")]
+    if joined_cards:
+        enriched_cards = enrich_cards_with_collab(
+            supabase, joined_cards, current_user.get("id")
+        )
+        enriched_by_id = {card["id"]: card for card in enriched_cards}
+        for row in rows:
+            card = row.get("cards")
+            if card and card.get("id") in enriched_by_id:
+                row["cards"] = enriched_by_id[card["id"]]
 
     grouped: Dict[str, List[WorkstreamCardWithDetails]] = {
         "inbox": [],
@@ -148,7 +160,7 @@ async def get_workstream_cards(
         "archived": [],
     }
 
-    for item in cards_response.data or []:
+    for item in rows:
         card_status = item.get("status", "inbox")
         if card_status not in grouped:
             card_status = "inbox"

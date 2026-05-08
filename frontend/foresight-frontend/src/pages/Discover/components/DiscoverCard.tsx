@@ -28,6 +28,10 @@ import {
   type VelocityTrend,
 } from "../../../components/VelocityBadge";
 import { LensFlagChips } from "../../../components/lens/LensFlagChips";
+import {
+  ArtifactFolderTab,
+  ArtifactRibbon,
+} from "../../../components/ArtifactIndicator";
 import { highlightText } from "../../../lib/highlight-utils";
 import { parseStageNumber } from "../../../lib/stage-utils";
 import type { Card } from "../types";
@@ -70,7 +74,9 @@ export const DiscoverCard = React.memo(function DiscoverCard({
           ? () => onToggleCompare({ id: card.id, name: card.name })
           : undefined
       }
-      className={`bg-white dark:bg-dark-surface rounded-lg shadow-sm p-5 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg relative overflow-hidden ${
+      className={`group bg-white dark:bg-dark-surface rounded-lg shadow-sm p-5 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg relative ${
+        card.artifacts?.has_deep_research ? "pt-7" : "overflow-hidden"
+      } ${
         compareMode
           ? isSelectedForCompare
             ? "ring-2 ring-extended-purple/50 cursor-pointer"
@@ -80,6 +86,12 @@ export const DiscoverCard = React.memo(function DiscoverCard({
     >
       {/* Top gradient accent bar */}
       <div className="absolute top-0 left-0 right-0 h-1 rounded-t-lg bg-gradient-to-r from-brand-blue to-brand-green" />
+      <ArtifactFolderTab visible={card.artifacts?.has_deep_research} />
+      <ArtifactRibbon
+        artifacts={card.artifacts}
+        hideDeepResearch={card.artifacts?.has_deep_research}
+        className={compareMode ? "right-11" : undefined}
+      />
 
       {/* Compare Mode Selection Indicator */}
       {compareMode && (

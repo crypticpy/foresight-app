@@ -2124,7 +2124,7 @@ class ExportService:
             if card_data.deep_research_report:
                 elements.append(PageBreak())
                 elements.append(
-                    Paragraph("Strategic Intelligence Report", styles["SectionHeading"])
+                    Paragraph("Deep Research", styles["SectionHeading"])
                 )
                 elements.append(Spacer(1, 8))
 
@@ -2233,6 +2233,27 @@ class ExportService:
                     para_text = " ".join(current_paragraph)
                     para_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", para_text)
                     elements.append(Paragraph(para_text, styles["BodyText"]))
+
+            if card_data.executive_brief_report:
+                elements.append(PageBreak())
+                elements.append(Paragraph("Executive Brief", styles["SectionHeading"]))
+                elements.append(Spacer(1, 8))
+                brief = card_data.executive_brief_report
+                if len(brief) > 12000:
+                    brief = brief[:12000] + "\n\n... [Brief truncated for PDF export]"
+                for raw_line in brief.split("\n"):
+                    line = raw_line.strip()
+                    if not line:
+                        elements.append(Spacer(1, 6))
+                    elif line.startswith("# "):
+                        elements.append(Paragraph(line[2:], styles["SectionHeading"]))
+                    elif line.startswith("## "):
+                        elements.append(Paragraph(line[3:], styles["SubsectionHeading"]))
+                    elif line.startswith("- ") or line.startswith("* "):
+                        elements.append(Paragraph(f"• {line[2:]}", styles["BulletText"]))
+                    else:
+                        line = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
+                        elements.append(Paragraph(line, styles["BodyText"]))
 
             # Metadata footer
             elements.append(Spacer(1, 20))

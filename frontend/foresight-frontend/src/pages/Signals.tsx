@@ -36,6 +36,7 @@ import { CreateSignalModal } from "../components/CreateSignal";
 import { VirtualizedGrid } from "../components/VirtualizedGrid";
 import { VirtualizedList } from "../components/VirtualizedList";
 import { API_BASE_URL } from "../lib/config";
+import { ArtifactRibbon } from "../components/ArtifactIndicator";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -987,6 +988,7 @@ const SignalCard: React.FC<SignalCardProps> = React.memo(
       <div className="relative bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:-translate-y-1 hover:shadow-lg transition-all duration-200 overflow-hidden group">
         {/* Gradient accent bar */}
         <div className="h-1 bg-gradient-to-r from-brand-blue to-brand-green" />
+        <ArtifactRibbon artifacts={signal.artifacts} className="right-12" />
 
         {/* Pin button */}
         <button
@@ -1083,7 +1085,8 @@ const SignalListItem: React.FC<SignalCardProps> = React.memo(
     const stageNumber = parseStageNumber(signal.stage_id);
 
     return (
-      <div className="flex items-center gap-4 bg-white dark:bg-dark-surface rounded-xl shadow-sm p-4 hover:shadow-lg transition-all duration-200 group">
+      <div className="relative flex items-center gap-4 bg-white dark:bg-dark-surface rounded-xl shadow-sm p-4 hover:shadow-lg transition-all duration-200 group">
+        <ArtifactRibbon artifacts={signal.artifacts} />
         {/* Pin */}
         <button
           onClick={(e) => {
