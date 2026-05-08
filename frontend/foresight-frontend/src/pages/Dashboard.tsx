@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useState, useEffect, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Calendar,
   TrendingUp,
@@ -11,6 +11,11 @@ import {
   ArrowRight,
   RefreshCw,
   BookOpen,
+  Command,
+  Compass,
+  Layers,
+  Inbox,
+  MessageSquare,
 } from "lucide-react";
 import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -41,6 +46,11 @@ import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
 import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
 import { FlagsRow } from "../components/dashboard/FlagsRow";
 import { useToast } from "../components/ui/Toast";
+import {
+  CommandPalette,
+  type CommandAction,
+} from "../components/CommandPalette";
+import { useCommandPaletteShortcut } from "../hooks/useCommandPaletteShortcut";
 
 type Card = BaseCard;
 
@@ -152,10 +162,12 @@ const getPriorityGradient = (priority: string) => {
 const Dashboard: React.FC = () => {
   const { user } = useAuthContext();
   const { pushToast } = useToast();
+  const navigate = useNavigate();
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [followingCards, setFollowingCards] = useState<FollowingCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
   const [stats, setStats] = useState({
     totalCards: 0,
@@ -370,6 +382,71 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  useCommandPaletteShortcut(openPalette);
+
+  const paletteActions: CommandAction[] = [
+    {
+      id: "go-discover",
+      name: "Go to Discover",
+      description: "Browse the signal feed",
+      keywords: ["search", "feed", "signals"],
+      icon: Compass,
+      onActivate: () => navigate("/discover"),
+    },
+    {
+      id: "go-discovery-queue",
+      name: "Go to Discovery Queue",
+      description: "Review pending discoveries",
+      keywords: ["pending", "review", "triage"],
+      icon: Inbox,
+      onActivate: () => navigate("/discover/queue"),
+    },
+    {
+      id: "go-workstreams",
+      name: "Go to Workstreams",
+      description: "Open your research streams",
+      keywords: ["projects", "research"],
+      icon: Layers,
+      onActivate: () => navigate("/workstreams"),
+    },
+    {
+      id: "go-portfolios",
+      name: "Go to Portfolios",
+      description: "Curated card collections",
+      keywords: ["collections", "decks", "export"],
+      icon: BookOpen,
+      onActivate: () => navigate("/portfolios"),
+    },
+    {
+      id: "ask-foresight",
+      name: "Ask Foresight",
+      description: "Open the global chat",
+      keywords: ["chat", "search", "question"],
+      icon: MessageSquare,
+      onActivate: () => navigate("/chat"),
+    },
+    {
+      id: "go-methodology",
+      name: "How does Foresight work?",
+      description: "Read the methodology page",
+      keywords: ["help", "docs", "explain"],
+      icon: BookOpen,
+      onActivate: () => navigate("/methodology"),
+    },
+    {
+      id: "refresh-dashboard",
+      name: "Refresh dashboard",
+      description: "Reload stats, follows, and the lens overview",
+      keywords: ["reload", "update"],
+      icon: RefreshCw,
+      onActivate: () => {
+        void handleRefresh();
+      },
+    },
+  ];
+
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -495,19 +572,38 @@ const Dashboard: React.FC = () => {
             Here's what's happening in your strategic intelligence feed.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          aria-label="Refresh dashboard"
-          className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-          />
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex-shrink-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openPalette}
+            aria-label="Open command palette (⌘K)"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors"
+          >
+            <Command className="h-4 w-4" />
+            <span className="hidden sm:inline">Commands</span>
+            <kbd className="hidden sm:inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-dark-surface-hover text-gray-500 dark:text-gray-400">
+              ⌘K
+            </kbd>
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh dashboard"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        actions={paletteActions}
+      />
 
       {/* What changed in the last 24 hours (renders nothing while loading) */}
       <WhatChangedStrip
