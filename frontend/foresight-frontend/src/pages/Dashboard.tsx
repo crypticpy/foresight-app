@@ -35,6 +35,11 @@ import type {
 import { Sparkline } from "../components/dashboard/Sparkline";
 import { Skeleton } from "../components/dashboard/Skeleton";
 import { WhatChangedStrip } from "../components/dashboard/WhatChangedStrip";
+import { AnchorRadar } from "../components/dashboard/AnchorRadar";
+import { CspHeatmap } from "../components/dashboard/CspHeatmap";
+import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
+import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
+import { FlagsRow } from "../components/dashboard/FlagsRow";
 
 type Card = BaseCard;
 
@@ -655,6 +660,87 @@ const Dashboard: React.FC = () => {
           How does Foresight work?
         </Link>
       </div>
+
+      {/* Strategic Lens — anchor / CSP / signal-type / issue-tag / flag aggregates */}
+      {lensOverview ? (
+        <section
+          className="mb-8 grid grid-cols-1 lg:grid-cols-2 gap-6"
+          aria-label="Strategic lens overview"
+        >
+          {/* Anchor radar */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Strategic Anchor Coverage
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Mean 0–100 score across {lensOverview.classified_card_count} of{" "}
+                {lensOverview.total_active_cards} active cards.
+              </p>
+            </header>
+            <div className="flex justify-center">
+              <AnchorRadar data={lensOverview.anchor_means} size={260} />
+            </div>
+          </div>
+
+          {/* Signal-type donut */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Signal Type Mix
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Trend, driver, signal, or unclassified — per the foresight
+                vocabulary.
+              </p>
+            </header>
+            <SignalTypeDonut data={lensOverview.signal_type_counts} />
+          </div>
+
+          {/* CSP coverage heatmap */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 lg:col-span-2">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                CSP Goal Coverage
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Active cards per CSP goal, grouped by pillar.
+              </p>
+            </header>
+            <CspHeatmap data={lensOverview.csp_coverage} />
+          </div>
+
+          {/* Issue tag cloud */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Top Issue Tags
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Most-tagged issues across the corpus (chip size scales with
+                count).
+              </p>
+            </header>
+            <IssueTagCloud data={lensOverview.top_issue_tags} />
+          </div>
+
+          {/* Operational flags */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Operational Flags
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Cards rated highly relevant to budget or climate decisions.
+              </p>
+            </header>
+            <FlagsRow
+              budgetFlagCount={lensOverview.budget_flag_count}
+              climateFlagCount={lensOverview.climate_flag_count}
+            />
+          </div>
+        </section>
+      ) : null}
 
       {/* AI-Detected Patterns */}
       <PatternInsightsSection className="mb-8" />
