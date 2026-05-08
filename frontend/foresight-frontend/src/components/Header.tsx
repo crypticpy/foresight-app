@@ -22,6 +22,7 @@ import {
   Rss,
   Wand2,
   Bell,
+  Bug,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
@@ -165,6 +166,14 @@ const Header: React.FC = () => {
     setIsDarkMode(!isDarkMode);
   };
 
+  const bugReportHref = (() => {
+    const subject = encodeURIComponent("Bug Report");
+    const body = encodeURIComponent(
+      `\n\n---\nPage: ${typeof window !== "undefined" ? window.location.href : ""}\nReporter: ${user?.email ?? ""}\n`,
+    );
+    return `mailto:Christopher.Collins@austintexas.gov?subject=${subject}&body=${body}`;
+  })();
+
   // Main navigation items (Queue removed - accessible via Discover page)
   const navigation = [
     { name: "Dashboard", href: "/", icon: Home },
@@ -302,12 +311,23 @@ const Header: React.FC = () => {
           </nav>
 
           {/* User Menu Dropdown */}
-          <div className="hidden md:flex items-center gap-1" ref={userDropdownRef}>
+          <div
+            className="hidden md:flex items-center gap-1"
+            ref={userDropdownRef}
+          >
             {profile?.account_type === "guest" && (
               <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
                 Guest
               </span>
             )}
+            <a
+              href={bugReportHref}
+              aria-label="Report a bug"
+              title="Report a bug"
+              className="rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-brand-dark-blue dark:text-gray-300 dark:hover:bg-white/10"
+            >
+              <Bug className="h-4 w-4" />
+            </a>
             <Link
               to="/notifications"
               aria-label="Notifications"
@@ -509,6 +529,14 @@ const Header: React.FC = () => {
                 <User className="w-5 h-5 mr-3 flex-shrink-0" />
                 <span className="font-medium truncate">{user?.email}</span>
               </div>
+              <a
+                href={bugReportHref}
+                onClick={() => setIsMenuOpen(false)}
+                className="w-full flex items-center min-h-[44px] px-3 py-2 text-base font-medium text-gray-600 hover:text-brand-blue hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10 rounded-md active:scale-[0.98] transition-all duration-200"
+              >
+                <Bug className="w-5 h-5 mr-3 flex-shrink-0" />
+                <span>Report a Bug</span>
+              </a>
               <button
                 onClick={handleSignOut}
                 className="w-full flex items-center min-h-[44px] px-3 py-2 text-base font-medium text-gray-600 hover:text-brand-blue hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10 rounded-md active:scale-[0.98] transition-all duration-200"
