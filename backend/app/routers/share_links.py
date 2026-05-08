@@ -175,7 +175,7 @@ async def revoke_share_link(
 
 
 @router.get(
-    "/public/share/{token}",
+    "/share/{token}",
     response_model=PublicSharePayload,
     dependencies=[Depends(public_share_enabled)],
 )
@@ -240,12 +240,3 @@ async def public_share(token: str, _current_user: dict = Depends(get_current_use
         )
 
     return await asyncio.to_thread(load)
-
-
-@router.get(
-    "/share/{token}",
-    response_model=PublicSharePayload,
-    dependencies=[Depends(public_share_enabled)],
-)
-async def authed_share(token: str, current_user: dict = Depends(get_current_user)):
-    return await public_share(token, current_user)

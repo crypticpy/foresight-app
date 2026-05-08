@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from typing import Any
 
 from app.models.card_artifacts import CardArtifacts
 
 _ARTIFACT_CACHE_TTL_SECONDS = 60
-_artifact_cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, CardArtifacts]]] = {}
+_ARTIFACT_CACHE_MAX_ENTRIES = 256
+# Artifact data (briefs, research, scans) is not viewer-scoped, so the cache
+# key is just the sorted card-id tuple — no user partition needed. An
+# OrderedDict gives us cheap LRU eviction to keep long-running web pods from
+# growing the cache without bound.
+_artifact_cache: "OrderedDict[tuple[str, ...], tuple[float, dict[str, CardArtifacts]]]" = OrderedDict()
 
 
 def _dedupe_card_ids(card_ids: list[str]) -> list[str]:
@@ -61,15 +66,20 @@ def get_followed_card_ids(client: Any, user_id: str, card_ids: list[str]) -> set
 def get_card_artifacts(
     client: Any, card_ids: list[str], cache_key_user_id: str | None = None
 ) -> dict[str, CardArtifacts]:
-    """Return generated artifact summaries keyed by card id."""
+    """Return generated artifact summaries keyed by card id.
+
+    The `cache_key_user_id` arg is accepted for back-compat but ignored —
+    artifacts are not viewer-scoped, so we cache globally.
+    """
     ids = _dedupe_card_ids(card_ids)
     if not ids:
         return {}
 
-    cache_key = (cache_key_user_id or "global", tuple(sorted(ids)))
+    cache_key = tuple(sorted(ids))
     cached = _artifact_cache.get(cache_key)
     now = time.monotonic()
     if cached and now - cached[0] < _ARTIFACT_CACHE_TTL_SECONDS:
+        _artifact_cache.move_to_end(cache_key)
         return cached[1]
 
     artifacts = {card_id: CardArtifacts() for card_id in ids}
@@ -154,6 +164,9 @@ def get_card_artifacts(
                     current.scan_updated_at = updated_at
 
     _artifact_cache[cache_key] = (now, artifacts)
+    _artifact_cache.move_to_end(cache_key)
+    while len(_artifact_cache) > _ARTIFACT_CACHE_MAX_ENTRIES:
+        _artifact_cache.popitem(last=False)
     return artifacts
 
 
