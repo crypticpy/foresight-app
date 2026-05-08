@@ -40,6 +40,7 @@ import { CspHeatmap } from "../components/dashboard/CspHeatmap";
 import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
 import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
 import { FlagsRow } from "../components/dashboard/FlagsRow";
+import { useToast } from "../components/ui/Toast";
 
 type Card = BaseCard;
 
@@ -77,6 +78,12 @@ interface DashboardStatsResponse {
 /** Extract a numeric count from a Supabase head-only response, defaulting to 0 on error. */
 function safeCount(r: { error: unknown; count: number | null }): number {
   return r.error ? 0 : (r.count ?? 0);
+}
+
+/** Sum a sparkline's daily values; null if the series is absent. */
+function sparklineTotal(series: KpiSparkline | undefined): number | null {
+  if (!series) return null;
+  return series.points.reduce((sum, p) => sum + p.value, 0);
 }
 
 /**
@@ -144,9 +151,11 @@ const getPriorityGradient = (priority: string) => {
 
 const Dashboard: React.FC = () => {
   const { user } = useAuthContext();
+  const { pushToast } = useToast();
   const [recentCards, setRecentCards] = useState<Card[]>([]);
   const [followingCards, setFollowingCards] = useState<FollowingCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
   const [stats, setStats] = useState({
     totalCards: 0,
@@ -339,6 +348,28 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const results = await Promise.allSettled([
+        loadDashboardData(),
+        loadPendingCount(),
+        loadLensOverview(),
+      ]);
+      const anyFailed = results.some((r) => r.status === "rejected");
+      if (anyFailed) {
+        pushToast("Couldn't refresh — try again in a moment", {
+          variant: "error",
+        });
+      } else {
+        pushToast("Dashboard refreshed", { variant: "success" });
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -446,22 +477,36 @@ const Dashboard: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
-          {(() => {
-            const username = user?.email?.split("@")[0];
-            if (!username) return "Welcome back";
-            const friendly = username
-              .split(/[._-]+/)
-              .filter(Boolean)
-              .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-              .join(" ");
-            return `Welcome back, ${friendly}`;
-          })()}
-        </h1>
-        <p className="mt-2 text-gray-600 dark:text-gray-400">
-          Here's what's happening in your strategic intelligence feed.
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
+            {(() => {
+              const username = user?.email?.split("@")[0];
+              if (!username) return "Welcome back";
+              const friendly = username
+                .split(/[._-]+/)
+                .filter(Boolean)
+                .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+                .join(" ");
+              return `Welcome back, ${friendly}`;
+            })()}
+          </h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">
+            Here's what's happening in your strategic intelligence feed.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-label="Refresh dashboard"
+          className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <RefreshCw
+            className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+          />
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
       {/* What changed in the last 24 hours (renders nothing while loading) */}
@@ -544,12 +589,18 @@ const Dashboard: React.FC = () => {
                 {animatedNewThisWeek}
               </p>
               {sparklineByMetric.new_cards ? (
-                <div className="mt-2 h-6">
-                  <Sparkline
-                    data={sparklineByMetric.new_cards.points}
-                    stroke="#009F4D"
-                  />
-                </div>
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.new_cards.points}
+                      stroke="#009F4D"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.new_cards) ?? 0} in last
+                    14 days
+                  </p>
+                </>
               ) : null}
             </div>
           </div>
@@ -572,12 +623,18 @@ const Dashboard: React.FC = () => {
                 {animatedFollowing}
               </p>
               {sparklineByMetric.new_follows ? (
-                <div className="mt-2 h-6">
-                  <Sparkline
-                    data={sparklineByMetric.new_follows.points}
-                    stroke="#9F3CC9"
-                  />
-                </div>
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.new_follows.points}
+                      stroke="#9F3CC9"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.new_follows) ?? 0} in last
+                    14 days
+                  </p>
+                </>
               ) : null}
             </div>
           </div>
@@ -620,12 +677,18 @@ const Dashboard: React.FC = () => {
                 {animatedUpdatedThisWeek}
               </p>
               {sparklineByMetric.updated_cards ? (
-                <div className="mt-2 h-6">
-                  <Sparkline
-                    data={sparklineByMetric.updated_cards.points}
-                    stroke="#F59E0B"
-                  />
-                </div>
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.updated_cards.points}
+                      stroke="#F59E0B"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.updated_cards) ?? 0} in
+                    last 14 days
+                  </p>
+                </>
               ) : null}
             </div>
           </div>

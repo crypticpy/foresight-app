@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import { createClient, User } from "@supabase/supabase-js";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
+import { ToastProvider } from "./components/ui/Toast";
 import Header from "./components/Header";
 import { AuthContextProvider } from "./hooks/useAuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -117,7 +118,11 @@ function App() {
     setProfile(
       data
         ? { ...data, account_type: data.account_type || "paid" }
-        : { id: nextUser.id, email: nextUser.email || "", account_type: "paid" },
+        : {
+            id: nextUser.id,
+            email: nextUser.email || "",
+            account_type: "paid",
+          },
     );
   };
 
@@ -174,311 +179,310 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <AuthContextProvider value={authValue}>
-        <Router
-          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-        >
-          <div className="min-h-screen bg-brand-faded-white dark:bg-brand-dark-blue transition-colors">
-            <a
-              href="#main-content"
-              className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:bg-brand-blue focus:text-white focus:p-3 focus:rounded-md"
-            >
-              Skip to main content
-            </a>
-            {user && <Header />}
-            <main id="main-content" className={user ? "pt-16" : ""}>
-              <Routes>
-                {/* Login route - public, redirects to home if already authenticated */}
-                <Route
-                  path="/login"
-                  element={user ? <Navigate to="/" replace /> : <Login />}
-                />
-                <Route
-                  path="/share/:token"
-                  element={<PublicShareViewer />}
-                />
-                <Route
-                  path="/invite/:token"
-                  element={
-                    <ProtectedRoute
-                      element={<InviteAccept />}
-                      loadingMessage="Loading invitation..."
-                    />
-                  }
-                />
+      <ToastProvider>
+        <AuthContextProvider value={authValue}>
+          <Router
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
+            <div className="min-h-screen bg-brand-faded-white dark:bg-brand-dark-blue transition-colors">
+              <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:bg-brand-blue focus:text-white focus:p-3 focus:rounded-md"
+              >
+                Skip to main content
+              </a>
+              {user && <Header />}
+              <main id="main-content" className={user ? "pt-16" : ""}>
+                <Routes>
+                  {/* Login route - public, redirects to home if already authenticated */}
+                  <Route
+                    path="/login"
+                    element={user ? <Navigate to="/" replace /> : <Login />}
+                  />
+                  <Route path="/share/:token" element={<PublicShareViewer />} />
+                  <Route
+                    path="/invite/:token"
+                    element={
+                      <ProtectedRoute
+                        element={<InviteAccept />}
+                        loadingMessage="Loading invitation..."
+                      />
+                    }
+                  />
 
-                {/* Dashboard - synchronous landing page (critical path) */}
-                <Route
-                  path="/"
-                  element={
-                    <ProtectedRoute
-                      element={<Dashboard />}
-                      withSuspense={false}
-                    />
-                  }
-                />
+                  {/* Dashboard - synchronous landing page (critical path) */}
+                  <Route
+                    path="/"
+                    element={
+                      <ProtectedRoute
+                        element={<Dashboard />}
+                        withSuspense={false}
+                      />
+                    }
+                  />
 
-                {/* Discovery pages - lazy-loaded with Suspense */}
-                <Route
-                  path="/discover"
-                  element={
-                    <ProtectedRoute
-                      element={<Discover />}
-                      loadingMessage="Loading discovery..."
-                    />
-                  }
-                />
-                <Route
-                  path="/discover/queue"
-                  element={
-                    <ProtectedRoute
-                      element={<DiscoveryQueue />}
-                      loadingMessage="Loading queue..."
-                    />
-                  }
-                />
-                <Route
-                  path="/discover/history"
-                  element={
-                    <ProtectedRoute
-                      element={<DiscoveryHistory />}
-                      loadingMessage="Loading history..."
-                    />
-                  }
-                />
+                  {/* Discovery pages - lazy-loaded with Suspense */}
+                  <Route
+                    path="/discover"
+                    element={
+                      <ProtectedRoute
+                        element={<Discover />}
+                        loadingMessage="Loading discovery..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/discover/queue"
+                    element={
+                      <ProtectedRoute
+                        element={<DiscoveryQueue />}
+                        loadingMessage="Loading queue..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/discover/history"
+                    element={
+                      <ProtectedRoute
+                        element={<DiscoveryHistory />}
+                        loadingMessage="Loading history..."
+                      />
+                    }
+                  />
 
-                {/* Signal pages */}
-                <Route
-                  path="/signals/:slug"
-                  element={
-                    <ProtectedRoute
-                      element={<CardDetail />}
-                      loadingMessage="Loading signal details..."
-                    />
-                  }
-                />
-                <Route
-                  path="/signals"
-                  element={
-                    <ProtectedRoute
-                      element={<Signals />}
-                      loadingMessage="Loading signals..."
-                    />
-                  }
-                />
+                  {/* Signal pages */}
+                  <Route
+                    path="/signals/:slug"
+                    element={
+                      <ProtectedRoute
+                        element={<CardDetail />}
+                        loadingMessage="Loading signal details..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/signals"
+                    element={
+                      <ProtectedRoute
+                        element={<Signals />}
+                        loadingMessage="Loading signals..."
+                      />
+                    }
+                  />
 
-                {/* Ask Foresight - AI chat interface */}
-                <Route
-                  path="/ask"
-                  element={
-                    <ProtectedRoute
-                      element={<AskForesight />}
-                      loadingMessage="Loading Ask Foresight..."
-                    />
-                  }
-                />
+                  {/* Ask Foresight - AI chat interface */}
+                  <Route
+                    path="/ask"
+                    element={
+                      <ProtectedRoute
+                        element={<AskForesight />}
+                        loadingMessage="Loading Ask Foresight..."
+                      />
+                    }
+                  />
 
-                {/* AI-detected patterns */}
-                <Route
-                  path="/patterns"
-                  element={
-                    <ProtectedRoute
-                      element={<Patterns />}
-                      loadingMessage="Loading patterns..."
-                    />
-                  }
-                />
-                <Route
-                  path="/patterns/:id"
-                  element={
-                    <ProtectedRoute
-                      element={<PatternDetail />}
-                      loadingMessage="Loading pattern..."
-                    />
-                  }
-                />
+                  {/* AI-detected patterns */}
+                  <Route
+                    path="/patterns"
+                    element={
+                      <ProtectedRoute
+                        element={<Patterns />}
+                        loadingMessage="Loading patterns..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/patterns/:id"
+                    element={
+                      <ProtectedRoute
+                        element={<PatternDetail />}
+                        loadingMessage="Loading pattern..."
+                      />
+                    }
+                  />
 
-                {/* Legacy card routes - redirect to signals */}
-                <Route
-                  path="/cards/:slug"
-                  element={
-                    <ProtectedRoute
-                      element={<CardRedirect />}
-                      withSuspense={false}
-                    />
-                  }
-                />
+                  {/* Legacy card routes - redirect to signals */}
+                  <Route
+                    path="/cards/:slug"
+                    element={
+                      <ProtectedRoute
+                        element={<CardRedirect />}
+                        withSuspense={false}
+                      />
+                    }
+                  />
 
-                {/* Comparison page - lazy-loaded with React Flow */}
-                <Route
-                  path="/compare"
-                  element={
-                    <ProtectedRoute
-                      element={<Compare />}
-                      loadingMessage="Loading comparison..."
-                    />
-                  }
-                />
+                  {/* Comparison page - lazy-loaded with React Flow */}
+                  <Route
+                    path="/compare"
+                    element={
+                      <ProtectedRoute
+                        element={<Compare />}
+                        loadingMessage="Loading comparison..."
+                      />
+                    }
+                  />
 
-                {/* Workstream pages - lazy-loaded */}
-                <Route
-                  path="/workstreams/:id/board"
-                  element={
-                    <ProtectedRoute
-                      element={<WorkstreamKanban />}
-                      loadingMessage="Loading kanban board..."
-                    />
-                  }
-                />
-                <Route
-                  path="/workstreams/:id/portfolios"
-                  element={
-                    <ProtectedRoute
-                      element={<WorkstreamPortfolios />}
-                      loadingMessage="Loading portfolios..."
-                    />
-                  }
-                />
-                <Route
-                  path="/workstreams/:id/portfolios/:portfolioId"
-                  element={
-                    <ProtectedRoute
-                      element={<PortfolioDetail />}
-                      loadingMessage="Loading portfolio..."
-                    />
-                  }
-                />
-                <Route
-                  path="/portfolios"
-                  element={
-                    <ProtectedRoute
-                      element={<Portfolios />}
-                      loadingMessage="Loading portfolios..."
-                    />
-                  }
-                />
-                <Route
-                  path="/portfolios/:portfolioId"
-                  element={
-                    <ProtectedRoute
-                      element={<PortfolioDetail />}
-                      loadingMessage="Loading portfolio..."
-                    />
-                  }
-                />
-                <Route
-                  path="/workstreams"
-                  element={
-                    <ProtectedRoute
-                      element={<Workstreams />}
-                      loadingMessage="Loading workstreams..."
-                    />
-                  }
-                />
-                <Route
-                  path="/workstreams/:id"
-                  element={
-                    <ProtectedRoute
-                      element={<WorkstreamFeed />}
-                      loadingMessage="Loading workstream..."
-                    />
-                  }
-                />
+                  {/* Workstream pages - lazy-loaded */}
+                  <Route
+                    path="/workstreams/:id/board"
+                    element={
+                      <ProtectedRoute
+                        element={<WorkstreamKanban />}
+                        loadingMessage="Loading kanban board..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/workstreams/:id/portfolios"
+                    element={
+                      <ProtectedRoute
+                        element={<WorkstreamPortfolios />}
+                        loadingMessage="Loading portfolios..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/workstreams/:id/portfolios/:portfolioId"
+                    element={
+                      <ProtectedRoute
+                        element={<PortfolioDetail />}
+                        loadingMessage="Loading portfolio..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/portfolios"
+                    element={
+                      <ProtectedRoute
+                        element={<Portfolios />}
+                        loadingMessage="Loading portfolios..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/portfolios/:portfolioId"
+                    element={
+                      <ProtectedRoute
+                        element={<PortfolioDetail />}
+                        loadingMessage="Loading portfolio..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/workstreams"
+                    element={
+                      <ProtectedRoute
+                        element={<Workstreams />}
+                        loadingMessage="Loading workstreams..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/workstreams/:id"
+                    element={
+                      <ProtectedRoute
+                        element={<WorkstreamFeed />}
+                        loadingMessage="Loading workstream..."
+                      />
+                    }
+                  />
 
-                {/* Feeds management */}
-                <Route
-                  path="/feeds"
-                  element={
-                    <ProtectedRoute
-                      element={<Feeds />}
-                      loadingMessage="Loading feeds..."
-                    />
-                  }
-                />
+                  {/* Feeds management */}
+                  <Route
+                    path="/feeds"
+                    element={
+                      <ProtectedRoute
+                        element={<Feeds />}
+                        loadingMessage="Loading feeds..."
+                      />
+                    }
+                  />
 
-                {/* Settings and Analytics - lazy-loaded standalone pages */}
-                <Route
-                  path="/settings"
-                  element={
-                    <ProtectedRoute
-                      element={<Settings />}
-                      loadingMessage="Loading settings..."
-                    />
-                  }
-                />
-                <Route
-                  path="/notifications"
-                  element={
-                    <ProtectedRoute
-                      element={<Notifications />}
-                      loadingMessage="Loading notifications..."
-                    />
-                  }
-                />
-                <Route
-                  path="/analytics"
-                  element={
-                    <ProtectedRoute
-                      element={<Analytics />}
-                      loadingMessage="Loading analytics..."
-                    />
-                  }
-                />
-                <Route
-                  path="/methodology"
-                  element={
-                    <ProtectedRoute
-                      element={<Methodology />}
-                      loadingMessage="Loading methodology..."
-                    />
-                  }
-                />
-                <Route
-                  path="/how-it-works"
-                  element={
-                    <ProtectedRoute
-                      element={<HowItWorks />}
-                      loadingMessage="Loading the tour..."
-                    />
-                  }
-                />
+                  {/* Settings and Analytics - lazy-loaded standalone pages */}
+                  <Route
+                    path="/settings"
+                    element={
+                      <ProtectedRoute
+                        element={<Settings />}
+                        loadingMessage="Loading settings..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/notifications"
+                    element={
+                      <ProtectedRoute
+                        element={<Notifications />}
+                        loadingMessage="Loading notifications..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/analytics"
+                    element={
+                      <ProtectedRoute
+                        element={<Analytics />}
+                        loadingMessage="Loading analytics..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/methodology"
+                    element={
+                      <ProtectedRoute
+                        element={<Methodology />}
+                        loadingMessage="Loading methodology..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/how-it-works"
+                    element={
+                      <ProtectedRoute
+                        element={<HowItWorks />}
+                        loadingMessage="Loading the tour..."
+                      />
+                    }
+                  />
 
-                {/* Guide pages */}
-                <Route
-                  path="/guide/signals"
-                  element={
-                    <ProtectedRoute
-                      element={<GuideSignals />}
-                      loadingMessage="Loading guide..."
-                    />
-                  }
-                />
-                <Route
-                  path="/guide/discover"
-                  element={
-                    <ProtectedRoute
-                      element={<GuideDiscover />}
-                      loadingMessage="Loading guide..."
-                    />
-                  }
-                />
-                <Route
-                  path="/guide/workstreams"
-                  element={
-                    <ProtectedRoute
-                      element={<GuideWorkstreams />}
-                      loadingMessage="Loading guide..."
-                    />
-                  }
-                />
+                  {/* Guide pages */}
+                  <Route
+                    path="/guide/signals"
+                    element={
+                      <ProtectedRoute
+                        element={<GuideSignals />}
+                        loadingMessage="Loading guide..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/guide/discover"
+                    element={
+                      <ProtectedRoute
+                        element={<GuideDiscover />}
+                        loadingMessage="Loading guide..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/guide/workstreams"
+                    element={
+                      <ProtectedRoute
+                        element={<GuideWorkstreams />}
+                        loadingMessage="Loading guide..."
+                      />
+                    }
+                  />
 
-                {/* 404 catch-all - redirect to home */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          </div>
-        </Router>
-      </AuthContextProvider>
+                  {/* 404 catch-all - redirect to home */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </main>
+            </div>
+          </Router>
+        </AuthContextProvider>
+      </ToastProvider>
     </TooltipProvider>
   );
 }
