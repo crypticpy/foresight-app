@@ -5,7 +5,7 @@ import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from datetime import date as date_type
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -1698,6 +1698,42 @@ LENS_FLAG_RELEVANCE = 60
 LENS_TOP_ISSUE_TAGS = 12
 
 
+async def _fetch_all_paginated(
+    builder_factory: Callable[[], Any], page_size: int = 1000
+) -> list:
+    """Fetch every row for a Supabase query, paginating in ``page_size`` chunks.
+
+    PostgREST applies a server-side row cap (typically 1000) to a single
+    ``.execute()``, so a naive call against an unbounded query silently
+    truncates the result. We page with ``.range(start, end)`` until a partial
+    page comes back. ``builder_factory`` returns a fresh query builder so
+    filters/order are reapplied cleanly per page.
+    """
+    rows: list = []
+    start = 0
+    while True:
+        # Default arg binds ``start`` for the thread closure.
+        resp = await asyncio.to_thread(
+            lambda s=start: builder_factory().range(s, s + page_size - 1).execute()
+        )
+        page = resp.data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+        start += page_size
+    return rows
+
+
+def _parse_iso_ts(raw) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp tolerantly (handles trailing 'Z')."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
 def _daily_buckets(
     iso_timestamps: list, days: int, end: datetime
 ) -> List[SparklinePoint]:
@@ -1780,20 +1816,22 @@ async def get_lens_overview(
     window_start = now - timedelta(days=days)
     one_day_ago = now - timedelta(days=1)
     window_iso = window_start.isoformat()
-    one_day_ago_iso = one_day_ago.isoformat()
 
     try:
+        # Each query is paginated through `_fetch_all_paginated` so the active
+        # corpus and 14-day windows can scale past PostgREST's 1000-row cap
+        # without silently undercounting.
         (
-            cards_resp,
-            goals_resp,
-            new_cards_resp,
-            updated_cards_resp,
-            classified_resp,
-            user_follows_resp,
-            user_ws_cards_resp,
+            cards,
+            goals,
+            new_cards_data,
+            updated_cards_data,
+            classified_data,
+            user_follows_data,
+            user_ws_cards_data,
         ) = await asyncio.gather(
             # Active cards with the lens columns we aggregate over.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select(
                     "id, classifier_version, signal_type, anchor_scores, "
@@ -1801,60 +1839,50 @@ async def get_lens_overview(
                     "climate_assessment, user_metadata"
                 )
                 .eq("status", "active")
-                .execute()
             ),
             # CSP goal labels for the heatmap.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("csp_goals")
                 .select("id, code, name, pillar_code, display_order")
                 .order("pillar_code")
                 .order("display_order")
-                .execute()
             ),
             # Cards created in window — drives `new_cards` sparkline + 24h delta.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, created_at")
                 .gte("created_at", window_iso)
-                .execute()
             ),
             # Cards updated in window — drives `updated_cards` sparkline.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, updated_at")
                 .gte("updated_at", window_iso)
-                .execute()
             ),
             # Classifications stamped in window.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, classified_at")
                 .gte("classified_at", window_iso)
-                .execute()
             ),
             # User's follows in window.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("card_follows")
                 .select("card_id, created_at")
                 .eq("user_id", user_id)
                 .gte("created_at", window_iso)
-                .execute()
             ),
             # Cards added to user's workstreams in window.
             # `workstreams!inner(user_id)` filters at the DB level so the
             # postgrest server enforces ownership rather than us trusting the
             # client.
-            asyncio.to_thread(
+            _fetch_all_paginated(
                 lambda: supabase.table("workstream_cards")
                 .select("card_id, added_at, workstreams!inner(user_id)")
                 .eq("workstreams.user_id", user_id)
                 .gte("added_at", window_iso)
-                .execute()
             ),
         )
-
-        cards = cards_resp.data or []
-        goals = goals_resp.data or []
 
         # ----------------------------------------------------------------
         # Snapshot aggregates — one pass over the active corpus.
@@ -1971,12 +1999,6 @@ async def get_lens_overview(
         # ----------------------------------------------------------------
         # Sparklines — five KPI series, all the same length (days).
         # ----------------------------------------------------------------
-        new_cards_data = new_cards_resp.data or []
-        updated_cards_data = updated_cards_resp.data or []
-        classified_data = classified_resp.data or []
-        user_follows_data = user_follows_resp.data or []
-        user_ws_cards_data = user_ws_cards_resp.data or []
-
         sparklines = [
             KpiSparkline(
                 metric="new_cards",
@@ -2012,25 +2034,26 @@ async def get_lens_overview(
 
         # ----------------------------------------------------------------
         # 24-hour deltas — cheap to derive from the same window slices.
+        # Compares parsed datetimes (TZ-aware) rather than ISO strings, so
+        # rows whose timestamp comes back with a different offset/precision
+        # than ``one_day_ago_iso`` still bucket correctly.
         # ----------------------------------------------------------------
-        def _count_since(rows: list, key: str, since_iso: str) -> int:
+        def _count_since(rows: list, key: str, since_dt: datetime) -> int:
             n = 0
             for row in rows:
-                ts = row.get(key)
-                if ts and ts >= since_iso:
+                ts = _parse_iso_ts(row.get(key))
+                if ts is not None and ts >= since_dt:
                     n += 1
             return n
 
         delta = LensDelta24h(
-            new_cards=_count_since(new_cards_data, "created_at", one_day_ago_iso),
+            new_cards=_count_since(new_cards_data, "created_at", one_day_ago),
             new_classifications=_count_since(
-                classified_data, "classified_at", one_day_ago_iso
+                classified_data, "classified_at", one_day_ago
             ),
-            new_follows=_count_since(
-                user_follows_data, "created_at", one_day_ago_iso
-            ),
+            new_follows=_count_since(user_follows_data, "created_at", one_day_ago),
             new_workstream_cards=_count_since(
-                user_ws_cards_data, "added_at", one_day_ago_iso
+                user_ws_cards_data, "added_at", one_day_ago
             ),
         )
 

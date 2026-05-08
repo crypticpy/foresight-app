@@ -42,6 +42,8 @@ class _MockTable:
         self._rows = rows
         self._eq: Dict[str, Any] = {}
         self._gte: Dict[str, str] = {}
+        # PostgREST `.range(start, end)` is inclusive on both ends.
+        self._range: Optional[tuple] = None
 
     def select(self, *_a, **_kw):
         return self
@@ -58,6 +60,10 @@ class _MockTable:
         return self
 
     def limit(self, *_a, **_kw):
+        return self
+
+    def range(self, start, end):
+        self._range = (start, end)
         return self
 
     def execute(self) -> _MockResponse:
@@ -89,6 +95,9 @@ class _MockTable:
                     break
             if keep:
                 out.append(row)
+        if self._range is not None:
+            start, end = self._range
+            out = out[start : end + 1]
         return _MockResponse(out)
 
 
@@ -441,3 +450,77 @@ def test_user_workstream_cards_are_filtered_by_user(monkeypatch):
     # Exactly one row should have made it through the user filter.
     assert sum(p.value for p in series.points) == 1
     assert result.delta_24h.new_workstream_cards == 1
+
+
+def test_pagination_aggregates_past_postgrest_page_cap(monkeypatch):
+    """Active corpus larger than the PostgREST page cap is fully aggregated.
+
+    Regression for the silent undercount that happened when the endpoint
+    used a single `.execute()` against an unbounded query.
+    """
+    from app.routers import analytics as analytics_module
+    from app.routers.analytics import get_lens_overview
+
+    # Force a tiny page so the test stays cheap but the loop still has to
+    # paginate multiple times to reach the full corpus.
+    monkeypatch.setattr(analytics_module, "_fetch_all_paginated", _fetch_all_paginated_small)
+
+    cards = [
+        _card(classifier_version="v1", signal_type="trend", csp_goal_ids=[])
+        for _ in range(7)
+    ]
+    _patch(monkeypatch, _MockSupabase({"cards": cards}))
+
+    user = {"id": _uuid(), "account_type": "paid"}
+    result = _call(get_lens_overview, days=14, current_user=user)
+
+    # All 7 cards must be reflected in the aggregate, not just the first page.
+    assert result.total_active_cards == 7
+    trend_bucket = next(
+        b for b in result.signal_type_counts if b.signal_type == "trend"
+    )
+    assert trend_bucket.count == 7
+
+
+def test_delta_24h_handles_mixed_timestamp_formats(monkeypatch):
+    """Rows whose timestamp uses the trailing 'Z' or omits microseconds still
+    bucket into the 24h delta (regression for lexicographic comparison)."""
+    from app.routers.analytics import get_lens_overview
+
+    now = datetime.now(timezone.utc)
+    # Same instant, three different ISO renderings the DB might return.
+    just_now_z = (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    just_now_offset = (now - timedelta(hours=3)).isoformat()  # "+00:00"
+    just_now_no_micro = (now - timedelta(hours=4)).replace(microsecond=0).isoformat()
+
+    cards = [
+        _card(created_at=just_now_z, updated_at=just_now_z, classified_at=just_now_z),
+        _card(
+            created_at=just_now_offset,
+            updated_at=just_now_offset,
+            classified_at=just_now_offset,
+        ),
+        _card(
+            created_at=just_now_no_micro,
+            updated_at=just_now_no_micro,
+            classified_at=just_now_no_micro,
+        ),
+    ]
+    _patch(monkeypatch, _MockSupabase({"cards": cards}))
+
+    user = {"id": _uuid(), "account_type": "paid"}
+    result = _call(get_lens_overview, days=14, current_user=user)
+
+    # All three rows are within the last 24h regardless of their ISO format.
+    assert result.delta_24h.new_cards == 3
+    assert result.delta_24h.new_classifications == 3
+
+
+async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
+    """Override of `_fetch_all_paginated` that uses a 2-row page so tests
+    actually exercise the paginate-then-stop branch on small fixtures."""
+    return await _real_fetch_all_paginated(builder_factory, page_size=2)
+
+
+# Bind the real implementation once so the override above can call into it.
+from app.routers.analytics import _fetch_all_paginated as _real_fetch_all_paginated  # noqa: E402
