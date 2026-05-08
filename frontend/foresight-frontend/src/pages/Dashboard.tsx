@@ -1,5 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import React, {
+  useCallback,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Calendar,
   TrendingUp,
@@ -11,8 +17,8 @@ import {
   ArrowRight,
   RefreshCw,
   BookOpen,
+  Command,
 } from "lucide-react";
-import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { PillarBadge } from "../components/PillarBadge";
 import { HorizonBadge } from "../components/HorizonBadge";
@@ -22,48 +28,21 @@ import { QualityBadge } from "../components/QualityBadge";
 import { VelocityBadge, type VelocityTrend } from "../components/VelocityBadge";
 import { PatternInsightsSection } from "../components/PatternInsightsSection";
 import { AskForesightBar } from "../components/Chat/AskForesightBar";
-import { fetchPendingCount } from "../lib/discovery-api";
 import { parseStageNumber } from "../lib/stage-utils";
-import { logger } from "../lib/logger";
-import type { BaseCard } from "../types/card";
-
-type Card = BaseCard;
-
-interface FollowingCard {
-  id: string;
-  priority: string;
-  cards: Card;
-}
-
-/**
- * Explicit type for rows returned by the Supabase join query
- * `card_follows.select("id, priority, cards (*)")`.
- *
- * `cards` may be `null` when the related card has been deleted or the
- * join yields no match, so consumers must guard before accessing fields.
- */
-interface SupabaseFollowRow {
-  id: string;
-  priority: string;
-  cards: Card | null;
-}
-
-/**
- * TypeScript interface for the get_dashboard_stats RPC response.
- * This interface ensures type safety when calling the Supabase RPC function
- * that consolidates dashboard statistics into a single database call.
- */
-interface DashboardStatsResponse {
-  total_cards: number;
-  new_this_week: number;
-  following: number;
-  workstreams: number;
-}
-
-/** Extract a numeric count from a Supabase head-only response, defaulting to 0 on error. */
-function safeCount(r: { error: unknown; count: number | null }): number {
-  return r.error ? 0 : (r.count ?? 0);
-}
+import { buildSparklineByMetric, sparklineTotal } from "../lib/dashboard-utils";
+import { buildDashboardCommandActions } from "../lib/dashboard-commands";
+import { Sparkline } from "../components/dashboard/Sparkline";
+import { Skeleton } from "../components/dashboard/Skeleton";
+import { WhatChangedStrip } from "../components/dashboard/WhatChangedStrip";
+import { AnchorRadar } from "../components/dashboard/AnchorRadar";
+import { CspHeatmap } from "../components/dashboard/CspHeatmap";
+import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
+import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
+import { FlagsRow } from "../components/dashboard/FlagsRow";
+import { useToast } from "../components/ui/Toast";
+import { CommandPalette } from "../components/CommandPalette";
+import { useCommandPaletteShortcut } from "../hooks/useCommandPaletteShortcut";
+import { useDashboardData } from "../hooks/useDashboardData";
 
 /**
  * Animates a number from 0 to the target value over the given duration (ms)
@@ -130,22 +109,25 @@ const getPriorityGradient = (priority: string) => {
 
 const Dashboard: React.FC = () => {
   const { user } = useAuthContext();
-  const [recentCards, setRecentCards] = useState<Card[]>([]);
-  const [followingCards, setFollowingCards] = useState<FollowingCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [pendingReviewCount, setPendingReviewCount] = useState(0);
-  const [stats, setStats] = useState({
-    totalCards: 0,
-    newThisWeek: 0,
-    following: 0,
-    workstreams: 0,
-    updatedThisWeek: 0,
-  });
-  const [qualityDistribution, setQualityDistribution] = useState({
-    high: 0,
-    moderate: 0,
-    low: 0,
-  });
+  const { pushToast } = useToast();
+  const navigate = useNavigate();
+  const {
+    recentCards,
+    followingCards,
+    stats,
+    qualityDistribution,
+    pendingReviewCount,
+    lensOverview,
+    loading,
+    refreshing,
+    refresh,
+  } = useDashboardData(user?.id);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const sparklineByMetric = useMemo(
+    () => buildSparklineByMetric(lensOverview?.sparklines),
+    [lensOverview?.sparklines],
+  );
 
   // Animated stat card values
   const animatedTotalCards = useCountUp(stats.totalCards);
@@ -154,148 +136,25 @@ const Dashboard: React.FC = () => {
   const animatedWorkstreams = useCountUp(stats.workstreams);
   const animatedUpdatedThisWeek = useCountUp(stats.updatedThisWeek);
 
-  useEffect(() => {
-    loadDashboardData();
-    loadPendingCount();
-  }, []);
-
-  const loadPendingCount = async () => {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        const count = await fetchPendingCount(session.access_token);
-        setPendingReviewCount(count);
-      }
-    } catch (err) {
-      // Silently fail - non-critical
-      logger.debug("Could not fetch pending count:", err);
-    }
-  };
-
-  const loadDashboardData = async () => {
-    try {
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-      const [
-        recentCardsResult,
-        followingCardsResult,
-        statsResult,
-        updatedResult,
-        qualityHighResult,
-        qualityModResult,
-        qualityLowResult,
-      ] = await Promise.all([
-        // Recent cards
-        supabase
-          .from("cards")
-          .select("*")
-          .eq("status", "active")
-          .order("created_at", { ascending: false })
-          .limit(6),
-
-        // Following cards (join)
-        supabase
-          .from("card_follows")
-          .select(`id, priority, cards (*)`)
-          .eq("user_id", user?.id),
-
-        // Dashboard stats via RPC
-        supabase.rpc("get_dashboard_stats", { p_user_id: user?.id }),
-
-        // Updated this week
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("updated_at", oneWeekAgo.toISOString()),
-
-        // Quality distribution buckets (high ≥75 / moderate 50-74 / low <50)
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("signal_quality_score", 75),
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("signal_quality_score", 50)
-          .lt("signal_quality_score", 75),
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .or("signal_quality_score.lt.50,signal_quality_score.is.null"),
-      ]);
-
-      // Log errors for debugging (non-blocking)
-      if (recentCardsResult.error) {
-        console.error("Error loading recent cards:", recentCardsResult.error);
-      }
-      if (followingCardsResult.error) {
-        console.error(
-          "Error loading following cards:",
-          followingCardsResult.error,
-        );
-      }
-      if (statsResult.error) {
-        console.error("Error loading dashboard stats:", statsResult.error);
-      }
-
-      // --- Recent cards ---
-      setRecentCards(
-        recentCardsResult.error ? [] : (recentCardsResult.data ?? []),
-      );
-
-      // --- Following cards ---
-      // Supabase infers `cards (*)` as `any[]`, but the actual runtime shape
-      // is a single Card object (or null when the join has no match).
-      // We cast through `unknown` to our explicit SupabaseFollowRow type,
-      // then filter out rows where the related card was deleted.
-      const rawFollowing: SupabaseFollowRow[] = followingCardsResult.error
-        ? []
-        : ((followingCardsResult.data ?? []) as unknown as SupabaseFollowRow[]);
-
-      const transformedFollowing: FollowingCard[] = rawFollowing
-        .filter(
-          (row): row is SupabaseFollowRow & { cards: Card } =>
-            row.cards !== null,
-        )
-        .map((row) => ({
-          id: row.id,
-          priority: row.priority,
-          cards: row.cards,
-        }));
-      setFollowingCards(transformedFollowing);
-
-      // --- Stats ---
-      const statsData: DashboardStatsResponse | null = statsResult.error
-        ? null
-        : statsResult.data;
-
-      setStats({
-        totalCards: statsData?.total_cards ?? 0,
-        newThisWeek: statsData?.new_this_week ?? 0,
-        following: statsData?.following ?? 0,
-        workstreams: statsData?.workstreams ?? 0,
-        updatedThisWeek: safeCount(updatedResult),
+  const handleRefresh = useCallback(async () => {
+    const { ok } = await refresh();
+    if (ok) {
+      pushToast("Dashboard refreshed", { variant: "success" });
+    } else {
+      pushToast("Couldn't refresh — try again in a moment", {
+        variant: "error",
       });
-
-      // --- Quality distribution ---
-      setQualityDistribution({
-        high: safeCount(qualityHighResult),
-        moderate: safeCount(qualityModResult),
-        low: safeCount(qualityLowResult),
-      });
-    } catch (error) {
-      console.error("Error loading dashboard data:", error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [refresh, pushToast]);
+
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  useCommandPaletteShortcut(openPalette);
+
+  const paletteActions = useMemo(
+    () => buildDashboardCommandActions(navigate, handleRefresh),
+    [navigate, handleRefresh],
+  );
 
   if (loading) {
     return (
@@ -318,12 +177,12 @@ const Dashboard: React.FC = () => {
           style={{ animationDelay: "100ms" }}
         />
 
-        {/* Stat cards skeleton — 5 cards */}
+        {/* Stat cards skeleton — 5 cards (heightened to fit sparkline rows) */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div
+            <Skeleton
               key={i}
-              className="animate-pulse bg-gray-200 dark:bg-gray-700/50 rounded-xl h-28"
+              className="rounded-xl h-32"
               style={{ animationDelay: `${150 + i * 50}ms` }}
             />
           ))}
@@ -404,23 +263,62 @@ const Dashboard: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
-          {(() => {
-            const username = user?.email?.split("@")[0];
-            if (!username) return "Welcome back";
-            const friendly = username
-              .split(/[._-]+/)
-              .filter(Boolean)
-              .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-              .join(" ");
-            return `Welcome back, ${friendly}`;
-          })()}
-        </h1>
-        <p className="mt-2 text-gray-600 dark:text-gray-400">
-          Here's what's happening in your strategic intelligence feed.
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-brand-dark-blue dark:text-white">
+            {(() => {
+              const username = user?.email?.split("@")[0];
+              if (!username) return "Welcome back";
+              const friendly = username
+                .split(/[._-]+/)
+                .filter(Boolean)
+                .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+                .join(" ");
+              return `Welcome back, ${friendly}`;
+            })()}
+          </h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">
+            Here's what's happening in your strategic intelligence feed.
+          </p>
+        </div>
+        <div className="flex-shrink-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openPalette}
+            aria-label="Open command palette (⌘K)"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors"
+          >
+            <Command className="h-4 w-4" />
+            <span className="hidden sm:inline">Commands</span>
+            <kbd className="hidden sm:inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-dark-surface-hover text-gray-500 dark:text-gray-400">
+              ⌘K
+            </kbd>
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh dashboard"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-dark-surface text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        actions={paletteActions}
+      />
+
+      {/* What changed in the last 24 hours (renders nothing while loading) */}
+      <WhatChangedStrip
+        delta={lensOverview?.delta_24h ?? null}
+        className="mb-6"
+      />
 
       {/* Ask Foresight Bar */}
       <AskForesightBar className="mb-8" />
@@ -488,13 +386,27 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <TrendingUp className="h-8 w-8 text-brand-green group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 New This Week
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedNewThisWeek}
               </p>
+              {sparklineByMetric.new_cards ? (
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.new_cards.points}
+                      stroke="#009F4D"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.new_cards) ?? 0} in last
+                    14 days
+                  </p>
+                </>
+              ) : null}
             </div>
           </div>
         </Link>
@@ -508,13 +420,27 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <Calendar className="h-8 w-8 text-extended-purple group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 Following
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedFollowing}
               </p>
+              {sparklineByMetric.new_follows ? (
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.new_follows.points}
+                      stroke="#9F3CC9"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.new_follows) ?? 0} in last
+                    14 days
+                  </p>
+                </>
+              ) : null}
             </div>
           </div>
         </Link>
@@ -548,13 +474,27 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <RefreshCw className="h-8 w-8 text-amber-500 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 Updated This Week
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedUpdatedThisWeek}
               </p>
+              {sparklineByMetric.updated_cards ? (
+                <>
+                  <div className="mt-2 h-6">
+                    <Sparkline
+                      data={sparklineByMetric.updated_cards.points}
+                      stroke="#F59E0B"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {sparklineTotal(sparklineByMetric.updated_cards) ?? 0} in
+                    last 14 days
+                  </p>
+                </>
+              ) : null}
             </div>
           </div>
         </Link>
@@ -588,6 +528,87 @@ const Dashboard: React.FC = () => {
           How does Foresight work?
         </Link>
       </div>
+
+      {/* Strategic Lens — anchor / CSP / signal-type / issue-tag / flag aggregates */}
+      {lensOverview ? (
+        <section
+          className="mb-8 grid grid-cols-1 lg:grid-cols-2 gap-6"
+          aria-label="Strategic lens overview"
+        >
+          {/* Anchor radar */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Strategic Anchor Coverage
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Mean 0–100 score across {lensOverview.classified_card_count} of{" "}
+                {lensOverview.total_active_cards} active cards.
+              </p>
+            </header>
+            <div className="flex justify-center">
+              <AnchorRadar data={lensOverview.anchor_means} size={260} />
+            </div>
+          </div>
+
+          {/* Signal-type donut */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Signal Type Mix
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Trend, driver, signal, or unclassified — per the foresight
+                vocabulary.
+              </p>
+            </header>
+            <SignalTypeDonut data={lensOverview.signal_type_counts} />
+          </div>
+
+          {/* CSP coverage heatmap */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 lg:col-span-2">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                CSP Goal Coverage
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Active cards per CSP goal, grouped by pillar.
+              </p>
+            </header>
+            <CspHeatmap data={lensOverview.csp_coverage} />
+          </div>
+
+          {/* Issue tag cloud */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Top Issue Tags
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Most-tagged issues across the corpus (chip size scales with
+                count).
+              </p>
+            </header>
+            <IssueTagCloud data={lensOverview.top_issue_tags} />
+          </div>
+
+          {/* Operational flags */}
+          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
+            <header className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Operational Flags
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Cards rated highly relevant to budget or climate decisions.
+              </p>
+            </header>
+            <FlagsRow
+              budgetFlagCount={lensOverview.budget_flag_count}
+              climateFlagCount={lensOverview.climate_flag_count}
+            />
+          </div>
+        </section>
+      ) : null}
 
       {/* AI-Detected Patterns */}
       <PatternInsightsSection className="mb-8" />

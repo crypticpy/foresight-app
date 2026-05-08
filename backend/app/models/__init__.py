@@ -122,6 +122,14 @@ from .analytics import (
     UserEngagementComparison,
     PillarAffinity,
     PersonalStats,
+    AnchorOverview,
+    CspGoalCoverage,
+    SignalTypeMix,
+    IssueTagCount,
+    SparklinePoint,
+    KpiSparkline,
+    LensDelta24h,
+    LensOverviewResponse,
 )
 
 # -- New model modules added during Wave 2 decomposition ----------------------
@@ -371,6 +379,14 @@ __all__ = [
     "UserEngagementComparison",
     "PillarAffinity",
     "PersonalStats",
+    "AnchorOverview",
+    "CspGoalCoverage",
+    "SignalTypeMix",
+    "IssueTagCount",
+    "SparklinePoint",
+    "KpiSparkline",
+    "LensDelta24h",
+    "LensOverviewResponse",
     # core
     "UserProfile",
     "Card",
