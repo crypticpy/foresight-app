@@ -68,6 +68,30 @@ _CORE_TEXT_LIMIT = 6000
 _MINI_TEXT_LIMIT = 3500
 
 
+# Each cascade run fires up to 7 LLM calls in parallel (4 always-run +
+# 3 conditional dim stages). A discovery burst that creates 50 new cards
+# fan-outs to ~350 simultaneous Azure OpenAI requests, which reliably
+# saturates the deployment's RPM and thunders into retry/back-off. Cap the
+# number of concurrent cascade runs system-wide to bound that fan-out.
+CASCADE_MAX_CONCURRENCY = 5
+_cascade_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_cascade_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the cascade semaphore against the current event loop.
+
+    asyncio primitives bind to the loop active when first awaited. The
+    cascade is invoked from multiple loops (FastAPI request loop, worker
+    loop, backfill task), but in practice all three are the same per-process
+    loop — the lazy init just ensures we don't construct against a
+    not-yet-running loop at import time.
+    """
+    global _cascade_semaphore
+    if _cascade_semaphore is None:
+        _cascade_semaphore = asyncio.Semaphore(CASCADE_MAX_CONCURRENCY)
+    return _cascade_semaphore
+
+
 # ---------------------------------------------------------------------------
 # Card text assembly
 # ---------------------------------------------------------------------------
@@ -331,6 +355,17 @@ class LensClassificationService:
             (zero anchor scores, empty arrays, no operational dims) so the
             caller can still write *something* and move on.
         """
+        async with _get_cascade_semaphore():
+            return await self._classify_card_inner(
+                card, primary_pillar=primary_pillar
+            )
+
+    async def _classify_card_inner(
+        self,
+        card: Dict[str, Any],
+        *,
+        primary_pillar: Optional[str] = None,
+    ) -> LensClassificationResult:
         text = _build_card_text(card)
         if not text:
             logger.warning("Lens cascade called with empty card text")

@@ -358,3 +358,67 @@ def test_classify_card_to_card_update_shape(
     assert "classified_at" not in update
     # ``user_metadata`` must NEVER appear in the LLM-write payload.
     assert "user_metadata" not in update
+
+
+def test_classify_card_concurrency_capped(monkeypatch, csp_taxonomy_rows, stub_card):
+    """No more than CASCADE_MAX_CONCURRENCY classify_card runs at once.
+
+    Verifies the burst cascade — discovery firing N cards in quick succession
+    — is bounded so we don't fan out to ``N * 7`` simultaneous LLM calls
+    against Azure OpenAI.
+    """
+    from app import lens_classification_service as svc_mod
+
+    tables, _, _ = csp_taxonomy_rows
+
+    # Reset the lazy-init semaphore so this test sees a fresh one bound to
+    # asyncio.run's loop. Other tests in this file run synchronously to
+    # completion via asyncio.run, so they don't share live wait state.
+    monkeypatch.setattr(svc_mod, "_cascade_semaphore", None)
+    monkeypatch.setattr(svc_mod, "CASCADE_MAX_CONCURRENCY", 3)
+
+    inflight = 0
+    peak = 0
+
+    class _SlowCompletions:
+        """Each .create() awaits an event so we can hold N runs simultaneously."""
+
+        def __init__(self) -> None:
+            self.calls: List[Dict[str, Any]] = []
+
+        async def create(self, **kwargs):
+            nonlocal inflight, peak
+            inflight += 1
+            peak = max(peak, inflight)
+            # Yield long enough for all queued runs to enter the gather.
+            await asyncio.sleep(0.01)
+            inflight -= 1
+            self.calls.append(kwargs)
+            return _Response(
+                choices=[_Choice(message=_Message(content="{}"))]
+            )
+
+    class _SlowChat:
+        def __init__(self, completions) -> None:
+            self.completions = completions
+
+    class _SlowClient:
+        def __init__(self) -> None:
+            self.completions = _SlowCompletions()
+            self.chat = _SlowChat(self.completions)
+
+    async def _run() -> None:
+        client = _SlowClient()
+        service = svc_mod.LensClassificationService(client, _MockSupabase(tables))
+        # Fire 10 cascades simultaneously — must serialize past the cap.
+        await asyncio.gather(
+            *[service.classify_card(stub_card) for _ in range(10)]
+        )
+
+    asyncio.run(_run())
+
+    # Each cascade fires up to 7 stages internally, but the SEMAPHORE is on
+    # the outer classify_card, so peak inflight LLM calls = peak concurrent
+    # cascades * stages_per_cascade. We assert peak total LLM in-flight does
+    # not exceed CASCADE_MAX_CONCURRENCY * 7.
+    assert peak <= 3 * 7, f"peak in-flight stages {peak} exceeded cap"
