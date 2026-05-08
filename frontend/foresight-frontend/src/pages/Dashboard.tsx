@@ -23,9 +23,18 @@ import { VelocityBadge, type VelocityTrend } from "../components/VelocityBadge";
 import { PatternInsightsSection } from "../components/PatternInsightsSection";
 import { AskForesightBar } from "../components/Chat/AskForesightBar";
 import { fetchPendingCount } from "../lib/discovery-api";
+import { fetchLensOverview } from "../lib/dashboard-api";
 import { parseStageNumber } from "../lib/stage-utils";
 import { logger } from "../lib/logger";
 import type { BaseCard } from "../types/card";
+import type {
+  KpiSparkline,
+  LensOverviewResponse,
+  LensSparklineMetric,
+} from "../types/dashboard";
+import { Sparkline } from "../components/dashboard/Sparkline";
+import { Skeleton } from "../components/dashboard/Skeleton";
+import { WhatChangedStrip } from "../components/dashboard/WhatChangedStrip";
 
 type Card = BaseCard;
 
@@ -146,6 +155,15 @@ const Dashboard: React.FC = () => {
     moderate: 0,
     low: 0,
   });
+  const [lensOverview, setLensOverview] = useState<LensOverviewResponse | null>(
+    null,
+  );
+
+  const sparklineByMetric: Partial<Record<LensSparklineMetric, KpiSparkline>> =
+    {};
+  for (const series of lensOverview?.sparklines ?? []) {
+    sparklineByMetric[series.metric] = series;
+  }
 
   // Animated stat card values
   const animatedTotalCards = useCountUp(stats.totalCards);
@@ -155,8 +173,13 @@ const Dashboard: React.FC = () => {
   const animatedUpdatedThisWeek = useCountUp(stats.updatedThisWeek);
 
   useEffect(() => {
+    // Mount-only fetch. Adding the load* functions to the deps list would
+    // re-fire on every render (they're not memoized), which would thrash
+    // the dashboard with redundant requests.
     loadDashboardData();
     loadPendingCount();
+    loadLensOverview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadPendingCount = async () => {
@@ -171,6 +194,20 @@ const Dashboard: React.FC = () => {
     } catch (err) {
       // Silently fail - non-critical
       logger.debug("Could not fetch pending count:", err);
+    }
+  };
+
+  const loadLensOverview = async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      const overview = await fetchLensOverview(session.access_token, 14);
+      setLensOverview(overview);
+    } catch (err) {
+      // Lens overview is supplementary — render the dashboard regardless.
+      logger.debug("Could not fetch lens overview:", err);
     }
   };
 
@@ -318,12 +355,12 @@ const Dashboard: React.FC = () => {
           style={{ animationDelay: "100ms" }}
         />
 
-        {/* Stat cards skeleton — 5 cards */}
+        {/* Stat cards skeleton — 5 cards (heightened to fit sparkline rows) */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div
+            <Skeleton
               key={i}
-              className="animate-pulse bg-gray-200 dark:bg-gray-700/50 rounded-xl h-28"
+              className="rounded-xl h-32"
               style={{ animationDelay: `${150 + i * 50}ms` }}
             />
           ))}
@@ -422,6 +459,12 @@ const Dashboard: React.FC = () => {
         </p>
       </div>
 
+      {/* What changed in the last 24 hours (renders nothing while loading) */}
+      <WhatChangedStrip
+        delta={lensOverview?.delta_24h ?? null}
+        className="mb-6"
+      />
+
       {/* Ask Foresight Bar */}
       <AskForesightBar className="mb-8" />
 
@@ -488,13 +531,21 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <TrendingUp className="h-8 w-8 text-brand-green group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 New This Week
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedNewThisWeek}
               </p>
+              {sparklineByMetric.new_cards ? (
+                <div className="mt-2 h-6">
+                  <Sparkline
+                    data={sparklineByMetric.new_cards.points}
+                    stroke="#009F4D"
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         </Link>
@@ -508,13 +559,21 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <Calendar className="h-8 w-8 text-extended-purple group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 Following
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedFollowing}
               </p>
+              {sparklineByMetric.new_follows ? (
+                <div className="mt-2 h-6">
+                  <Sparkline
+                    data={sparklineByMetric.new_follows.points}
+                    stroke="#9F3CC9"
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         </Link>
@@ -548,13 +607,21 @@ const Dashboard: React.FC = () => {
             <div className="flex-shrink-0">
               <RefreshCw className="h-8 w-8 text-amber-500 group-hover:scale-110 transition-transform" />
             </div>
-            <div className="ml-4">
+            <div className="ml-4 flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                 Updated This Week
               </p>
               <p className="text-2xl font-semibold text-gray-900 dark:text-white">
                 {animatedUpdatedThisWeek}
               </p>
+              {sparklineByMetric.updated_cards ? (
+                <div className="mt-2 h-6">
+                  <Sparkline
+                    data={sparklineByMetric.updated_cards.points}
+                    stroke="#F59E0B"
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         </Link>
