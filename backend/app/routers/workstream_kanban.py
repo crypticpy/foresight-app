@@ -622,10 +622,13 @@ async def get_workstream_research_status(
         return WorkstreamResearchStatusResponse(tasks=[])
 
     # Get research tasks for these cards that are:
-    # - Currently active (queued or processing)
+    # - Currently active (queued or processing) AND created in the last 6h —
+    #   anything older is an orphan from a crashed worker run, and we don't
+    #   want it stuck on the card as a perpetual spinner.
     # - Recently completed/failed (within last hour for feedback)
     try:
         one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        active_cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
 
         # Query active tasks
         active_tasks = (
@@ -633,6 +636,7 @@ async def get_workstream_research_status(
             .select("id, card_id, task_type, status, started_at, completed_at")
             .in_("card_id", card_ids)
             .in_("status", ["queued", "processing"])
+            .gte("created_at", active_cutoff)
             .execute()
         )
 

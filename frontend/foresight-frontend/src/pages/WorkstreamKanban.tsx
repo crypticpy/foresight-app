@@ -647,13 +647,22 @@ const WorkstreamKanban: React.FC = () => {
         return;
       }
 
-      // Verify ownership
-      if (data.user_id !== user.id) {
+      // Verify access. Org-owned workstreams are visible to every paid user
+      // in browse-only mode; user-owned workstreams must match the caller.
+      const isOwner = data.user_id === user.id;
+      const isOrgOwned = data.owner_type === "org";
+      if (!isOwner && !isOrgOwned) {
         setError("You do not have access to this workstream.");
         return;
       }
 
-      setWorkstream(data);
+      // The raw workstreams row has no `role` column — role is derived. Stamp
+      // it here so useCapabilities.forWorkstream returns the right caps;
+      // without this the board renders read-only for the actual owner.
+      setWorkstream({
+        ...data,
+        role: isOwner ? "owner" : isOrgOwned ? "org_viewer" : undefined,
+      });
     } catch (err) {
       console.error("Error loading workstream:", err);
       setError("An unexpected error occurred.");
@@ -917,12 +926,9 @@ const WorkstreamKanban: React.FC = () => {
   /**
    * Handle card click - open the signal detail modal without leaving the board.
    */
-  const handleCardClick = useCallback(
-    (card: WorkstreamCard) => {
-      setSelectedSignalSlug(card.card.slug);
-    },
-    [],
-  );
+  const handleCardClick = useCallback((card: WorkstreamCard) => {
+    setSelectedSignalSlug(card.card.slug);
+  }, []);
 
   /**
    * Handle notes update for a card.
@@ -1888,74 +1894,76 @@ const WorkstreamKanban: React.FC = () => {
               </button>
 
               {/* Export Dropdown */}
-              {canExport && <div className="relative">
-                <button
-                  onClick={() => setShowExportMenu(!showExportMenu)}
-                  disabled={exportLoading !== null}
-                  className={cn(
-                    "inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors",
-                    exportLoading !== null && "opacity-75 cursor-not-allowed",
-                  )}
-                  title="Export workstream report"
-                >
-                  {exportLoading !== null ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  Export
-                  <ChevronDown
+              {canExport && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowExportMenu(!showExportMenu)}
+                    disabled={exportLoading !== null}
                     className={cn(
-                      "h-4 w-4 ml-1 transition-transform",
-                      showExportMenu && "rotate-180",
+                      "inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors",
+                      exportLoading !== null && "opacity-75 cursor-not-allowed",
                     )}
-                  />
-                </button>
-
-                {showExportMenu && (
-                  <>
-                    {/* Backdrop */}
-                    <div
-                      className="fixed inset-0 z-10"
-                      onClick={() => setShowExportMenu(false)}
+                    title="Export workstream report"
+                  >
+                    {exportLoading !== null ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    Export
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 ml-1 transition-transform",
+                        showExportMenu && "rotate-180",
+                      )}
                     />
-                    <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white dark:bg-dark-surface-elevated ring-1 ring-black ring-opacity-5 z-20">
+                  </button>
+
+                  {showExportMenu && (
+                    <>
+                      {/* Backdrop */}
                       <div
-                        className="py-1"
-                        role="menu"
-                        aria-orientation="vertical"
-                      >
-                        <button
-                          onClick={() => handleWorkstreamExport("pdf")}
-                          className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-surface-hover flex items-center gap-3 transition-colors"
-                          role="menuitem"
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowExportMenu(false)}
+                      />
+                      <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white dark:bg-dark-surface-elevated ring-1 ring-black ring-opacity-5 z-20">
+                        <div
+                          className="py-1"
+                          role="menu"
+                          aria-orientation="vertical"
                         >
-                          <FileText className="h-5 w-5 text-red-500" />
-                          <div>
-                            <div className="font-medium">PDF Report</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Printable document format
+                          <button
+                            onClick={() => handleWorkstreamExport("pdf")}
+                            className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-surface-hover flex items-center gap-3 transition-colors"
+                            role="menuitem"
+                          >
+                            <FileText className="h-5 w-5 text-red-500" />
+                            <div>
+                              <div className="font-medium">PDF Report</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Printable document format
+                              </div>
                             </div>
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => handleWorkstreamExport("pptx")}
-                          className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-surface-hover flex items-center gap-3 transition-colors"
-                          role="menuitem"
-                        >
-                          <Presentation className="h-5 w-5 text-orange-500" />
-                          <div>
-                            <div className="font-medium">PowerPoint</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Presentation slides
+                          </button>
+                          <button
+                            onClick={() => handleWorkstreamExport("pptx")}
+                            className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-surface-hover flex items-center gap-3 transition-colors"
+                            role="menuitem"
+                          >
+                            <Presentation className="h-5 w-5 text-orange-500" />
+                            <div>
+                              <div className="font-medium">PowerPoint</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Presentation slides
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  </>
-                )}
-              </div>}
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Portfolios Button */}
               <Link
@@ -2166,9 +2174,19 @@ const WorkstreamKanban: React.FC = () => {
               onCardMove={handleCardMove}
               readOnly={!workstreamCapabilities.canEditBoard}
               onCardClick={handleCardClick}
-              cardActions={workstreamCapabilities.canEditBoard ? cardActions : undefined}
-              selectedCardIds={workstreamCapabilities.canEditBoard ? selectedCardIds : undefined}
-              onToggleSelect={workstreamCapabilities.canEditBoard ? handleToggleSelect : undefined}
+              cardActions={
+                workstreamCapabilities.canEditBoard ? cardActions : undefined
+              }
+              selectedCardIds={
+                workstreamCapabilities.canEditBoard
+                  ? selectedCardIds
+                  : undefined
+              }
+              onToggleSelect={
+                workstreamCapabilities.canEditBoard
+                  ? handleToggleSelect
+                  : undefined
+              }
             />
           </KanbanErrorBoundary>
         )}
