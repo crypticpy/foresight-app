@@ -809,6 +809,12 @@ class DiscoveryService:
         # CSP-taxonomy load.
         self._lens_service = None
 
+        # Strong refs for fire-and-forget cascade tasks. The event loop
+        # only holds weak refs to bare ``asyncio.create_task`` results, so
+        # without this set the task can be GC'd mid-flight and silently
+        # leave a card unclassified. Tasks remove themselves on done.
+        self._pending_lens_tasks: set[asyncio.Task] = set()
+
         # Import research service components for search execution
         # Using dynamic import to avoid circular dependencies
         from .research_service import ResearchService
@@ -3394,7 +3400,7 @@ class DiscoveryService:
                 primary_pillar_code = (
                     analysis.pillars[0] if analysis.pillars else None
                 )
-                asyncio.create_task(
+                lens_task = asyncio.create_task(
                     self._classify_card_lens(
                         card_id,
                         {
@@ -3408,6 +3414,8 @@ class DiscoveryService:
                         },
                     )
                 )
+                self._pending_lens_tasks.add(lens_task)
+                lens_task.add_done_callback(self._pending_lens_tasks.discard)
 
                 return card_id
 

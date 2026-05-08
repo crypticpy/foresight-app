@@ -24,6 +24,11 @@ from app import quality_service, domain_reputation_service
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin"])
 
+# Strong refs for fire-and-forget background tasks (currently the lens
+# backfill). Without this, asyncio.create_task results can be GC'd before
+# they finish — Python's event loop only holds weak refs.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 
 class AccountTypeUpdate(BaseModel):
     account_type: Literal["paid", "guest"]
@@ -699,7 +704,9 @@ async def trigger_lens_backfill(
             failed,
         )
 
-    asyncio.create_task(_run_backfill())
+    backfill_task = asyncio.create_task(_run_backfill())
+    _BACKGROUND_TASKS.add(backfill_task)
+    backfill_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     return {
         "status": "started",
