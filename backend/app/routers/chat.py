@@ -1,8 +1,10 @@
 """Chat (Ask Foresight) router."""
 
+import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -14,6 +16,9 @@ from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
 from app.chat_service import (
+    CHAT_DAILY_SESSIONS,
+    CHAT_QUOTA_ENABLED,
+    CHAT_TURNS_PER_SESSION,
     chat as chat_service_chat,
     generate_suggestions as chat_generate_suggestions,
 )
@@ -109,6 +114,78 @@ async def chat_stats(
     except Exception as e:
         logger.error(f"Failed to get chat stats: {e}")
         return {"facts": []}
+
+
+@router.get("/chat/quota")
+async def chat_quota(
+    conversation_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Report the user's remaining chat quota (pilot cap).
+
+    Returns the daily-sessions counter unconditionally; if `conversation_id`
+    is supplied and belongs to the user, also returns turns_used/turns_limit
+    for that conversation. Frontend can use this to show "X sessions left
+    today" or disable the input when a conversation hits its turn cap.
+    """
+    user_id = current_user["id"]
+
+    if not CHAT_QUOTA_ENABLED:
+        return {
+            "enabled": False,
+            "sessions_used": 0,
+            "sessions_limit": CHAT_DAILY_SESSIONS,
+            "turns_used": 0,
+            "turns_limit": CHAT_TURNS_PER_SESSION,
+        }
+
+    sessions_used = 0
+    turns_used: Optional[int] = None
+    try:
+        midnight_utc = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        sessions_result = await asyncio.to_thread(
+            lambda: supabase.table("chat_conversations")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", midnight_utc)
+            .execute()
+        )
+        sessions_used = sessions_result.count or 0
+    except Exception as e:
+        logger.warning(f"chat_quota: sessions query failed: {e}")
+
+    if conversation_id:
+        try:
+            owner_check = await asyncio.to_thread(
+                lambda: supabase.table("chat_conversations")
+                .select("id")
+                .eq("id", conversation_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if owner_check.data:
+                turn_result = await asyncio.to_thread(
+                    lambda: supabase.table("chat_messages")
+                    .select("id", count="exact")
+                    .eq("conversation_id", conversation_id)
+                    .eq("role", "user")
+                    .execute()
+                )
+                turns_used = turn_result.count or 0
+        except Exception as e:
+            logger.warning(f"chat_quota: turns query failed: {e}")
+
+    return {
+        "enabled": True,
+        "sessions_used": sessions_used,
+        "sessions_limit": CHAT_DAILY_SESSIONS,
+        "turns_used": turns_used if turns_used is not None else 0,
+        "turns_limit": CHAT_TURNS_PER_SESSION,
+    }
 
 
 @router.post("/chat")

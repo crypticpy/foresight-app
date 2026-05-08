@@ -19,6 +19,7 @@ Usage:
     result = await agent.run_signal_detection(processed_sources, config)
 """
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -31,7 +32,7 @@ from supabase import Client
 from app.openai_provider import (
     azure_openai_async_client,
     azure_openai_async_embedding_client,
-    get_chat_deployment,
+    get_chat_agent_deployment,
     get_embedding_deployment,
 )
 from app.research_service import ProcessedSource
@@ -472,6 +473,45 @@ class SignalAgentService:
         self.run_id = run_id
         self.triggered_by_user_id = triggered_by_user_id
         self.tools = _define_tools()
+        self._lens_service = None
+        self._pending_lens_tasks: set[asyncio.Task] = set()
+
+    def _get_lens_service(self):
+        """Lazy-init lens cascade. Mirrors DiscoveryService pattern."""
+        if self._lens_service is None:
+            from .lens_classification_service import LensClassificationService
+            from .openai_provider import openai_async_client
+
+            self._lens_service = LensClassificationService(
+                openai_async_client, self.supabase
+            )
+        return self._lens_service
+
+    async def _classify_card_lens(
+        self, card_id: str, card_dict: Dict[str, Any]
+    ) -> None:
+        """Run lens cascade for a freshly-created signal card. Best-effort.
+
+        Writes only LLM-derived columns; ``user_metadata`` is untouched.
+        Failures are logged at WARNING and do not propagate.
+        """
+        try:
+            service = self._get_lens_service()
+            result = await service.classify_card(card_dict)
+            update = result.to_card_update()
+            if update.get("classifier_version") is not None:
+                update["classified_at"] = service.now_iso()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .update(update)
+                .eq("id", card_id)
+                .execute()
+            )
+            logger.info("Lens cascade complete for signal card %s", card_id)
+        except Exception as exc:
+            logger.warning(
+                "Lens cascade failed for signal card %s: %s", card_id, exc
+            )
 
     # =========================================================================
     # Main Entry Point
@@ -668,6 +708,10 @@ class SignalAgentService:
             except Exception as e:
                 logger.warning(f"Signal agent: Failed to store stats on run: {e}")
 
+            # Drain pending lens cascades so newly created cards have
+            # budget/climate/issue_tags/csp/anchors before the run returns.
+            await self._drain_lens_tasks()
+
             return result
 
         except Exception as e:
@@ -675,7 +719,26 @@ class SignalAgentService:
                 f"Signal agent: Fatal error in run_signal_detection: {e}",
                 exc_info=True,
             )
+            await self._drain_lens_tasks()
             return result
+
+    async def _drain_lens_tasks(self) -> None:
+        if not self._pending_lens_tasks:
+            return
+        pending = list(self._pending_lens_tasks)
+        logger.info(
+            f"Signal agent: awaiting {len(pending)} pending lens-cascade task(s)"
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Signal agent: lens cascade drain timed out after 120s; "
+                "cards may need backfill"
+            )
 
     # =========================================================================
     # Phase 1: Batch by Pillar
@@ -829,7 +892,7 @@ class SignalAgentService:
         for iteration in range(MAX_AGENT_ITERATIONS):
             try:
                 response = await azure_openai_async_client.chat.completions.create(
-                    model=get_chat_deployment(),
+                    model=get_chat_agent_deployment(),
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
@@ -1517,6 +1580,32 @@ class SignalAgentService:
             await self._generate_card_profile(card_id, action, all_sources)
         except Exception as e:
             logger.warning(f"Signal profile generation failed for {card_id}: {e}")
+
+        # Lens cascade — fire-and-forget. ~5 LLM round-trips on gpt-5.4-mini.
+        # Drained at the end of run_signal_detection so cards land in DB with
+        # budget/climate/issue_tags/csp/anchors before the run returns.
+        primary_pillar = (
+            action.signal_properties.get("pillar_id")
+            if action.signal_properties
+            else None
+        )
+        lens_task = asyncio.create_task(
+            self._classify_card_lens(
+                card_id,
+                {
+                    "name": action.signal_name,
+                    "summary": action.signal_summary or "",
+                    "pillar_id": primary_pillar,
+                    "horizon": (
+                        action.signal_properties.get("horizon", "H2")
+                        if action.signal_properties
+                        else "H2"
+                    ),
+                },
+            )
+        )
+        self._pending_lens_tasks.add(lens_task)
+        lens_task.add_done_callback(self._pending_lens_tasks.discard)
 
         # Auto-approve if confidence exceeds threshold
         if action.confidence >= auto_approve_threshold:

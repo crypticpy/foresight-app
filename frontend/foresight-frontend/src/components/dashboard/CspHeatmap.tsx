@@ -1,12 +1,14 @@
 /**
- * CspHeatmap — pillar × goal coverage grid.
+ * CspHeatmap — pillar × goal coverage as horizontal bar rows.
  *
- * Groups CSP goals by their parent pillar and renders one row per pillar.
- * Each cell is a goal with intensity proportional to its card count.
- * Empty pillars show a placeholder row so the dashboard still surfaces
- * "we have nothing in CH" at a glance.
+ * Each pillar gets a header row (color stripe + code + name + total card
+ * count), then a stacked list of goal rows. Every goal row shows
+ * `code · name · bar · count`, where the bar is sqrt-scaled against the
+ * global max so a 200-card goal saturates while a 5-card goal still reads.
  *
- * Pure CSS grid + Tailwind opacity scaling — no chart library.
+ * The horizontal-bar form fixes the ragged whitespace the pill grid had:
+ * every row spans the full block width regardless of how many goals a
+ * pillar has, and the pillar's signature color carries through every bar.
  */
 
 import { useMemo } from "react";
@@ -17,7 +19,7 @@ import type { PillarCode } from "../../lib/lens-api";
 export interface CspHeatmapProps {
   data: CspGoalCoverage[];
   className?: string;
-  /** Click handler for a goal cell. */
+  /** Click handler for a goal row. */
   onGoalClick?: (goal: CspGoalCoverage) => void;
 }
 
@@ -30,6 +32,48 @@ const PILLAR_NAMES: Record<PillarCode, string> = {
   HH: "Homelessness & Housing",
   MC: "Mobility & Infra",
   PS: "Public Safety",
+};
+
+interface PillarPalette {
+  /** Solid hex used for the header stripe and bar fill. */
+  accent: string;
+  /** Tailwind text class for the pillar code (header). */
+  label: string;
+  /** Tailwind background for the empty bar track. */
+  track: string;
+}
+
+const PILLAR_PALETTE: Record<PillarCode, PillarPalette> = {
+  CH: {
+    accent: "#059669",
+    label: "text-emerald-700 dark:text-emerald-300",
+    track: "bg-emerald-50 dark:bg-emerald-900/20",
+  },
+  EW: {
+    accent: "#0284C7",
+    label: "text-sky-700 dark:text-sky-300",
+    track: "bg-sky-50 dark:bg-sky-900/20",
+  },
+  HG: {
+    accent: "#4F46E5",
+    label: "text-indigo-700 dark:text-indigo-300",
+    track: "bg-indigo-50 dark:bg-indigo-900/20",
+  },
+  HH: {
+    accent: "#DB2777",
+    label: "text-pink-700 dark:text-pink-300",
+    track: "bg-pink-50 dark:bg-pink-900/20",
+  },
+  MC: {
+    accent: "#D97706",
+    label: "text-amber-700 dark:text-amber-300",
+    track: "bg-amber-50 dark:bg-amber-900/20",
+  },
+  PS: {
+    accent: "#E11D48",
+    label: "text-rose-700 dark:text-rose-300",
+    track: "bg-rose-50 dark:bg-rose-900/20",
+  },
 };
 
 interface PillarRow {
@@ -57,23 +101,10 @@ function groupByPillar(data: CspGoalCoverage[]): PillarRow[] {
   }));
 }
 
-function intensity(count: number, max: number): number {
+/** sqrt scale: 1-card goal still reads, 200-card goal still saturates. */
+function barWidthPct(count: number, max: number): number {
   if (count <= 0 || max <= 0) return 0;
-  // sqrt scale so a single hit isn't invisible next to a hot goal.
-  return Math.min(1, Math.sqrt(count / max));
-}
-
-function cellBgStyle(count: number, max: number): React.CSSProperties {
-  const ratio = intensity(count, max);
-  if (ratio === 0) return {};
-  // brand-blue rgb 68/73/156
-  return { backgroundColor: `rgba(68, 73, 156, ${0.12 + ratio * 0.78})` };
-}
-
-function cellTextClass(count: number, max: number): string {
-  return intensity(count, max) > 0.55
-    ? "text-white"
-    : "text-gray-700 dark:text-gray-200";
+  return Math.min(100, Math.sqrt(count / max) * 100);
 }
 
 export function CspHeatmap({ data, className, onGoalClick }: CspHeatmapProps) {
@@ -85,64 +116,121 @@ export function CspHeatmap({ data, className, onGoalClick }: CspHeatmapProps) {
 
   return (
     <div
-      className={cn("flex flex-col gap-1", className)}
+      className={cn("flex flex-col gap-4", className)}
       role="table"
       aria-label="CSP goal coverage by pillar"
     >
-      {rows.map((row) => (
-        <div
-          key={row.pillar}
-          role="row"
-          className="grid items-center gap-2"
-          style={{ gridTemplateColumns: "120px 1fr" }}
-        >
-          <div
-            role="rowheader"
-            className="text-[11px] font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300"
-            title={row.pillarName}
-          >
-            {row.pillar}{" "}
-            <span className="font-normal text-gray-400 dark:text-gray-500 lowercase normal-case">
-              · {row.pillarName}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1" role="cell">
-            {row.goals.length === 0 ? (
-              <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">
-                no coverage
+      {rows.map((row) => {
+        const palette = PILLAR_PALETTE[row.pillar];
+        return (
+          <div key={row.pillar} role="rowgroup" className="flex flex-col gap-1">
+            {/* Pillar header */}
+            <div className="flex items-center gap-2 mb-0.5">
+              <span
+                aria-hidden="true"
+                className="block w-1 h-5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: palette.accent }}
+              />
+              <span
+                className={cn("text-sm font-bold tabular-nums", palette.label)}
+              >
+                {row.pillar}
               </span>
-            ) : (
-              row.goals.map((goal) => {
+              <span className="text-xs text-gray-700 dark:text-gray-300">
+                {row.pillarName}
+              </span>
+            </div>
+
+            {/* Goal rows */}
+            <div className="flex flex-col gap-0.5">
+              {row.goals.map((goal) => {
                 const interactive = !!onGoalClick;
                 const Tag: "button" | "div" = interactive ? "button" : "div";
+                const width = barWidthPct(goal.card_count, max);
+                const isEmpty = goal.card_count === 0;
                 return (
                   <Tag
                     key={goal.goal_id}
                     type={interactive ? "button" : undefined}
                     onClick={interactive ? () => onGoalClick!(goal) : undefined}
+                    role="row"
                     className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md px-2 py-1",
-                      "text-[11px] font-mono border border-gray-200/70 dark:border-gray-700/60",
+                      "grid items-center gap-2 py-1 pr-1 rounded-md text-left",
                       "transition-colors duration-200",
-                      cellTextClass(goal.card_count, max),
                       interactive
-                        ? "hover:ring-2 hover:ring-brand-blue/40 cursor-pointer"
+                        ? "hover:bg-gray-50 dark:hover:bg-dark-surface-hover/40 cursor-pointer"
                         : "cursor-default",
                     )}
-                    style={cellBgStyle(goal.card_count, max)}
+                    style={{
+                      gridTemplateColumns:
+                        "auto minmax(0, 1fr) minmax(0, 2.5fr) auto",
+                    }}
                     title={`${goal.code} — ${goal.name} · ${goal.card_count} card${goal.card_count === 1 ? "" : "s"}`}
                     aria-label={`${goal.code} ${goal.name}, ${goal.card_count} cards`}
                   >
-                    <span>{goal.code}</span>
-                    <span className="opacity-80">·</span>
-                    <span className="tabular-nums">{goal.card_count}</span>
+                    {/* Code */}
+                    <span
+                      className={cn(
+                        "text-[10px] font-mono tabular-nums w-10 pl-2",
+                        isEmpty
+                          ? "text-gray-400 dark:text-gray-500"
+                          : "text-gray-500 dark:text-gray-400",
+                      )}
+                    >
+                      {goal.code}
+                    </span>
+
+                    {/* Name */}
+                    <span
+                      className={cn(
+                        "text-xs truncate",
+                        isEmpty
+                          ? "text-gray-400 dark:text-gray-500"
+                          : "text-gray-700 dark:text-gray-200",
+                      )}
+                    >
+                      {goal.name}
+                    </span>
+
+                    {/* Bar track + fill */}
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "h-2 rounded-full overflow-hidden",
+                        isEmpty
+                          ? "bg-gray-100 dark:bg-dark-surface-deep"
+                          : palette.track,
+                      )}
+                    >
+                      {!isEmpty && (
+                        <span
+                          className="block h-full rounded-full transition-all duration-300"
+                          style={{
+                            width: `${width.toFixed(2)}%`,
+                            backgroundColor: palette.accent,
+                          }}
+                        />
+                      )}
+                    </span>
+
+                    {/* Count */}
+                    <span
+                      className={cn(
+                        "text-xs font-semibold tabular-nums w-10 text-right pr-1",
+                        isEmpty
+                          ? "text-gray-400 dark:text-gray-500"
+                          : "text-gray-900 dark:text-white",
+                      )}
+                    >
+                      {goal.card_count}
+                    </span>
                   </Tag>
                 );
-              })
-            )}
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

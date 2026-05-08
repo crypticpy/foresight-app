@@ -30,7 +30,7 @@ from supabase import Client
 import openai
 
 # Azure OpenAI deployment names
-from app.openai_provider import get_chat_deployment
+from app.openai_provider import get_chat_agent_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -819,7 +819,7 @@ class ExecutiveBriefService:
         logger.info(f"Generating executive brief for card: {card.get('name', 'Unknown')}")
 
         # Get Azure deployment name for chat completions
-        model_deployment = get_chat_deployment()
+        model_deployment = get_chat_agent_deployment()
 
         # Call Azure OpenAI API (synchronous client)
         response = self.openai_client.chat.completions.create(
@@ -1049,7 +1049,7 @@ Generate a comprehensive portfolio synthesis as JSON with this exact structure:
 
 Respond with ONLY the JSON object, no markdown formatting or explanation."""
 
-        model_deployment = get_chat_deployment()
+        model_deployment = get_chat_agent_deployment()
         
         response = await asyncio.to_thread(
             self.openai_client.chat.completions.create,

@@ -166,8 +166,7 @@ def main():
         print("   Backend: http://localhost:8000")
         print("   API Docs: http://localhost:8000/docs")
         print("\n👤 Test User:")
-        print("   Email: test@foresight.austintexas.gov")
-        print("   Password: TestPassword123!")
+        print("   See backend/.env (TEST_USER_EMAIL / TEST_USER_PASSWORD)")
     else:
         print("\n⚠️  Some issues found. Please check the setup.")
         print("\n🛠️  Quick Fixes:")

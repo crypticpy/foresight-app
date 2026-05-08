@@ -7,12 +7,23 @@ preserved from the previous Azure-flavored implementation so existing callers
 
 Environment Variables:
 - OPENAI_API_KEY (required): Commercial OpenAI API key
-- OPENAI_CHAT_MODEL: Premium chat model (default: gpt-5.5-2026-04-23)
+- OPENAI_CHAT_MODEL: Premium chat model (default: gpt-5.4-2026-03-05)
 - OPENAI_CHAT_AGENT_MODEL: Agentic-work model (default: gpt-5.4-2026-03-05)
-- OPENAI_CHAT_MINI_MODEL: High-volume / fast model (default: gpt-5.4-mini-2026-03-17)
+- OPENAI_CHAT_MINI_MODEL: Reasoning-capable mini (default: gpt-5.4-mini-2026-03-17)
+- OPENAI_CHAT_NANO_MODEL: High-volume label-only slot — kept as an alias of
+  the mini model by default so we don't downgrade quality unintentionally.
+  Set this explicitly to gpt-5-nano (or similar) only after sampling outputs.
 - OPENAI_EMBEDDING_MODEL: Embedding model (default: text-embedding-ada-002 — kept
   for pgvector compatibility with existing 1536-dim card embeddings)
 - OPENAI_BASE_URL (optional): Override base URL for OpenAI-compatible endpoints
+
+Tier guidance:
+- Premium (chat): chat reply synthesis, brief generation, card synthesis, the
+  cascade's "core" prompt — anywhere reasoning quality is load-bearing.
+- Mini: cascade dimension prompts, query expansion, RAG reranking — needs some
+  reasoning but not premium quality.
+- Nano: title generation, smart suggestions, source-relevance triage —
+  high-volume, low-stakes label/short-text tasks.
 """
 
 import logging
@@ -52,13 +63,19 @@ class OpenAIConfig:
 
         # Model names (real OpenAI model IDs, not Azure deployment names)
         self.model_chat = _get_optional_env(
-            "OPENAI_CHAT_MODEL", "gpt-5.5-2026-04-23"
+            "OPENAI_CHAT_MODEL", "gpt-5.4-2026-03-05"
         )
         self.model_chat_agent = _get_optional_env(
             "OPENAI_CHAT_AGENT_MODEL", "gpt-5.4-2026-03-05"
         )
         self.model_chat_mini = _get_optional_env(
             "OPENAI_CHAT_MINI_MODEL", "gpt-5.4-mini-2026-03-17"
+        )
+        # Nano falls back to the mini model when unset — ensures nano-routed
+        # call sites don't quietly drop a generation in quality if the env
+        # var isn't configured.
+        self.model_chat_nano = _get_optional_env(
+            "OPENAI_CHAT_NANO_MODEL", self.model_chat_mini
         )
         self.model_embedding = _get_optional_env(
             "OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"
@@ -70,6 +87,7 @@ class OpenAIConfig:
         logger.info(f"  Chat Model: {self.model_chat}")
         logger.info(f"  Chat Agent Model: {self.model_chat_agent}")
         logger.info(f"  Chat Mini Model: {self.model_chat_mini}")
+        logger.info(f"  Chat Nano Model: {self.model_chat_nano}")
         logger.info(f"  Embedding Model: {self.model_embedding}")
 
 
@@ -106,6 +124,7 @@ def get_deployment_name(model_name: str) -> str:
         _config.model_chat,
         _config.model_chat_agent,
         _config.model_chat_mini,
+        _config.model_chat_nano,
         _config.model_embedding,
     }:
         return model_name
@@ -124,8 +143,13 @@ def get_chat_agent_deployment() -> str:
 
 
 def get_chat_mini_deployment() -> str:
-    """High-volume / fast model (titles, suggestions, reranking, query expansion)."""
+    """Mini reasoning model (cascade dimensions, query expansion, reranking)."""
     return _config.model_chat_mini
+
+
+def get_chat_nano_deployment() -> str:
+    """Nano label-only model (titles, suggestions, source-relevance triage)."""
+    return _config.model_chat_nano
 
 
 def get_embedding_deployment() -> str:
@@ -340,6 +364,7 @@ async def validate_azure_connection() -> dict:
                 "chat": _config.model_chat,
                 "chat_agent": _config.model_chat_agent,
                 "chat_mini": _config.model_chat_mini,
+                "chat_nano": _config.model_chat_nano,
                 "embedding": _config.model_embedding,
             },
         }
@@ -365,6 +390,7 @@ __all__ = [
     "get_chat_deployment",
     "get_chat_agent_deployment",
     "get_chat_mini_deployment",
+    "get_chat_nano_deployment",
     "get_embedding_deployment",
     "get_chat_api_version",
     "get_embedding_api_version",

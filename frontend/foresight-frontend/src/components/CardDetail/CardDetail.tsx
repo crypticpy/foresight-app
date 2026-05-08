@@ -704,6 +704,8 @@ export const CardDetail: React.FC<CardDetailProps> = ({
               llmAnchorScores={(card.anchor_scores as AnchorScores) ?? null}
               llmIssueTags={card.issue_tags ?? []}
               userMetadata={(card.user_metadata as UserMetadata) ?? null}
+              budgetAssessment={card.budget_assessment ?? null}
+              climateAssessment={card.climate_assessment ?? null}
             />
             {/* Score History - Compact sidebar widget */}
             <ScoreTimelineChart

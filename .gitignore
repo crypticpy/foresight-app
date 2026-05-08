@@ -94,3 +94,6 @@ supabase/.temp/
 .worktrees/
 test-users.txt
 .vercel
+
+# Claude Code local state
+.claude/scheduled_tasks.lock

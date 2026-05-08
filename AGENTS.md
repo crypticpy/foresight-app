@@ -177,10 +177,7 @@ The worker handles discovery pipeline runs (fetching, triage, classification), d
 
 Backend tests use pytest with async support. Frontend uses Vitest for unit tests and Playwright for E2E.
 
-Test user credentials for local development:
-
-- Email: `test@foresight.austintexas.gov`
-- Password: `TestPassword123!`
+Test user credentials for local development live in `backend/.env` (gitignored) as `TEST_USER_EMAIL` / `TEST_USER_PASSWORD`. The `create_test_user.py` script provisions the user in Supabase from those env vars.
 
 ## Deployment
 

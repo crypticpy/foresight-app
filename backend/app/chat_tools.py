@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -305,13 +304,15 @@ WRITE_TOOLS = [
 def get_all_tools() -> List[Dict[str, Any]]:
     """Return the tool list to send to the model.
 
-    web_search is included only when TAVILY_API_KEY is set so we don't
-    advertise an action we cannot fulfill.
+    web_search is included only when a working search provider (SearXNG or
+    Serper) is configured so we don't advertise an action we cannot fulfill.
     """
+    from app import search_provider
+
     tools: List[Dict[str, Any]] = []
     tools.extend(READ_TOOLS)
     tools.extend(WRITE_TOOLS)
-    if os.getenv("TAVILY_API_KEY"):
+    if search_provider.is_available():
         tools.append(WEB_SEARCH_TOOL)
     return tools
 

@@ -14,20 +14,27 @@ def main():
     # Get Supabase configuration from environment or prompt
     supabase_url = os.getenv('SUPABASE_URL')
     supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
-    
+    test_email = os.getenv('TEST_USER_EMAIL')
+    test_password = os.getenv('TEST_USER_PASSWORD')
+
     if not supabase_url or not supabase_key:
         print("❌ Missing Supabase configuration")
         print("Please set SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables")
         sys.exit(1)
-    
+
+    if not test_email or not test_password:
+        print("❌ Missing test user credentials")
+        print("Please set TEST_USER_EMAIL and TEST_USER_PASSWORD in backend/.env")
+        sys.exit(1)
+
     # Initialize Supabase client
     supabase = create_client(supabase_url, supabase_key)
-    
+
     # Create test user
     test_user_data = {
         'id': str(uuid.uuid4()),
-        'email': 'test@foresight.austintexas.gov',
-        'password': 'TestPassword123!',
+        'email': test_email,
+        'password': test_password,
         'user_metadata': {
             'full_name': 'Test User',
             'department': 'City Manager\'s Office',

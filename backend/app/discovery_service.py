@@ -985,6 +985,30 @@ class DiscoveryService:
 
             logger.info(f"Total raw sources discovered: {len(raw_sources)}")
 
+            # Persist every discovered source IMMEDIATELY so we never lose
+            # paid-for URLs even if downstream LLM analysis fails or hangs.
+            # Each source's discovered_source_id is stamped onto the RawSource
+            # so later pipeline steps can update its row in place.
+            if raw_sources and not config.dry_run:
+                persist_step_start = datetime.now(timezone.utc)
+                persist_ok = 0
+                for src in raw_sources:
+                    try:
+                        ds_id = await self._persist_discovered_source(run_id, src)
+                        if ds_id:
+                            src.discovered_source_id = ds_id
+                            persist_ok += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to persist discovered source {src.url}: {e}"
+                        )
+                logger.info(
+                    f"Persisted {persist_ok}/{len(raw_sources)} raw sources to "
+                    f"discovered_sources in "
+                    f"{(datetime.now(timezone.utc) - persist_step_start).total_seconds():.2f}s "
+                    f"(safe-saved before LLM analysis)"
+                )
+
             if not raw_sources and not queries:
                 logger.warning(
                     "No queries generated and no multi-source results - completing run"
@@ -3783,6 +3807,24 @@ class DiscoveryService:
 
         # Update database record
         await self._update_run_record(run_id, result)
+
+        # Drain pending lens-cascade tasks before returning so newly created
+        # cards actually get budget/climate/issue tags written. Without this
+        # the asyncio loop tears down on return and cancels them in flight.
+        if self._pending_lens_tasks:
+            pending = list(self._pending_lens_tasks)
+            logger.info(
+                f"Awaiting {len(pending)} pending lens-cascade task(s) before run exit"
+            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=120,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Lens cascade drain timed out after 120s; cards may need backfill"
+                )
 
         logger.info(f"Discovery run {run_id} completed: {summary[:200]}...")
 

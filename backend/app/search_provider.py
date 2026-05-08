@@ -1,17 +1,18 @@
 """
 Unified search provider for Foresight.
 
-Routes search requests to the configured backend — SearXNG (self-hosted),
-Serper (paid API), or Tavily (paid API) — via a single interface that
-all consumers import instead of importing individual fetchers directly.
+Routes search requests to the configured backend — SearXNG (self-hosted)
+or Serper (paid API) — via a single interface that all consumers import
+instead of importing individual fetchers directly.
+
+Tavily and Firecrawl are decommissioned and intentionally not supported.
 
 Configure via environment variable:
-    SEARCH_PROVIDER=searxng | serper | tavily | auto
+    SEARCH_PROVIDER=searxng | serper | auto
 
 When set to "auto" (default), the provider tries backends in order:
     1. SearXNG  (if SEARXNG_BASE_URL is set)
     2. Serper   (if SERPER_API_KEY is set)
-    3. Tavily   (if TAVILY_API_KEY is set)
 
 The first available backend wins. If none are configured, search calls
 return empty results with a warning — the system degrades gracefully
@@ -55,8 +56,6 @@ def _detect_provider() -> str:
         return "searxng"
     if os.getenv("SERPER_API_KEY", ""):
         return "serper"
-    if os.getenv("TAVILY_API_KEY", ""):
-        return "tavily"
     return "none"
 
 
@@ -64,15 +63,21 @@ def get_active_provider() -> str:
     """
     Determine which search provider to use based on configuration.
 
-    Returns one of: "searxng", "serper", "tavily", or "none".
+    Returns one of: "searxng", "serper", or "none".
     """
     explicit = os.getenv("SEARCH_PROVIDER", "auto").lower().strip()
 
     if explicit == "auto":
         return _detect_provider()
 
-    if explicit in ("searxng", "serper", "tavily"):
+    if explicit in ("searxng", "serper"):
         return explicit
+
+    if explicit in ("tavily", "firecrawl"):
+        logger.warning(
+            f"SEARCH_PROVIDER='{explicit}' is decommissioned; falling back to auto-detect"
+        )
+        return _detect_provider()
 
     logger.warning(f"Unknown SEARCH_PROVIDER='{explicit}', falling back to auto-detect")
     return _detect_provider()
@@ -92,8 +97,6 @@ def get_provider_info() -> dict:
         info["base_url"] = os.getenv("SEARXNG_BASE_URL", "")
     elif provider == "serper":
         info["has_api_key"] = bool(os.getenv("SERPER_API_KEY", ""))
-    elif provider == "tavily":
-        info["has_api_key"] = bool(os.getenv("TAVILY_API_KEY", ""))
 
     return info
 
@@ -185,85 +188,12 @@ async def _serper_search_news(
 
 
 # ---------------------------------------------------------------------------
-# Tavily adapter
-# ---------------------------------------------------------------------------
-
-
-async def _tavily_search_web(
-    query: str, num_results: int, date_filter: Optional[str]
-) -> List[SearchResult]:
-    api_key = os.getenv("TAVILY_API_KEY", "")
-    if not api_key:
-        return []
-
-    try:
-        from tavily import TavilyClient
-
-        client = TavilyClient(api_key=api_key)
-        data = await asyncio.to_thread(
-            client.search,
-            query=query,
-            max_results=num_results,
-            search_depth="basic",
-        )
-        return [
-            SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("content", ""),
-                source_name=r.get("source", ""),
-                date=r.get("published_date"),
-                provider="tavily",
-            )
-            for r in data.get("results", [])
-        ]
-    except Exception as e:
-        logger.warning(f"Tavily search failed for '{query[:50]}': {e}")
-        return []
-
-
-async def _tavily_search_news(
-    query: str, num_results: int, date_filter: Optional[str]
-) -> List[SearchResult]:
-    # Tavily doesn't have a separate news endpoint — use topic=news
-    api_key = os.getenv("TAVILY_API_KEY", "")
-    if not api_key:
-        return []
-
-    try:
-        from tavily import TavilyClient
-
-        client = TavilyClient(api_key=api_key)
-        data = await asyncio.to_thread(
-            client.search,
-            query=query,
-            max_results=num_results,
-            topic="news",
-        )
-        return [
-            SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("content", ""),
-                source_name=r.get("source", ""),
-                date=r.get("published_date"),
-                provider="tavily",
-            )
-            for r in data.get("results", [])
-        ]
-    except Exception as e:
-        logger.warning(f"Tavily news search failed for '{query[:50]}': {e}")
-        return []
-
-
-# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
 _DISPATCH = {
     "searxng": (_searxng_search_web, _searxng_search_news),
     "serper": (_serper_search_web, _serper_search_news),
-    "tavily": (_tavily_search_web, _tavily_search_news),
 }
 
 

@@ -43,31 +43,8 @@ async def _search_exa(query: str, num_results: int = 7) -> list[dict]:
         return []
 
 
-async def _search_tavily(query: str, num_results: int = 7) -> list[dict]:
-    """Search via Tavily. Returns list of {title, url, content, score}."""
-    tavily_key = os.getenv("TAVILY_API_KEY")
-    if not tavily_key:
-        return []
-
-    try:
-        from tavily import TavilyClient
-
-        client = TavilyClient(api_key=tavily_key)
-        result = await asyncio.to_thread(
-            client.search,
-            query,
-            max_results=num_results,
-            search_depth="basic",
-            include_answer=False,
-        )
-        return result.get("results", [])
-    except Exception as e:
-        logger.warning(f"Tavily search failed: {e}")
-        return []
-
-
-async def _search_serper(query: str, num_results: int = 7) -> list[dict]:
-    """Search via configured provider (SearXNG/Serper/Tavily). Returns list of {title, url, content, score}."""
+async def _search_provider(query: str, num_results: int = 7) -> list[dict]:
+    """Search via configured provider (SearXNG/Serper). Returns list of {title, url, content, score}."""
     from .search_provider import is_available as search_available
 
     if not search_available():
@@ -99,25 +76,19 @@ async def _search_serper(query: str, num_results: int = 7) -> list[dict]:
 
 
 async def _web_search(query: str, num_results: int = 7) -> list[dict]:
-    """Search the web using Tavily+Serper (primary, low cost) with Exa fallback."""
-    # Primary: Try Tavily first (cheapest)
-    results = await _search_tavily(query, num_results)
-    if len(results) >= num_results:
-        return results
+    """Search the web via the unified search provider (SearXNG/Serper),
+    with Exa neural search as a fallback when the primary returns too few hits.
 
-    # Supplement: Try Serper for additional results
-    serper_results = await _search_serper(query, num_results)
-    seen_urls = {r.get("url") for r in results}
-    for r in serper_results:
-        if r["url"] not in seen_urls:
-            seen_urls.add(r["url"])
-            results.append(r)
-
+    Tavily and Firecrawl are decommissioned and intentionally not consulted.
+    """
+    results = await _search_provider(query, num_results)
     if len(results) >= num_results:
         return results[:num_results]
 
-    # Fallback: Exa neural search only if primaries didn't deliver
-    logger.info(f"Tavily+Serper found only {len(results)} results, falling back to Exa")
+    seen_urls = {r.get("url") for r in results}
+    logger.info(
+        f"Search provider returned {len(results)} results, falling back to Exa"
+    )
     exa_results = await _search_exa(query, num_results)
     for r in exa_results:
         if r["url"] not in seen_urls:
@@ -136,14 +107,15 @@ async def enrich_weak_signals(
 ) -> dict:
     """Find cards with fewer than `min_sources` sources and enrich them via web search.
 
-    Uses Tavily+Serper (primary, low cost) with Exa neural search as fallback.
+    Uses the configured search provider (SearXNG/Serper) with Exa neural search
+    as fallback. Tavily and Firecrawl are decommissioned.
     """
     from .search_provider import is_available as search_available
 
     exa_key = os.getenv("EXA_API_KEY")
     if not search_available() and not exa_key:
         return {
-            "error": "No search provider configured (set SEARXNG_BASE_URL, SERPER_API_KEY, TAVILY_API_KEY, or EXA_API_KEY)"
+            "error": "No search provider configured (set SEARXNG_BASE_URL, SERPER_API_KEY, or EXA_API_KEY)"
         }
 
     # Step 1: Find cards with source counts
@@ -194,9 +166,10 @@ async def enrich_weak_signals(
     enriched_cards = 0
     errors = 0
     error_samples = []
-    tavily_key = os.getenv("TAVILY_API_KEY")
-    serper_key = os.getenv("SERPER_API_KEY")
-    search_provider = "tavily+serper" if (tavily_key or serper_key) else "exa"
+    from .search_provider import get_active_provider
+
+    active = get_active_provider()
+    search_provider = active if active != "none" else "exa"
 
     # Use semaphore to limit concurrent API calls
     sem = asyncio.Semaphore(3)
