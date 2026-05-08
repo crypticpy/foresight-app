@@ -1,4 +1,10 @@
-import React, { useCallback, useState, useEffect, useRef } from "react";
+import React, {
+  useCallback,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Calendar,
@@ -12,12 +18,7 @@ import {
   RefreshCw,
   BookOpen,
   Command,
-  Compass,
-  Layers,
-  Inbox,
-  MessageSquare,
 } from "lucide-react";
-import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { PillarBadge } from "../components/PillarBadge";
 import { HorizonBadge } from "../components/HorizonBadge";
@@ -27,16 +28,9 @@ import { QualityBadge } from "../components/QualityBadge";
 import { VelocityBadge, type VelocityTrend } from "../components/VelocityBadge";
 import { PatternInsightsSection } from "../components/PatternInsightsSection";
 import { AskForesightBar } from "../components/Chat/AskForesightBar";
-import { fetchPendingCount } from "../lib/discovery-api";
-import { fetchLensOverview } from "../lib/dashboard-api";
 import { parseStageNumber } from "../lib/stage-utils";
-import { logger } from "../lib/logger";
-import type { BaseCard } from "../types/card";
-import type {
-  KpiSparkline,
-  LensOverviewResponse,
-  LensSparklineMetric,
-} from "../types/dashboard";
+import { buildSparklineByMetric, sparklineTotal } from "../lib/dashboard-utils";
+import { buildDashboardCommandActions } from "../lib/dashboard-commands";
 import { Sparkline } from "../components/dashboard/Sparkline";
 import { Skeleton } from "../components/dashboard/Skeleton";
 import { WhatChangedStrip } from "../components/dashboard/WhatChangedStrip";
@@ -46,55 +40,9 @@ import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
 import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
 import { FlagsRow } from "../components/dashboard/FlagsRow";
 import { useToast } from "../components/ui/Toast";
-import {
-  CommandPalette,
-  type CommandAction,
-} from "../components/CommandPalette";
+import { CommandPalette } from "../components/CommandPalette";
 import { useCommandPaletteShortcut } from "../hooks/useCommandPaletteShortcut";
-
-type Card = BaseCard;
-
-interface FollowingCard {
-  id: string;
-  priority: string;
-  cards: Card;
-}
-
-/**
- * Explicit type for rows returned by the Supabase join query
- * `card_follows.select("id, priority, cards (*)")`.
- *
- * `cards` may be `null` when the related card has been deleted or the
- * join yields no match, so consumers must guard before accessing fields.
- */
-interface SupabaseFollowRow {
-  id: string;
-  priority: string;
-  cards: Card | null;
-}
-
-/**
- * TypeScript interface for the get_dashboard_stats RPC response.
- * This interface ensures type safety when calling the Supabase RPC function
- * that consolidates dashboard statistics into a single database call.
- */
-interface DashboardStatsResponse {
-  total_cards: number;
-  new_this_week: number;
-  following: number;
-  workstreams: number;
-}
-
-/** Extract a numeric count from a Supabase head-only response, defaulting to 0 on error. */
-function safeCount(r: { error: unknown; count: number | null }): number {
-  return r.error ? 0 : (r.count ?? 0);
-}
-
-/** Sum a sparkline's daily values; null if the series is absent. */
-function sparklineTotal(series: KpiSparkline | undefined): number | null {
-  if (!series) return null;
-  return series.points.reduce((sum, p) => sum + p.value, 0);
-}
+import { useDashboardData } from "../hooks/useDashboardData";
 
 /**
  * Animates a number from 0 to the target value over the given duration (ms)
@@ -163,33 +111,23 @@ const Dashboard: React.FC = () => {
   const { user } = useAuthContext();
   const { pushToast } = useToast();
   const navigate = useNavigate();
-  const [recentCards, setRecentCards] = useState<Card[]>([]);
-  const [followingCards, setFollowingCards] = useState<FollowingCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const {
+    recentCards,
+    followingCards,
+    stats,
+    qualityDistribution,
+    pendingReviewCount,
+    lensOverview,
+    loading,
+    refreshing,
+    refresh,
+  } = useDashboardData(user?.id);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [pendingReviewCount, setPendingReviewCount] = useState(0);
-  const [stats, setStats] = useState({
-    totalCards: 0,
-    newThisWeek: 0,
-    following: 0,
-    workstreams: 0,
-    updatedThisWeek: 0,
-  });
-  const [qualityDistribution, setQualityDistribution] = useState({
-    high: 0,
-    moderate: 0,
-    low: 0,
-  });
-  const [lensOverview, setLensOverview] = useState<LensOverviewResponse | null>(
-    null,
-  );
 
-  const sparklineByMetric: Partial<Record<LensSparklineMetric, KpiSparkline>> =
-    {};
-  for (const series of lensOverview?.sparklines ?? []) {
-    sparklineByMetric[series.metric] = series;
-  }
+  const sparklineByMetric = useMemo(
+    () => buildSparklineByMetric(lensOverview?.sparklines),
+    [lensOverview?.sparklines],
+  );
 
   // Animated stat card values
   const animatedTotalCards = useCountUp(stats.totalCards);
@@ -198,254 +136,25 @@ const Dashboard: React.FC = () => {
   const animatedWorkstreams = useCountUp(stats.workstreams);
   const animatedUpdatedThisWeek = useCountUp(stats.updatedThisWeek);
 
-  useEffect(() => {
-    // Mount-only fetch. Adding the load* functions to the deps list would
-    // re-fire on every render (they're not memoized), which would thrash
-    // the dashboard with redundant requests.
-    loadDashboardData();
-    loadPendingCount();
-    loadLensOverview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadPendingCount = async () => {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        const count = await fetchPendingCount(session.access_token);
-        setPendingReviewCount(count);
-      }
-    } catch (err) {
-      // Silently fail - non-critical
-      logger.debug("Could not fetch pending count:", err);
-    }
-  };
-
-  const loadLensOverview = async () => {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const overview = await fetchLensOverview(session.access_token, 14);
-      setLensOverview(overview);
-    } catch (err) {
-      // Lens overview is supplementary — render the dashboard regardless.
-      logger.debug("Could not fetch lens overview:", err);
-    }
-  };
-
-  const loadDashboardData = async () => {
-    try {
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-      const [
-        recentCardsResult,
-        followingCardsResult,
-        statsResult,
-        updatedResult,
-        qualityHighResult,
-        qualityModResult,
-        qualityLowResult,
-      ] = await Promise.all([
-        // Recent cards
-        supabase
-          .from("cards")
-          .select("*")
-          .eq("status", "active")
-          .order("created_at", { ascending: false })
-          .limit(6),
-
-        // Following cards (join)
-        supabase
-          .from("card_follows")
-          .select(`id, priority, cards (*)`)
-          .eq("user_id", user?.id),
-
-        // Dashboard stats via RPC
-        supabase.rpc("get_dashboard_stats", { p_user_id: user?.id }),
-
-        // Updated this week
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("updated_at", oneWeekAgo.toISOString()),
-
-        // Quality distribution buckets (high ≥75 / moderate 50-74 / low <50)
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("signal_quality_score", 75),
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .gte("signal_quality_score", 50)
-          .lt("signal_quality_score", 75),
-        supabase
-          .from("cards")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "active")
-          .or("signal_quality_score.lt.50,signal_quality_score.is.null"),
-      ]);
-
-      // Log errors for debugging (non-blocking)
-      if (recentCardsResult.error) {
-        console.error("Error loading recent cards:", recentCardsResult.error);
-      }
-      if (followingCardsResult.error) {
-        console.error(
-          "Error loading following cards:",
-          followingCardsResult.error,
-        );
-      }
-      if (statsResult.error) {
-        console.error("Error loading dashboard stats:", statsResult.error);
-      }
-
-      // --- Recent cards ---
-      setRecentCards(
-        recentCardsResult.error ? [] : (recentCardsResult.data ?? []),
-      );
-
-      // --- Following cards ---
-      // Supabase infers `cards (*)` as `any[]`, but the actual runtime shape
-      // is a single Card object (or null when the join has no match).
-      // We cast through `unknown` to our explicit SupabaseFollowRow type,
-      // then filter out rows where the related card was deleted.
-      const rawFollowing: SupabaseFollowRow[] = followingCardsResult.error
-        ? []
-        : ((followingCardsResult.data ?? []) as unknown as SupabaseFollowRow[]);
-
-      const transformedFollowing: FollowingCard[] = rawFollowing
-        .filter(
-          (row): row is SupabaseFollowRow & { cards: Card } =>
-            row.cards !== null,
-        )
-        .map((row) => ({
-          id: row.id,
-          priority: row.priority,
-          cards: row.cards,
-        }));
-      setFollowingCards(transformedFollowing);
-
-      // --- Stats ---
-      const statsData: DashboardStatsResponse | null = statsResult.error
-        ? null
-        : statsResult.data;
-
-      setStats({
-        totalCards: statsData?.total_cards ?? 0,
-        newThisWeek: statsData?.new_this_week ?? 0,
-        following: statsData?.following ?? 0,
-        workstreams: statsData?.workstreams ?? 0,
-        updatedThisWeek: safeCount(updatedResult),
+  const handleRefresh = useCallback(async () => {
+    const { ok } = await refresh();
+    if (ok) {
+      pushToast("Dashboard refreshed", { variant: "success" });
+    } else {
+      pushToast("Couldn't refresh — try again in a moment", {
+        variant: "error",
       });
-
-      // --- Quality distribution ---
-      setQualityDistribution({
-        high: safeCount(qualityHighResult),
-        moderate: safeCount(qualityModResult),
-        low: safeCount(qualityLowResult),
-      });
-    } catch (error) {
-      console.error("Error loading dashboard data:", error);
-    } finally {
-      setLoading(false);
     }
-  };
-
-  const handleRefresh = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      const results = await Promise.allSettled([
-        loadDashboardData(),
-        loadPendingCount(),
-        loadLensOverview(),
-      ]);
-      const anyFailed = results.some((r) => r.status === "rejected");
-      if (anyFailed) {
-        pushToast("Couldn't refresh — try again in a moment", {
-          variant: "error",
-        });
-      } else {
-        pushToast("Dashboard refreshed", { variant: "success" });
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  }, [refresh, pushToast]);
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   useCommandPaletteShortcut(openPalette);
 
-  const paletteActions: CommandAction[] = [
-    {
-      id: "go-discover",
-      name: "Go to Discover",
-      description: "Browse the signal feed",
-      keywords: ["search", "feed", "signals"],
-      icon: Compass,
-      onActivate: () => navigate("/discover"),
-    },
-    {
-      id: "go-discovery-queue",
-      name: "Go to Discovery Queue",
-      description: "Review pending discoveries",
-      keywords: ["pending", "review", "triage"],
-      icon: Inbox,
-      onActivate: () => navigate("/discover/queue"),
-    },
-    {
-      id: "go-workstreams",
-      name: "Go to Workstreams",
-      description: "Open your research streams",
-      keywords: ["projects", "research"],
-      icon: Layers,
-      onActivate: () => navigate("/workstreams"),
-    },
-    {
-      id: "go-portfolios",
-      name: "Go to Portfolios",
-      description: "Curated card collections",
-      keywords: ["collections", "decks", "export"],
-      icon: BookOpen,
-      onActivate: () => navigate("/portfolios"),
-    },
-    {
-      id: "ask-foresight",
-      name: "Ask Foresight",
-      description: "Open the global chat",
-      keywords: ["chat", "search", "question"],
-      icon: MessageSquare,
-      onActivate: () => navigate("/chat"),
-    },
-    {
-      id: "go-methodology",
-      name: "How does Foresight work?",
-      description: "Read the methodology page",
-      keywords: ["help", "docs", "explain"],
-      icon: BookOpen,
-      onActivate: () => navigate("/methodology"),
-    },
-    {
-      id: "refresh-dashboard",
-      name: "Refresh dashboard",
-      description: "Reload stats, follows, and the lens overview",
-      keywords: ["reload", "update"],
-      icon: RefreshCw,
-      onActivate: () => {
-        void handleRefresh();
-      },
-    },
-  ];
+  const paletteActions = useMemo(
+    () => buildDashboardCommandActions(navigate, handleRefresh),
+    [navigate, handleRefresh],
+  );
 
   if (loading) {
     return (
