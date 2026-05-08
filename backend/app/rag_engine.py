@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1100,22 +1099,27 @@ class RAGEngine:
 
     @staticmethod
     async def web_search(query: str, max_results: int = 5) -> list[dict]:
-        """Search the web via Tavily API. Returns list of {title, url, content, score}."""
-        tavily_key = os.getenv("TAVILY_API_KEY")
-        if not tavily_key:
+        """Search the web via the configured search provider (SearXNG → Serper).
+
+        Returns list of {title, url, content} dicts compatible with the
+        previous Tavily-shaped response.
+        """
+        from app import search_provider
+
+        if not search_provider.is_available():
             return []
         try:
-            from tavily import TavilyClient
-
-            client = TavilyClient(api_key=tavily_key)
-            result = await asyncio.to_thread(
-                client.search,
-                query,
-                max_results=max_results,
-                search_depth="basic",
-                include_answer=False,
+            results = await search_provider.search_web(
+                query, num_results=max_results
             )
-            return result.get("results", [])
+            return [
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "content": r.snippet,
+                }
+                for r in results
+            ]
         except Exception as e:
             logger.warning(f"Web search failed: {e}")
             return []

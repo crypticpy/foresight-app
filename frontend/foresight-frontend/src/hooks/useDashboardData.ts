@@ -17,13 +17,13 @@ import { supabase } from "../App";
 import { fetchPendingCount } from "../lib/discovery-api";
 import { fetchLensOverview } from "../lib/dashboard-api";
 import { logger } from "../lib/logger";
-import type { BaseCard } from "../types/card";
+import type { FullCard } from "../types/card";
 import type { LensOverviewResponse } from "../types/dashboard";
 
 export interface FollowingCard {
   id: string;
   priority: string;
-  cards: BaseCard;
+  cards: FullCard;
 }
 
 /**
@@ -36,7 +36,7 @@ export interface FollowingCard {
 interface SupabaseFollowRow {
   id: string;
   priority: string;
-  cards: BaseCard | null;
+  cards: FullCard | null;
 }
 
 /** Shape of the get_dashboard_stats RPC response. */
@@ -62,7 +62,7 @@ export interface QualityDistribution {
 }
 
 export interface UseDashboardDataResult {
-  recentCards: BaseCard[];
+  recentCards: FullCard[];
   followingCards: FollowingCard[];
   stats: DashboardStats;
   qualityDistribution: QualityDistribution;
@@ -96,7 +96,7 @@ const EMPTY_QUALITY: QualityDistribution = {
 export function useDashboardData(
   userId: string | undefined,
 ): UseDashboardDataResult {
-  const [recentCards, setRecentCards] = useState<BaseCard[]>([]);
+  const [recentCards, setRecentCards] = useState<FullCard[]>([]);
   const [followingCards, setFollowingCards] = useState<FollowingCard[]>([]);
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [qualityDistribution, setQualityDistribution] =
@@ -175,7 +175,9 @@ export function useDashboardData(
       }
 
       setRecentCards(
-        recentCardsResult.error ? [] : (recentCardsResult.data ?? []),
+        recentCardsResult.error
+          ? []
+          : ((recentCardsResult.data ?? []) as unknown as FullCard[]),
       );
 
       // Supabase infers `cards (*)` as `any[]`, but the actual runtime shape
@@ -187,7 +189,7 @@ export function useDashboardData(
 
       const transformedFollowing: FollowingCard[] = rawFollowing
         .filter(
-          (row): row is SupabaseFollowRow & { cards: BaseCard } =>
+          (row): row is SupabaseFollowRow & { cards: FullCard } =>
             row.cards !== null,
         )
         .map((row) => ({

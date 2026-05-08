@@ -4,8 +4,13 @@
  * Displays a signal velocity trend indicator with:
  * - Color-coded pill based on trend direction
  * - Contextual icon (TrendingUp, TrendingDown, Sparkles, etc.)
- * - Tooltip showing velocity score percentage
+ * - Qualitative tooltip describing what the trend means
  * - Dark mode support
+ *
+ * The tooltip is intentionally qualitative (not the raw 0–100 velocity
+ * score), because phrasing like "+80% velocity" on a "stable" pill reads
+ * as a contradiction. The numeric score is already surfaced in the
+ * card's score grid; the badge's job is direction, not magnitude.
  *
  * Matches the visual weight and patterns of HorizonBadge and StageBadge.
  */
@@ -34,7 +39,10 @@ export type VelocityTrend =
 export interface VelocityBadgeProps {
   /** The velocity trend classification */
   trend: VelocityTrend | null | undefined;
-  /** Numeric velocity score (positive = accelerating, negative = decelerating) */
+  /**
+   * Numeric velocity score (0–100). Accepted for backward compatibility with
+   * callers but no longer rendered — surfaced separately in score grids.
+   */
   score?: number;
   /** Additional className */
   className?: string;
@@ -48,6 +56,7 @@ export interface VelocityBadgeProps {
 
 interface TrendConfig {
   label: string;
+  tooltip: string;
   icon: typeof TrendingUp;
   colors: {
     bg: string;
@@ -59,6 +68,7 @@ interface TrendConfig {
 const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
   accelerating: {
     label: "Accelerating",
+    tooltip: "Coverage and momentum are picking up across sources",
     icon: TrendingUp,
     colors: {
       bg: "bg-green-50 dark:bg-green-900/20",
@@ -68,6 +78,7 @@ const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
   },
   stable: {
     label: "Stable",
+    tooltip: "Steady coverage; no major shifts in momentum",
     icon: ArrowRight,
     colors: {
       bg: "bg-gray-100 dark:bg-gray-800/40",
@@ -77,6 +88,7 @@ const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
   },
   decelerating: {
     label: "Slowing",
+    tooltip: "Coverage is winding down; fewer fresh sources lately",
     icon: TrendingDown,
     colors: {
       bg: "bg-amber-50 dark:bg-amber-900/20",
@@ -86,6 +98,7 @@ const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
   },
   emerging: {
     label: "Emerging",
+    tooltip: "Newly surfaced signal — too early to tell direction",
     icon: Sparkles,
     colors: {
       bg: "bg-brand-blue/10 dark:bg-brand-blue/20",
@@ -95,6 +108,7 @@ const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
   },
   stale: {
     label: "Stale",
+    tooltip: "No recent activity — sources have gone quiet",
     icon: Clock,
     colors: {
       bg: "bg-gray-100 dark:bg-gray-800/40",
@@ -105,30 +119,11 @@ const TREND_CONFIG: Record<VelocityTrend, TrendConfig> = {
 };
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-function getTooltipText(trend: VelocityTrend, score?: number): string {
-  if (trend === "emerging") {
-    return "New signal";
-  }
-  if (trend === "stale") {
-    return "No recent activity";
-  }
-  if (score === undefined || score === null) {
-    return TREND_CONFIG[trend].label;
-  }
-  const prefix = score >= 0 ? "+" : "";
-  return `${prefix}${score.toFixed(0)}% velocity`;
-}
-
-// =============================================================================
 // Component
 // =============================================================================
 
 export function VelocityBadge({
   trend,
-  score,
   className,
   showLabel = true,
 }: VelocityBadgeProps) {
@@ -143,7 +138,7 @@ export function VelocityBadge({
   }
 
   const Icon = config.icon;
-  const tooltipText = getTooltipText(trend, score);
+  const tooltipText = config.tooltip;
 
   const badge = (
     <span

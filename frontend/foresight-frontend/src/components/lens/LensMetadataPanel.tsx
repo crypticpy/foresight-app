@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Pencil, Tag } from "lucide-react";
+import { Pencil, Tag, Landmark, Cloud } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { supabase } from "../../App";
 import { useCapabilities } from "../../hooks/useCapabilities";
@@ -35,6 +35,21 @@ import {
 } from "../../lib/lens-api";
 import { LensTaggerModal } from "./LensTaggerModal";
 
+export interface BudgetAssessment {
+  relevance: number;
+  dimensions: string[];
+  magnitude_band: string | null;
+  cycle: string | null;
+  notes: string | null;
+}
+
+export interface ClimateAssessment {
+  relevance: number;
+  drivers: string[];
+  horizon: string | null;
+  notes: string | null;
+}
+
 export interface LensMetadataPanelProps {
   cardId: string;
   primaryPillar: PillarCode | null;
@@ -43,6 +58,10 @@ export interface LensMetadataPanelProps {
   llmAnchorScores: AnchorScores | null;
   llmIssueTags: string[];
   userMetadata: UserMetadata | null;
+  /** From `cards.budget_assessment` JSONB. Read-only display. */
+  budgetAssessment?: BudgetAssessment | null;
+  /** From `cards.climate_assessment` JSONB. Read-only display. */
+  climateAssessment?: ClimateAssessment | null;
   onMetadataChanged?: (next: UserMetadata) => void;
 }
 
@@ -67,6 +86,8 @@ export function LensMetadataPanel({
   llmAnchorScores,
   llmIssueTags,
   userMetadata,
+  budgetAssessment = null,
+  climateAssessment = null,
   onMetadataChanged,
 }: LensMetadataPanelProps) {
   const { accountType } = useCapabilities();
@@ -141,7 +162,12 @@ export function LensMetadataPanel({
     signalType !== null ||
     effectiveSecondary.length > 0 ||
     effectiveTags.length > 0 ||
-    llmAnchorScores !== null;
+    llmAnchorScores !== null ||
+    budgetAssessment !== null ||
+    climateAssessment !== null;
+
+  const budgetRelevance = budgetAssessment?.relevance ?? 0;
+  const climateRelevance = climateAssessment?.relevance ?? 0;
 
   return (
     <>
@@ -288,6 +314,89 @@ export function LensMetadataPanel({
                     </span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {budgetAssessment && (
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1 flex items-center gap-1.5">
+                  <Landmark className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Budget relevance
+                  <span className="ml-auto tabular-nums text-gray-900 dark:text-white">
+                    {budgetRelevance}
+                  </span>
+                </div>
+                <div className="w-full h-1.5 rounded bg-gray-100 dark:bg-dark-surface overflow-hidden mb-1.5">
+                  <div
+                    className="h-full bg-emerald-500"
+                    style={{ width: `${Math.min(100, budgetRelevance)}%` }}
+                  />
+                </div>
+                {budgetAssessment.dimensions.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-1">
+                    {budgetAssessment.dimensions.map((d) => (
+                      <span
+                        key={d}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-800"
+                      >
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {(budgetAssessment.magnitude_band ||
+                  budgetAssessment.cycle) && (
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                    {[budgetAssessment.magnitude_band, budgetAssessment.cycle]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                )}
+                {budgetAssessment.notes && (
+                  <p className="text-[11px] text-gray-600 dark:text-gray-300 mt-1 leading-snug">
+                    {budgetAssessment.notes}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {climateAssessment && (
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1 flex items-center gap-1.5">
+                  <Cloud className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                  Climate relevance
+                  <span className="ml-auto tabular-nums text-gray-900 dark:text-white">
+                    {climateRelevance}
+                  </span>
+                </div>
+                <div className="w-full h-1.5 rounded bg-gray-100 dark:bg-dark-surface overflow-hidden mb-1.5">
+                  <div
+                    className="h-full bg-sky-500"
+                    style={{ width: `${Math.min(100, climateRelevance)}%` }}
+                  />
+                </div>
+                {climateAssessment.drivers.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-1">
+                    {climateAssessment.drivers.map((d) => (
+                      <span
+                        key={d}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-800 border border-sky-200 dark:bg-sky-950/30 dark:text-sky-200 dark:border-sky-800"
+                      >
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {climateAssessment.horizon && (
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Horizon: {climateAssessment.horizon}
+                  </div>
+                )}
+                {climateAssessment.notes && (
+                  <p className="text-[11px] text-gray-600 dark:text-gray-300 mt-1 leading-snug">
+                    {climateAssessment.notes}
+                  </p>
+                )}
               </div>
             )}
           </div>

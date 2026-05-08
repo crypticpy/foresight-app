@@ -47,9 +47,12 @@ logger = logging.getLogger(__name__)
 
 
 def _configure_gpt_researcher_for_openai():
-    """Configure GPT Researcher to use commercial OpenAI."""
+    """Configure GPT Researcher to use commercial OpenAI.
+
+    The premium chat model (`OPENAI_CHAT_MODEL`) is reserved for the user-facing
+    Ask Foresight chat. Backend research/synthesis runs on the agent tier.
+    """
     api_key = os.getenv("OPENAI_API_KEY", "")
-    chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5-2026-04-23")
     chat_mini_model = os.getenv(
         "OPENAI_CHAT_MINI_MODEL", "gpt-5.4-mini-2026-03-17"
     )
@@ -63,7 +66,7 @@ def _configure_gpt_researcher_for_openai():
     gptr_config = {
         # GPT Researcher expects the openai:<model> prefix for commercial OpenAI.
         # SMART = deeper synthesis, STRATEGIC = planning, FAST = high-volume scoring.
-        "SMART_LLM": f"openai:{chat_model}",
+        "SMART_LLM": f"openai:{chat_agent_model}",
         "STRATEGIC_LLM": f"openai:{chat_agent_model}",
         "FAST_LLM": f"openai:{chat_mini_model}",
         "EMBEDDING": f"openai:{embedding_model}",
@@ -73,6 +76,8 @@ def _configure_gpt_researcher_for_openai():
         "FAST_TOKEN_LIMIT": "4000",
         "SMART_TOKEN_LIMIT": "4000",
         "STRATEGIC_TOKEN_LIMIT": "4000",
+        # Tavily/Firecrawl are decommissioned; route gpt-researcher through Serper.
+        "RETRIEVER": "serper",
     }
 
     for key, value in gptr_config.items():
@@ -386,9 +391,8 @@ class ResearchService:
         Returns:
             Tuple of (sources, report_text, cost)
         """
-        # Use Tavily Extract for page scraping — leverages existing Tavily
-        # subscription for cleaner content extraction than BeautifulSoup.
-        os.environ["SCRAPER"] = "tavily_extract"
+        # Tavily Extract is decommissioned — fall back to BeautifulSoup scraping.
+        os.environ["SCRAPER"] = "bs"
 
         researcher = GPTResearcher(
             query=query,

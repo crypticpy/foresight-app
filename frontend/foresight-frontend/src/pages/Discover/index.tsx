@@ -199,6 +199,18 @@ const Discover: React.FC = () => {
 
   // Quick filter from URL params
   const quickFilter = searchParams.get("filter") || "";
+  // Lens filters from URL params (set by Dashboard tiles).
+  // - flag=budget|climate → budget_assessment.relevance / climate_assessment.relevance ≥ 60
+  // - confidence=high → signal_quality_score ≥ 75
+  // - issue_tag=<tag>  → issue_tags array contains tag
+  // - goal=<goal_id>   → csp_goal_ids array contains goal_id
+  const flagFilter = searchParams.get("flag") || "";
+  const confidenceFilter = searchParams.get("confidence") || "";
+  const issueTagFilter = searchParams.get("issue_tag") || "";
+  const goalFilter = searchParams.get("goal") || "";
+  // Optional human label sent alongside ?goal=<uuid> so the banner can show
+  // "CSP goal: CH.1 — Healthy Communities" without a taxonomy lookup.
+  const goalLabel = searchParams.get("goal_label") || "";
 
   // Virtualized refs
   const virtualizedListRef = useRef<VirtualizedListHandle>(null);
@@ -338,12 +350,27 @@ const Discover: React.FC = () => {
     selectedStage,
     selectedHorizon,
     quickFilter,
+    flagFilter,
+    confidenceFilter,
+    issueTagFilter,
+    goalFilter,
     followedCardIds,
     dateFrom,
     dateTo,
     useSemanticSearch,
     sortOption,
   ]);
+
+  // When confidence=high arrives via URL, mirror it onto the local
+  // qualityFilter chip so the UI shows the active state. Doing this in an
+  // effect (instead of deriving qualityFilter from URL directly) keeps the
+  // existing "user clicks a chip" path working and avoids re-architecting
+  // qualityFilter into searchParams.
+  useEffect(() => {
+    if (confidenceFilter === "high" && qualityFilter !== "high") {
+      setQualityFilter("high");
+    }
+  }, [confidenceFilter, qualityFilter]);
 
   const loadDiscoverData = async () => {
     try {
@@ -412,6 +439,16 @@ const Discover: React.FC = () => {
           query = query.gte("novelty_score", debouncedFilters.noveltyMin);
         if (dateFrom) query = query.gte("created_at", dateFrom);
         if (dateTo) query = query.lte("created_at", dateTo);
+        // Lens filters compose with following.
+        if (flagFilter === "budget")
+          query = query.gte("budget_assessment->relevance", 60);
+        if (flagFilter === "climate")
+          query = query.gte("climate_assessment->relevance", 60);
+        if (confidenceFilter === "high")
+          query = query.gte("signal_quality_score", 75);
+        if (issueTagFilter)
+          query = query.contains("issue_tags", [issueTagFilter]);
+        if (goalFilter) query = query.contains("csp_goal_ids", [goalFilter]);
 
         const sortConfig = getSortConfig(sortOption);
         const { data } = await query.order(sortConfig.column, {
@@ -553,6 +590,26 @@ const Discover: React.FC = () => {
         query = query.gte("novelty_score", debouncedFilters.noveltyMin);
       if (dateFrom) query = query.gte("created_at", dateFrom);
       if (dateTo) query = query.lte("created_at", dateTo);
+
+      // Lens filters (Dashboard tile click-throughs).
+      // PostgREST allows JSONB-path filtering via foo->bar; pass the threshold
+      // as a string because PostgREST coerces the JSONB value to numeric for
+      // comparison when the operator is gte.
+      if (flagFilter === "budget") {
+        query = query.gte("budget_assessment->relevance", 60);
+      }
+      if (flagFilter === "climate") {
+        query = query.gte("climate_assessment->relevance", 60);
+      }
+      if (confidenceFilter === "high") {
+        query = query.gte("signal_quality_score", 75);
+      }
+      if (issueTagFilter) {
+        query = query.contains("issue_tags", [issueTagFilter]);
+      }
+      if (goalFilter) {
+        query = query.contains("csp_goal_ids", [goalFilter]);
+      }
 
       const sortConfig = getSortConfig(sortOption);
       const { data } = await query.order(sortConfig.column, {
@@ -829,6 +886,47 @@ const Discover: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Lens filter banner — shows when arrived from a Dashboard tile/anchor/goal click. */}
+        {(flagFilter || confidenceFilter || issueTagFilter || goalFilter) && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-brand-blue/30 bg-brand-blue/5 dark:bg-brand-blue/10 px-3 py-2 text-sm">
+            <Filter className="h-4 w-4 text-brand-blue dark:text-brand-light-blue flex-shrink-0" />
+            <span className="text-gray-800 dark:text-gray-100">
+              Filtered to{" "}
+              <span className="font-semibold">
+                {flagFilter === "budget" && "budget-relevant signals"}
+                {flagFilter === "climate" && "climate-relevant signals"}
+                {confidenceFilter === "high" &&
+                  !flagFilter &&
+                  "high-confidence signals"}
+                {issueTagFilter &&
+                  `issue tag: ${issueTagFilter
+                    .split("_")
+                    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+                    .join(" ")}`}
+                {goalFilter &&
+                  !issueTagFilter &&
+                  (goalLabel ? `CSP goal: ${goalLabel}` : "a CSP goal")}
+              </span>{" "}
+              — {filteredCards.length} match
+              {filteredCards.length === 1 ? "" : "es"}
+            </span>
+            <button
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("flag");
+                next.delete("confidence");
+                next.delete("issue_tag");
+                next.delete("goal");
+                next.delete("goal_label");
+                setSearchParams(next);
+              }}
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand-blue dark:text-brand-light-blue hover:text-brand-dark-blue dark:hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" /> Clear
+            </button>
+          </div>
+        )}
 
         {/* Quick Filter Chips */}
         <div className="flex items-center gap-3 mb-6">

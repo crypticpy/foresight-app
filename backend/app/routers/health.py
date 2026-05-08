@@ -49,9 +49,7 @@ async def health_check():
     # Crawl4AI (always available, no API key needed)
     capabilities.append("web_crawling")
 
-    # Optional paid APIs
-    if os.getenv("TAVILY_API_KEY"):
-        capabilities.append("tavily")
+    # Optional paid APIs (Tavily/Firecrawl decommissioned — not advertised)
     if os.getenv("SERPER_API_KEY"):
         capabilities.append("serper")
     if os.getenv("EXA_API_KEY"):

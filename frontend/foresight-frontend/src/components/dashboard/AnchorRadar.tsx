@@ -28,10 +28,17 @@ export interface AnchorRadarProps {
 }
 
 const RING_PCTS = [0.25, 0.5, 0.75, 1];
-const VIEWBOX = 240;
-const CENTER = VIEWBOX / 2;
+// Viewbox is wider than tall so the side labels (longest is
+// "Sustainability" at 14 chars) have horizontal breathing room without
+// shrinking the chart itself. Width budget: chart radius 86 + label
+// offset 16 + ~80 viewbox-units of label glyph = ~182 from center;
+// 360-wide viewbox (180 each side) gives ~2 units of margin.
+const VIEWBOX_W = 360;
+const VIEWBOX_H = 220;
+const CENTER_X = VIEWBOX_W / 2;
+const CENTER_Y = VIEWBOX_H / 2;
 const CHART_RADIUS = 86;
-const LABEL_RADIUS = 110;
+const LABEL_RADIUS = 102;
 
 interface AxisGeometry {
   code: string;
@@ -49,12 +56,14 @@ interface AxisGeometry {
 }
 
 function shortenAnchorName(name: string): string {
+  // Aim for a single word so labels fit comfortably even on the side
+  // axes where text-anchor=end pushes glyphs toward the viewbox edge.
   // "Sustainability & Resiliency" → "Sustainability"
-  // "Community Trust & Relationships" → "Community Trust"
-  // Else first two words max.
+  // "Community Trust & Relationships" → "Community"
+  // "Proactive Prevention" → "Proactive"
   const ampIdx = name.indexOf("&");
-  if (ampIdx > 0) return name.slice(0, ampIdx).trim();
-  return name.split(/\s+/).slice(0, 2).join(" ");
+  const head = ampIdx > 0 ? name.slice(0, ampIdx).trim() : name;
+  return head.split(/\s+/)[0] ?? head;
 }
 
 function pickTextAnchor(angleRad: number): "start" | "middle" | "end" {
@@ -81,12 +90,12 @@ function buildAxes(data: AnchorOverview[]): AxisGeometry[] {
       shortName: shortenAnchorName(anchor.name),
       meanScore: anchor.mean_score,
       scoredCount: anchor.scored_card_count,
-      axisX: CENTER + cos * CHART_RADIUS,
-      axisY: CENTER + sin * CHART_RADIUS,
-      pointX: CENTER + cos * CHART_RADIUS * ratio,
-      pointY: CENTER + sin * CHART_RADIUS * ratio,
-      labelX: CENTER + cos * LABEL_RADIUS,
-      labelY: CENTER + sin * LABEL_RADIUS,
+      axisX: CENTER_X + cos * CHART_RADIUS,
+      axisY: CENTER_Y + sin * CHART_RADIUS,
+      pointX: CENTER_X + cos * CHART_RADIUS * ratio,
+      pointY: CENTER_Y + sin * CHART_RADIUS * ratio,
+      labelX: CENTER_X + cos * LABEL_RADIUS,
+      labelY: CENTER_Y + sin * LABEL_RADIUS,
       textAnchor: pickTextAnchor(angle),
     };
   });
@@ -97,8 +106,8 @@ function buildHexPath(radiusFactor: number, n: number): string {
   let d = "";
   for (let i = 0; i < n; i += 1) {
     const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
-    const x = CENTER + Math.cos(angle) * CHART_RADIUS * radiusFactor;
-    const y = CENTER + Math.sin(angle) * CHART_RADIUS * radiusFactor;
+    const x = CENTER_X + Math.cos(angle) * CHART_RADIUS * radiusFactor;
+    const y = CENTER_Y + Math.sin(angle) * CHART_RADIUS * radiusFactor;
     d += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
   }
   return d + " Z";
@@ -140,14 +149,19 @@ export function AnchorRadar({
       ? `Strategic anchor radar: ${axes.map((a) => `${a.name} ${a.meanScore.toFixed(0)}`).join(", ")}.`
       : "Strategic anchor radar: no cards scored yet.");
 
+  // The chart's intrinsic aspect ratio is set by the wider viewbox so labels
+  // get horizontal breathing room. We size the rendered SVG by `size`
+  // (vertical axis) and let the width scale to match the viewbox ratio.
+  const renderedWidth = (size * VIEWBOX_W) / VIEWBOX_H;
+
   return (
     <div
       className={cn("relative inline-block", className)}
-      style={{ width: size, height: size }}
+      style={{ width: renderedWidth, height: size }}
     >
       <svg
-        viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-        width={size}
+        viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+        width={renderedWidth}
         height={size}
         role="img"
         aria-label={label}
@@ -169,8 +183,8 @@ export function AnchorRadar({
         {axes.map((ax) => (
           <line
             key={`axis-${ax.code}`}
-            x1={CENTER}
-            y1={CENTER}
+            x1={CENTER_X}
+            y1={CENTER_Y}
             x2={ax.axisX}
             y2={ax.axisY}
             stroke="currentColor"

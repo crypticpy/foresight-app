@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from supabase import Client
 
-from app.openai_provider import get_chat_deployment
+from app.openai_provider import get_chat_agent_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +458,7 @@ Respond as JSON:
 
         try:
             response = self.openai.chat.completions.create(
-                model=get_chat_deployment(),
+                model=get_chat_agent_deployment(),
                 messages=[
                     {
                         "role": "system",

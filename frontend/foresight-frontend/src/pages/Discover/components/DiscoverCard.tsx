@@ -27,6 +27,7 @@ import {
   VelocityBadge,
   type VelocityTrend,
 } from "../../../components/VelocityBadge";
+import { LensFlagChips } from "../../../components/lens/LensFlagChips";
 import { highlightText } from "../../../lib/highlight-utils";
 import { parseStageNumber } from "../../../lib/stage-utils";
 import type { Card } from "../types";
@@ -168,6 +169,11 @@ export const DiscoverCard = React.memo(function DiscoverCard({
                 Scores Unverified
               </span>
             )}
+            <LensFlagChips
+              budgetAssessment={card.budget_assessment ?? null}
+              climateAssessment={card.climate_assessment ?? null}
+              issueTags={card.issue_tags ?? null}
+            />
           </div>
         </div>
         {!compareMode && (

@@ -283,6 +283,10 @@ async def fetch_academic_papers(
     )
     logger.debug(f"arXiv API URL: {url}")
 
+    # Initialize so the AcademicFetchResult can always be constructed,
+    # even when every retry fails before we parse a feed (status 400, 429, etc.)
+    total_results = 0
+
     # Fetch with retry logic
     current_delay = retry_delay
     for attempt in range(retry_count):

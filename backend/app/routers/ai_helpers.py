@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.deps import supabase, get_current_user, _safe_error, limiter
 from app.openai_provider import (
     azure_openai_client,
-    get_chat_deployment,
     get_chat_mini_deployment,
 )
 from app.models.card_creation import (
@@ -201,7 +200,7 @@ async def suggest_keywords(
     try:
         client = azure_openai_client
         response = client.chat.completions.create(
-            model=get_chat_deployment(),
+            model=get_chat_mini_deployment(),
             messages=[
                 {
                     "role": "system",

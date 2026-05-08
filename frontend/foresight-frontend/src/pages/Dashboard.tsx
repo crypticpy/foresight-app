@@ -7,17 +7,16 @@ import React, {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Calendar,
   TrendingUp,
   Eye,
   Plus,
-  Filter,
   Star,
-  Sparkles,
   ArrowRight,
   RefreshCw,
   BookOpen,
   Command,
+  Inbox,
+  ShieldCheck,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { PillarBadge } from "../components/PillarBadge";
@@ -39,6 +38,7 @@ import { CspHeatmap } from "../components/dashboard/CspHeatmap";
 import { SignalTypeDonut } from "../components/dashboard/SignalTypeDonut";
 import { IssueTagCloud } from "../components/dashboard/IssueTagCloud";
 import { FlagsRow } from "../components/dashboard/FlagsRow";
+import { LensFlagChips } from "../components/lens/LensFlagChips";
 import { useToast } from "../components/ui/Toast";
 import { CommandPalette } from "../components/CommandPalette";
 import { useCommandPaletteShortcut } from "../hooks/useCommandPaletteShortcut";
@@ -129,11 +129,24 @@ const Dashboard: React.FC = () => {
     [lensOverview?.sparklines],
   );
 
+  // Flat 7-point zero series — used as a fallback for KPI tiles whose trend
+  // isn't computed by the backend (Total / Pending / High-Confidence). The
+  // Sparkline component renders a flat mid-line when the value-span is zero,
+  // which signals "no trend data yet" without making the tile look broken.
+  const flatSpark = useMemo(() => {
+    const today = new Date();
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - (6 - i));
+      return { date: d.toISOString().slice(0, 10), value: 0 };
+    });
+  }, []);
+
   // Animated stat card values
   const animatedTotalCards = useCountUp(stats.totalCards);
   const animatedNewThisWeek = useCountUp(stats.newThisWeek);
-  const animatedFollowing = useCountUp(stats.following);
-  const animatedWorkstreams = useCountUp(stats.workstreams);
+  const animatedPendingReview = useCountUp(pendingReviewCount);
+  const animatedHighConfidence = useCountUp(qualityDistribution.high);
   const animatedUpdatedThisWeek = useCountUp(stats.updatedThisWeek);
 
   const handleRefresh = useCallback(async () => {
@@ -323,180 +336,129 @@ const Dashboard: React.FC = () => {
       {/* Ask Foresight Bar */}
       <AskForesightBar className="mb-8" />
 
-      {/* Pending Review Alert */}
-      {pendingReviewCount > 0 && (
-        <div className="mb-8">
-          <Link
-            to="/discover/queue"
-            className="block bg-gradient-to-r from-brand-blue/10 to-brand-green/10 dark:from-brand-blue/20 dark:to-brand-green/20 border border-brand-blue/20 dark:border-brand-blue/30 rounded-xl p-4 hover:from-brand-blue/15 hover:to-brand-green/15 dark:hover:from-brand-blue/25 dark:hover:to-brand-green/25 transition-all duration-200 group"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex-shrink-0 p-2 bg-brand-blue/20 dark:bg-brand-blue/30 rounded-full">
-                  <Sparkles className="h-5 w-5 text-brand-blue" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-brand-dark-blue dark:text-white">
-                    {pendingReviewCount} New Discovery
-                    {pendingReviewCount !== 1 ? "ies" : ""} Pending Review
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    AI has found new intelligence signals. Review and approve
-                    them to add to your library.
-                  </p>
-                </div>
-              </div>
-              <div className="flex-shrink-0 flex items-center gap-1 text-brand-blue group-hover:translate-x-1 transition-transform">
-                <span className="text-sm font-medium">Review Now</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </div>
-          </Link>
-        </div>
-      )}
-
       {/* Stats Cards - Clickable KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         <Link
           to="/discover"
           aria-label={`Total Signals: ${stats.totalCards}`}
-          className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-95 active:shadow-inner cursor-pointer group"
+          className="bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:shadow-md px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group flex items-center gap-3"
         >
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <Eye className="h-8 w-8 text-brand-blue group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Total Signals
-              </p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {animatedTotalCards}
-              </p>
-            </div>
+          <Eye className="h-5 w-5 flex-shrink-0 text-brand-blue group-hover:scale-110 transition-transform" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Total Signals
+            </span>
+            <span className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums leading-tight">
+              {animatedTotalCards}
+            </span>
+          </div>
+          <div className="ml-auto h-8 w-16 flex-shrink-0">
+            <Sparkline
+              data={sparklineByMetric.new_cards?.points ?? flatSpark}
+              stroke="#44499C"
+            />
           </div>
         </Link>
 
         <Link
           to="/discover?filter=new"
           aria-label={`New This Week: ${stats.newThisWeek}`}
-          className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-95 active:shadow-inner cursor-pointer group"
+          title={
+            sparklineByMetric.new_cards
+              ? `${sparklineTotal(sparklineByMetric.new_cards) ?? 0} in last 14 days`
+              : undefined
+          }
+          className="bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:shadow-md px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group flex items-center gap-3"
         >
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <TrendingUp className="h-8 w-8 text-brand-green group-hover:scale-110 transition-transform" />
+          <TrendingUp className="h-5 w-5 flex-shrink-0 text-brand-green group-hover:scale-110 transition-transform" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              New This Week
+            </span>
+            <span className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums leading-tight">
+              {animatedNewThisWeek}
+            </span>
+          </div>
+          {sparklineByMetric.new_cards ? (
+            <div className="ml-auto h-8 w-16 flex-shrink-0">
+              <Sparkline
+                data={sparklineByMetric.new_cards.points}
+                stroke="#009F4D"
+              />
             </div>
-            <div className="ml-4 flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                New This Week
-              </p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {animatedNewThisWeek}
-              </p>
-              {sparklineByMetric.new_cards ? (
-                <>
-                  <div className="mt-2 h-6">
-                    <Sparkline
-                      data={sparklineByMetric.new_cards.points}
-                      stroke="#009F4D"
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    {sparklineTotal(sparklineByMetric.new_cards) ?? 0} in last
-                    14 days
-                  </p>
-                </>
-              ) : null}
-            </div>
+          ) : null}
+        </Link>
+
+        <Link
+          to="/discover/queue"
+          aria-label={`Pending Review: ${pendingReviewCount}`}
+          title="Cards awaiting triage"
+          className="bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:shadow-md px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group flex items-center gap-3"
+        >
+          <Inbox className="h-5 w-5 flex-shrink-0 text-extended-purple group-hover:scale-110 transition-transform" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Pending Review
+            </span>
+            <span className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums leading-tight">
+              {animatedPendingReview}
+            </span>
+          </div>
+          <div className="ml-auto h-8 w-16 flex-shrink-0">
+            <Sparkline data={flatSpark} stroke="#A78BFA" />
           </div>
         </Link>
 
         <Link
-          to="/discover?filter=following"
-          aria-label={`Following: ${stats.following}`}
-          className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-95 active:shadow-inner cursor-pointer group"
+          to="/discover?confidence=high"
+          aria-label={`High Confidence: ${qualityDistribution.high}`}
+          title="Cards scoring ≥ 75 on confidence"
+          className="bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:shadow-md px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group flex items-center gap-3"
         >
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <Calendar className="h-8 w-8 text-extended-purple group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="ml-4 flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Following
-              </p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {animatedFollowing}
-              </p>
-              {sparklineByMetric.new_follows ? (
-                <>
-                  <div className="mt-2 h-6">
-                    <Sparkline
-                      data={sparklineByMetric.new_follows.points}
-                      stroke="#9F3CC9"
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    {sparklineTotal(sparklineByMetric.new_follows) ?? 0} in last
-                    14 days
-                  </p>
-                </>
-              ) : null}
-            </div>
+          <ShieldCheck className="h-5 w-5 flex-shrink-0 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              High Confidence
+            </span>
+            <span className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums leading-tight">
+              {animatedHighConfidence}
+            </span>
           </div>
-        </Link>
-
-        <Link
-          to="/workstreams"
-          aria-label={`Workstreams: ${stats.workstreams}`}
-          className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-95 active:shadow-inner cursor-pointer group"
-        >
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <Filter className="h-8 w-8 text-extended-orange group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Workstreams
-              </p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {animatedWorkstreams}
-              </p>
-            </div>
+          <div className="ml-auto h-8 w-16 flex-shrink-0">
+            <Sparkline
+              data={sparklineByMetric.new_classifications?.points ?? flatSpark}
+              stroke="#10B981"
+            />
           </div>
         </Link>
 
         <Link
           to="/discover?filter=updated"
           aria-label={`Updated This Week: ${stats.updatedThisWeek}`}
-          className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-95 active:shadow-inner cursor-pointer group"
+          title={
+            sparklineByMetric.updated_cards
+              ? `${sparklineTotal(sparklineByMetric.updated_cards) ?? 0} in last 14 days`
+              : undefined
+          }
+          className="bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:shadow-md px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer group flex items-center gap-3"
         >
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <RefreshCw className="h-8 w-8 text-amber-500 group-hover:scale-110 transition-transform" />
-            </div>
-            <div className="ml-4 flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Updated This Week
-              </p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                {animatedUpdatedThisWeek}
-              </p>
-              {sparklineByMetric.updated_cards ? (
-                <>
-                  <div className="mt-2 h-6">
-                    <Sparkline
-                      data={sparklineByMetric.updated_cards.points}
-                      stroke="#F59E0B"
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    {sparklineTotal(sparklineByMetric.updated_cards) ?? 0} in
-                    last 14 days
-                  </p>
-                </>
-              ) : null}
-            </div>
+          <RefreshCw className="h-5 w-5 flex-shrink-0 text-amber-500 group-hover:scale-110 transition-transform" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Updated This Week
+            </span>
+            <span className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums leading-tight">
+              {animatedUpdatedThisWeek}
+            </span>
           </div>
+          {sparklineByMetric.updated_cards ? (
+            <div className="ml-auto h-8 w-16 flex-shrink-0">
+              <Sparkline
+                data={sparklineByMetric.updated_cards.points}
+                stroke="#F59E0B"
+              />
+            </div>
+          ) : null}
         </Link>
       </div>
 
@@ -531,83 +493,107 @@ const Dashboard: React.FC = () => {
 
       {/* Strategic Lens — anchor / CSP / signal-type / issue-tag / flag aggregates */}
       {lensOverview ? (
-        <section
-          className="mb-8 grid grid-cols-1 lg:grid-cols-2 gap-6"
-          aria-label="Strategic lens overview"
-        >
-          {/* Anchor radar */}
-          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Strategic Anchor Coverage
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Mean 0–100 score across {lensOverview.classified_card_count} of{" "}
-                {lensOverview.total_active_cards} active cards.
-              </p>
-            </header>
-            <div className="flex justify-center">
-              <AnchorRadar data={lensOverview.anchor_means} size={260} />
+        <>
+          {/* Top row: chart cards */}
+          <section
+            className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-5"
+            aria-label="Strategic lens charts"
+          >
+            {/* Anchor radar */}
+            <div className="bg-white dark:bg-dark-surface rounded-xl shadow-sm p-5 flex flex-col">
+              <header className="mb-2">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Strategic Anchor Coverage
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Mean 0–100 score across {lensOverview.classified_card_count}{" "}
+                  of {lensOverview.total_active_cards} active cards.
+                </p>
+              </header>
+              <div className="flex-1 flex items-center justify-center">
+                <AnchorRadar data={lensOverview.anchor_means} size={240} />
+              </div>
             </div>
-          </div>
 
-          {/* Signal-type donut */}
-          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Signal Type Mix
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Trend, driver, signal, or unclassified — per the foresight
-                vocabulary.
-              </p>
-            </header>
-            <SignalTypeDonut data={lensOverview.signal_type_counts} />
-          </div>
+            {/* Signal-type donut */}
+            <div className="bg-white dark:bg-dark-surface rounded-xl shadow-sm p-5 flex flex-col">
+              <header className="mb-2">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Signal Type Mix
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Trend, driver, signal, or unclassified — per the foresight
+                  vocabulary.
+                </p>
+              </header>
+              <div className="flex-1 flex items-center justify-center">
+                <SignalTypeDonut
+                  data={lensOverview.signal_type_counts}
+                  size={200}
+                />
+              </div>
+            </div>
+          </section>
 
-          {/* CSP coverage heatmap */}
-          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6 lg:col-span-2">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                CSP Goal Coverage
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Active cards per CSP goal, grouped by pillar.
-              </p>
-            </header>
-            <CspHeatmap data={lensOverview.csp_coverage} />
-          </div>
+          {/* Bottom row: CSP coverage (2/3) + flags + tags stack (1/3) */}
+          <section
+            className="mb-8 grid grid-cols-1 lg:grid-cols-3 gap-5"
+            aria-label="Strategic lens overview"
+          >
+            <div className="bg-white dark:bg-dark-surface rounded-xl shadow-sm p-5 lg:col-span-2">
+              <header className="mb-3">
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                  CSP Goal Coverage
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Active cards per CSP goal, grouped by pillar.
+                </p>
+              </header>
+              <CspHeatmap
+                data={lensOverview.csp_coverage}
+                onGoalClick={(goal) =>
+                  navigate(
+                    `/discover?goal=${encodeURIComponent(
+                      goal.goal_id,
+                    )}&goal_label=${encodeURIComponent(
+                      `${goal.code} — ${goal.name}`,
+                    )}`,
+                  )
+                }
+              />
+            </div>
 
-          {/* Issue tag cloud */}
-          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Top Issue Tags
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Most-tagged issues across the corpus (chip size scales with
-                count).
-              </p>
-            </header>
-            <IssueTagCloud data={lensOverview.top_issue_tags} />
-          </div>
+            <div className="flex flex-col gap-5">
+              <div className="bg-white dark:bg-dark-surface rounded-xl shadow-sm p-5">
+                <header className="mb-3">
+                  <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                    Operational Flags
+                  </h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Highly relevant to budget or climate.
+                  </p>
+                </header>
+                <FlagsRow
+                  budgetFlagCount={lensOverview.budget_flag_count}
+                  climateFlagCount={lensOverview.climate_flag_count}
+                  totalActiveCards={lensOverview.total_active_cards}
+                />
+              </div>
 
-          {/* Operational flags */}
-          <div className="bg-white dark:bg-dark-surface rounded-xl shadow p-6">
-            <header className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Operational Flags
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Cards rated highly relevant to budget or climate decisions.
-              </p>
-            </header>
-            <FlagsRow
-              budgetFlagCount={lensOverview.budget_flag_count}
-              climateFlagCount={lensOverview.climate_flag_count}
-            />
-          </div>
-        </section>
+              <div className="bg-white dark:bg-dark-surface rounded-xl shadow-sm p-5">
+                <header className="mb-3">
+                  <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                    Top Issue Tags
+                  </h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Most-tagged issues — size scales with count.
+                  </p>
+                </header>
+                <IssueTagCloud data={lensOverview.top_issue_tags} />
+              </div>
+            </div>
+          </section>
+        </>
       ) : null}
 
       {/* AI-Detected Patterns */}
@@ -799,6 +785,11 @@ const Dashboard: React.FC = () => {
                             showCount={true}
                           />
                         )}
+                      <LensFlagChips
+                        budgetAssessment={card.budget_assessment ?? null}
+                        climateAssessment={card.climate_assessment ?? null}
+                        issueTags={card.issue_tags ?? null}
+                      />
                     </div>
                     <p className="text-gray-600 dark:text-gray-300 mb-3">
                       {card.summary}

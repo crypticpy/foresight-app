@@ -56,6 +56,11 @@ export interface FullCard extends BaseCard {
   is_exploratory?: boolean;
   source_count?: number;
   discovery_metadata?: DiscoveryMetadata;
+  // Lens metadata — present after lens-classification cascade has run.
+  csp_goal_ids?: string[] | null;
+  issue_tags?: string[] | null;
+  budget_assessment?: { relevance: number } | Record<string, unknown> | null;
+  climate_assessment?: { relevance: number } | Record<string, unknown> | null;
 }
 
 /**

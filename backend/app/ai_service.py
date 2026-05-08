@@ -18,8 +18,9 @@ import openai
 
 # Azure OpenAI deployment names
 from app.openai_provider import (
-    get_chat_deployment,
+    get_chat_agent_deployment,
     get_chat_mini_deployment,
+    get_chat_nano_deployment,
     get_embedding_deployment,
 )
 
@@ -294,37 +295,27 @@ def get_word_count(text: str) -> int:
 # Prompts
 # ============================================================================
 
-TRIAGE_PROMPT = """You are a triage analyst for a municipal government horizon scanning system.
+TRIAGE_PROMPT = """Decide if this article is relevant to City of Austin government operations, planning, or strategy.
 
-Evaluate if this article is potentially relevant to city government operations, planning, or strategic interests.
+In-scope topics: city tech & infrastructure, smart-city, municipal policy, climate/sustainability, public safety & emergency management, economic/workforce development, housing & homelessness, transportation & mobility, gov operations & procurement, AI/data in public sector.
 
-Relevant topics include:
-- Technology that could affect city services or operations
-- Infrastructure innovations and smart city developments
-- Policy changes affecting municipalities
-- Climate, sustainability, and environmental resilience
-- Public safety innovations and emergency management
-- Economic development, workforce, and talent trends
-- Housing, homelessness, and affordability initiatives
-- Transportation, mobility, and urban planning
-- Government operations, procurement, and technology modernization
-- AI, data, and digital transformation in public sector
+Title: {title}
+Content: {content}
 
-Article Title: {title}
-Article Content: {content}
+Relevance levels:
+- high   = a city official would act on this
+- medium = useful context, indirectly informs strategy
+- low    = not municipal-government relevant
 
-Rate the relevance level:
-- "high": Directly relevant to municipal government strategy, operations, or planning. A city official would want to know about this.
-- "medium": Tangentially relevant or potentially useful for context. Could inform municipal strategy indirectly.
-- "low": Not relevant to municipal government interests.
+Pillars: CH (Community Health), EW (Economic & Workforce), HG (High-Performing Gov), HH (Homelessness & Housing), MC (Mobility & Infrastructure), PS (Public Safety).
 
-Respond with JSON:
+Return JSON:
 {{
   "relevance_level": "high|medium|low",
-  "is_relevant": true/false,
-  "confidence": 0.0-1.0,
+  "is_relevant": true,
+  "confidence": 0.0,
   "primary_pillar": "CH|EW|HG|HH|MC|PS|null",
-  "reason": "1-2 sentence explanation of why this is or isn't relevant to municipal government"
+  "reason": "one short sentence"
 }}
 """
 
@@ -647,8 +638,9 @@ class AIService:
 
         logger.debug(f"Triaging source: {title[:50]}...")
 
+        # Triage is high-volume, label-only — runs on nano.
         response = self.client.chat.completions.create(
-            model=get_chat_mini_deployment(),
+            model=get_chat_nano_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=200,
@@ -696,8 +688,9 @@ Content excerpt:
 Respond with ONLY the title text, nothing else."""
 
         try:
+            # Title gen is one-shot label work — nano-tier.
             response = self.client.chat.completions.create(
-                model=get_chat_mini_deployment(),
+                model=get_chat_nano_deployment(),
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=50,
                 timeout=15,
@@ -734,7 +727,7 @@ Respond with ONLY the title text, nothing else."""
         logger.info(f"Analyzing source: {title[:50]}...")
 
         response = self.client.chat.completions.create(
-            model=get_chat_deployment(),
+            model=get_chat_agent_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=1500,
@@ -1059,7 +1052,7 @@ Respond with JSON:
         max_tokens = 3000 if is_structured else 1500
 
         response = self.client.chat.completions.create(
-            model=get_chat_deployment(),
+            model=get_chat_agent_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=max_tokens,
@@ -1146,7 +1139,7 @@ Respond with JSON:
 
         try:
             response = self.client.chat.completions.create(
-                model=get_chat_deployment(),
+                model=get_chat_agent_deployment(),
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=2000,
                 timeout=REQUEST_TIMEOUT * 2,
@@ -1482,7 +1475,7 @@ Respond as JSON:
         logger.info(f"Generating comprehensive deep research report for: {card_name}")
 
         response = self.client.chat.completions.create(
-            model=get_chat_deployment(),
+            model=get_chat_agent_deployment(),
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=16384,  # Max output for GPT-4o to ensure complete report with sources
             timeout=REQUEST_TIMEOUT * 3,  # Extended timeout for long report

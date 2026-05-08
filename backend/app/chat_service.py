@@ -24,7 +24,7 @@ from app.rag_engine import RAGEngine
 from app.openai_provider import (
     azure_openai_async_client,
     get_chat_deployment,
-    get_chat_mini_deployment,
+    get_chat_nano_deployment,
     get_reasoning_effort,
 )
 from app.chat_tools import (
@@ -45,6 +45,13 @@ RATE_LIMIT_PER_MINUTE = 20
 MAX_CONVERSATION_MESSAGES = 50  # Max history messages to include
 MAX_CONTEXT_CHARS = 120_000  # Cap RAG context size sent to the LLM
 STREAM_TIMEOUT = 120  # seconds
+
+# Per-user pilot cap. Temporary while we run on commercial OpenAI; flip
+# FORESIGHT_CHAT_QUOTA_ENABLED=false (or remove the block) once we move to
+# Azure infrastructure with managed quotas.
+CHAT_QUOTA_ENABLED = os.getenv("FORESIGHT_CHAT_QUOTA_ENABLED", "true").lower() == "true"
+CHAT_DAILY_SESSIONS = int(os.getenv("FORESIGHT_CHAT_DAILY_SESSIONS", "3"))
+CHAT_TURNS_PER_SESSION = int(os.getenv("FORESIGHT_CHAT_TURNS_PER_SESSION", "5"))
 
 # Tool defs and dispatcher live in chat_tools.py — imported above.
 
@@ -152,6 +159,82 @@ async def _check_rate_limit(supabase: Client, user_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Pilot Chat Quota (sessions/day + turns/session)
+# ---------------------------------------------------------------------------
+
+
+async def _check_chat_quota(
+    supabase: Client,
+    user_id: str,
+    conversation_id: Optional[str],
+) -> Tuple[bool, Optional[str]]:
+    """
+    Pilot-window cap on chat usage. Returns (allowed, reason).
+
+    - If `conversation_id` is provided and belongs to the user, count user-role
+      messages on that conversation. Reject when >= CHAT_TURNS_PER_SESSION.
+    - Otherwise the request will create a new conversation. Count the user's
+      conversations created since UTC midnight today; reject when
+      >= CHAT_DAILY_SESSIONS.
+
+    Fails open on Supabase errors so transient infrastructure issues don't
+    silently lock users out.
+    """
+    if not CHAT_QUOTA_ENABLED:
+        return True, None
+
+    try:
+        # Existing conversation path → cap turns.
+        if conversation_id:
+            owner_check = await asyncio.to_thread(
+                lambda: supabase.table("chat_conversations")
+                .select("id")
+                .eq("id", conversation_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if owner_check.data:
+                turn_result = await asyncio.to_thread(
+                    lambda: supabase.table("chat_messages")
+                    .select("id", count="exact")
+                    .eq("conversation_id", conversation_id)
+                    .eq("role", "user")
+                    .execute()
+                )
+                turns_used = turn_result.count or 0
+                if turns_used >= CHAT_TURNS_PER_SESSION:
+                    return False, (
+                        f"You've reached the {CHAT_TURNS_PER_SESSION}-turn limit on this "
+                        f"chat. Start a new chat to keep going (daily session limit still applies)."
+                    )
+                return True, None
+
+        # New-conversation path → cap sessions/day.
+        midnight_utc = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        sessions_result = await asyncio.to_thread(
+            lambda: supabase.table("chat_conversations")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", midnight_utc)
+            .execute()
+        )
+        sessions_used = sessions_result.count or 0
+        if sessions_used >= CHAT_DAILY_SESSIONS:
+            return False, (
+                f"You've used your {CHAT_DAILY_SESSIONS} chat sessions for today. "
+                f"The limit resets at 00:00 UTC."
+            )
+        return True, None
+
+    except Exception as e:
+        logger.warning(f"Chat quota check failed (allowing request): {e}")
+        return True, None  # Fail open
+
+
+# ---------------------------------------------------------------------------
 # System Prompt Builder
 # ---------------------------------------------------------------------------
 
@@ -216,7 +299,9 @@ Scope behavior: search_signals defaults to the current chat scope (e.g. limited 
 
 When you take an action or pull live data, briefly tell the user what you did. Cite returned results with [N] when they map to the existing source_map; otherwise reference cards by name and link.
 """
-    if os.getenv("TAVILY_API_KEY"):
+    from app import search_provider
+
+    if search_provider.is_available():
         tool_instructions += """
 Web search:
 - web_search(query) — current external information. Up to 2 calls per message. Cite results with [N]. Do NOT use when internal context already answers the question.
@@ -327,17 +412,15 @@ async def _get_or_create_conversation(
             )
             # Fall through to create new one
 
-    # Generate title from first message using mini model
+    # Generate title from first message — nano-tier label task.
     title = first_message[:100]
     try:
         title_response = await azure_openai_async_client.chat.completions.create(
-            model=get_chat_mini_deployment(),
+            model=get_chat_nano_deployment(),
             messages=[
                 {
                     "role": "system",
-                    "content": "Generate a concise title (max 60 chars) for a conversation "
-                    "that starts with this message. Return ONLY the title text, "
-                    "no quotes or extra formatting.",
+                    "content": "Title this chat in ≤60 characters. No quotes, no trailing punctuation.",
                 },
                 {"role": "user", "content": first_message[:500]},
             ],
@@ -476,6 +559,14 @@ async def chat(
             yield _sse_error(
                 "Rate limit exceeded. Please wait a moment before sending another message."
             )
+            return
+
+        # 1b. Pilot quota (sessions/day + turns/session)
+        quota_ok, quota_reason = await _check_chat_quota(
+            supabase_client, user_id, conversation_id
+        )
+        if not quota_ok:
+            yield _sse_error(quota_reason or "Chat quota exceeded.")
             return
 
         # 2. Conversation management
@@ -991,24 +1082,23 @@ async def _generate_suggestions_internal(
         "global": "The user asked a broad strategic question. Suggest questions about specific pillars, emerging patterns, comparisons between trends, or actionable next steps for the city.",
     }
 
-    prompt = f"""Based on this Q&A exchange, suggest exactly 3 follow-up questions the user might ask.
+    prompt = f"""Suggest 3 follow-up questions based on this exchange.
 
-User's question: {last_question[:300]}
-Assistant's response (excerpt): {last_response[:600]}
+Q: {last_question[:300]}
+A: {last_response[:600]}
 
-Context: {scope_hints.get(scope, scope_hints['global'])}
+Scope: {scope_hints.get(scope, scope_hints['global'])}
 
-Return a JSON array of exactly 3 short questions (max 80 chars each).
-Example: ["What are the implementation costs?", "Which cities have adopted this?", "What are the equity implications?"]
+Return JSON: {{"suggestions": ["q1", "q2", "q3"]}}. Each question ≤80 chars.
 """
 
     try:
         response = await azure_openai_async_client.chat.completions.create(
-            model=get_chat_mini_deployment(),
+            model=get_chat_nano_deployment(),
             messages=[
                 {
                     "role": "system",
-                    "content": "You suggest follow-up questions. Respond with a JSON array only.",
+                    "content": 'Respond with JSON only: {"suggestions": ["q1","q2","q3"]}.',
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -1103,12 +1193,11 @@ async def generate_suggestions(
 
     try:
         response = await azure_openai_async_client.chat.completions.create(
-            model=get_chat_mini_deployment(),
+            model=get_chat_nano_deployment(),
             messages=[
                 {
                     "role": "system",
-                    "content": "You generate starter questions for a strategic intelligence chat. "
-                    'Respond with a JSON object: {"suggestions": ["q1", "q2", "q3"]}',
+                    "content": 'Respond with JSON only: {"suggestions": ["q1","q2","q3"]}.',
                 },
                 {"role": "user", "content": prompt},
             ],

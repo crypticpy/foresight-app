@@ -52,7 +52,7 @@ from .models.lens import (
     LensCoreClassification,
     LensTriage,
 )
-from .openai_provider import get_chat_deployment, get_chat_mini_deployment
+from .openai_provider import get_chat_agent_deployment, get_chat_mini_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ Decide two things:
 Card:
 {card_text}
 
-Respond with ONLY a JSON object on this schema (no prose, no markdown fence):
+Return JSON:
 {{
   "signal_type": "trend|driver|signal",
   "secondary_pillars": ["CODE", ...],
@@ -181,7 +181,7 @@ Calibration:
 Card:
 {card_text}
 
-Respond with ONLY a JSON object (no prose, no markdown fence):
+Return JSON:
 {{
   "equity": 0,
   "affordability": 0,
@@ -206,7 +206,7 @@ CSP Measures (code — name):
 Card:
 {card_text}
 
-Respond with ONLY a JSON object on this schema (no prose, no markdown fence):
+Return JSON:
 {{
   "goal_codes":    ["CH.1", ...],
   "measure_codes": ["CH.1.1", ...]
@@ -223,7 +223,7 @@ _DIM_TRIAGE_PROMPT = """For this signal, decide which operational lenses warrant
 Card:
 {card_text}
 
-Respond with ONLY a JSON object (no prose, no markdown fence):
+Return JSON:
 {{
   "needs_budget":     true|false,
   "needs_climate":    true|false,
@@ -244,7 +244,7 @@ Constraints:
 - magnitude_band: one of {{"<$100K", "$100K-$1M", "$1M-$10M", "$10M-$100M", ">$100M"}} or null if unclear
 - cycle:          one of {{"FY26", "FY27", "FY28", "biennial", "one-time", "ongoing"}} or null if unclear
 
-Respond with ONLY a JSON object (no prose, no markdown fence):
+Return JSON:
 {{
   "relevance":      0,
   "dimensions":     [],
@@ -269,7 +269,7 @@ Constraints:
   - medium   = 2-10 years
   - long     = 10+ years
 
-Respond with ONLY a JSON object (no prose, no markdown fence):
+Return JSON:
 {{
   "relevance": 0,
   "drivers":   [],
@@ -290,7 +290,7 @@ Most signals match 0-2 tags. Pick a tag only when the signal is clearly *about* 
 Card:
 {card_text}
 
-Respond with ONLY a JSON object (no prose, no markdown fence):
+Return JSON:
 {{
   "tags": []
 }}
@@ -521,7 +521,7 @@ class LensClassificationService:
                 "(already given)", f"(already classified as: {primary_pillar})"
             )
         response = await self.client.chat.completions.create(
-            model=get_chat_deployment(),
+            model=get_chat_agent_deployment(),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=400,
