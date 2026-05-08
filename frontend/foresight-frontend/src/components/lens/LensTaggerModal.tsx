@@ -163,10 +163,26 @@ export function LensTaggerModal({
 
   /**
    * Compute the patch payload by diffing edited values against the LLM layer.
-   * Adds go to `added`, removals from the LLM set go to `removed`. For
-   * anchor scores we always write the override blob (small; simpler).
+   * Adds go to `added`, removals from the LLM set go to `removed`. The
+   * anchor_scores override is only written when the user-edited values
+   * actually diverge from the LLM-derived ones — saving an unchanged
+   * modal doesn't create a persistent override, and pushing sliders back
+   * to LLM values clears any existing one.
    */
   const buildPatch = () => {
+    const llmScores = llmAnchorScores ?? zeroAnchors();
+    const anchorsDifferFromLLM = ANCHOR_CODES.some(
+      (code) => anchorScores[code] !== llmScores[code],
+    );
+    const nextOverrides: Record<string, unknown> = {
+      ...(userMetadata?.overrides ?? {}),
+    };
+    if (anchorsDifferFromLLM) {
+      nextOverrides.anchor_scores = anchorScores;
+    } else {
+      delete nextOverrides.anchor_scores;
+    }
+
     const llmSecondarySet = new Set(llmSecondaryPillars);
     const editedSecondarySet = new Set(secondaryPillars);
     const secondaryAdded = secondaryPillars.filter(
@@ -182,10 +198,7 @@ export function LensTaggerModal({
     const tagsRemoved = llmIssueTags.filter((t) => !editedTagSet.has(t));
 
     return {
-      overrides: {
-        ...(userMetadata?.overrides ?? {}),
-        anchor_scores: anchorScores,
-      },
+      overrides: nextOverrides,
       added: {
         ...(userMetadata?.added ?? {}),
         secondary_pillars: secondaryAdded,
