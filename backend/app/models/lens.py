@@ -213,6 +213,10 @@ class ClimateAssessment(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+USER_METADATA_OVERRIDE_KEYS = {"anchor_scores", "signal_type"}
+USER_METADATA_ARRAY_KEYS = {"secondary_pillars", "issue_tags"}
+
+
 class UserMetadata(BaseModel):
     """User-driven layer on top of LLM-derived metadata.
 
@@ -222,6 +226,10 @@ class UserMetadata(BaseModel):
     - Scalar fields:   ``overrides[field] ?? llm_value[field]``
     - Object fields:   per-key override (e.g. anchor_scores)
     - Array fields:    ``(llm_value ∪ added[field]) - removed[field]``
+
+    Inner keys are restricted to a closed vocabulary so a write of
+    ``removed.csp_goal_ids`` (interpreted by ``effective_array`` for *any*
+    field name) can't be used to hide LLM-derived values from other readers.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -229,6 +237,28 @@ class UserMetadata(BaseModel):
     overrides: Dict[str, Any] = Field(default_factory=dict)
     added: Dict[str, List[str]] = Field(default_factory=dict)
     removed: Dict[str, List[str]] = Field(default_factory=dict)
+
+    @field_validator("overrides")
+    @classmethod
+    def _validate_override_keys(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        bad = sorted(k for k in value if k not in USER_METADATA_OVERRIDE_KEYS)
+        if bad:
+            raise ValueError(
+                f"Unsupported override key(s): {bad}. "
+                f"Allowed: {sorted(USER_METADATA_OVERRIDE_KEYS)}"
+            )
+        return value
+
+    @field_validator("added", "removed")
+    @classmethod
+    def _validate_array_keys(cls, value: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        bad = sorted(k for k in value if k not in USER_METADATA_ARRAY_KEYS)
+        if bad:
+            raise ValueError(
+                f"Unsupported array-overlay key(s): {bad}. "
+                f"Allowed: {sorted(USER_METADATA_ARRAY_KEYS)}"
+            )
+        return value
 
     @classmethod
     def empty(cls) -> "UserMetadata":

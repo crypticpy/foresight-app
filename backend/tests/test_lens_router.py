@@ -309,6 +309,46 @@ def test_patch_user_metadata_succeeds_for_admin(monkeypatch):
     assert result.added == {"issue_tags": ["climate_change"]}
 
 
+def test_patch_body_rejects_unknown_added_key():
+    """`added` only accepts keys in the closed vocabulary set.
+
+    Without this gate, a paid user could write ``removed.csp_goal_ids``
+    and ``effective_array`` would interpret it for any field name —
+    hiding LLM-derived values from every other reader of the card.
+    """
+    from pydantic import ValidationError
+
+    from app.routers.lens import UserMetadataPatch
+
+    with pytest.raises(ValidationError):
+        UserMetadataPatch(added={"csp_goal_ids": ["fake-uuid"]})
+
+    with pytest.raises(ValidationError):
+        UserMetadataPatch(removed={"csp_goal_ids": ["fake-uuid"]})
+
+
+def test_patch_body_rejects_unknown_override_key():
+    """`overrides` only accepts keys in the closed vocabulary set."""
+    from pydantic import ValidationError
+
+    from app.routers.lens import UserMetadataPatch
+
+    with pytest.raises(ValidationError):
+        UserMetadataPatch(overrides={"signal_type_other": "trend"})
+
+
+def test_patch_body_accepts_documented_keys():
+    """Smoke-test: the documented closed-vocabulary keys validate fine."""
+    from app.routers.lens import UserMetadataPatch
+
+    body = UserMetadataPatch(
+        overrides={"anchor_scores": {"equity": 50}, "signal_type": "trend"},
+        added={"secondary_pillars": ["MC"], "issue_tags": ["climate_change"]},
+        removed={"secondary_pillars": [], "issue_tags": []},
+    )
+    assert body.overrides is not None and "anchor_scores" in body.overrides
+
+
 def test_patch_user_metadata_merge_semantics(monkeypatch):
     """Buckets not present in the patch body are not modified."""
     from app.routers.lens import UserMetadataPatch, patch_card_user_metadata

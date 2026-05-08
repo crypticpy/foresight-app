@@ -14,11 +14,15 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.authz import require_card_research_access, require_paid_user
 from app.deps import _safe_error, get_current_user, supabase
-from app.models.lens import UserMetadata
+from app.models.lens import (
+    USER_METADATA_ARRAY_KEYS,
+    USER_METADATA_OVERRIDE_KEYS,
+    UserMetadata,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["lens"])
@@ -145,6 +149,11 @@ class UserMetadataPatch(BaseModel):
     Each top-level key, when present, fully replaces that bucket on the
     server-side ``user_metadata`` blob. Buckets not present are left alone.
     Pass an empty dict (``{"added": {}}``) to clear a bucket.
+
+    Inner keys are restricted to the closed vocabulary documented on
+    ``UserMetadata`` so a malicious or buggy client can't pollute the
+    JSONB blob with unknown fields or use ``removed[any_field]`` to
+    hide LLM-derived values from other readers.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -152,6 +161,36 @@ class UserMetadataPatch(BaseModel):
     overrides: Optional[Dict[str, Any]] = None
     added: Optional[Dict[str, List[str]]] = None
     removed: Optional[Dict[str, List[str]]] = None
+
+    @field_validator("overrides")
+    @classmethod
+    def _patch_override_keys(
+        cls, value: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if value is None:
+            return value
+        bad = sorted(k for k in value if k not in USER_METADATA_OVERRIDE_KEYS)
+        if bad:
+            raise ValueError(
+                f"Unsupported override key(s): {bad}. "
+                f"Allowed: {sorted(USER_METADATA_OVERRIDE_KEYS)}"
+            )
+        return value
+
+    @field_validator("added", "removed")
+    @classmethod
+    def _patch_array_keys(
+        cls, value: Optional[Dict[str, List[str]]]
+    ) -> Optional[Dict[str, List[str]]]:
+        if value is None:
+            return value
+        bad = sorted(k for k in value if k not in USER_METADATA_ARRAY_KEYS)
+        if bad:
+            raise ValueError(
+                f"Unsupported array-overlay key(s): {bad}. "
+                f"Allowed: {sorted(USER_METADATA_ARRAY_KEYS)}"
+            )
+        return value
 
 
 @router.patch("/cards/{card_id}/user-metadata", response_model=UserMetadata)
