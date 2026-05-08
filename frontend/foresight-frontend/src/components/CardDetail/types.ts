@@ -70,6 +70,44 @@ export interface Card {
     | "declining"
     | "unknown"
     | null;
+  // ──────────────────────────────────────────────────────────────────
+  // Lens architecture fields (see docs/18_FEATURE_Lens_Architecture.md).
+  // All optional — populated by the classifier cascade; older cards
+  // may have null/empty values until backfilled.
+  // ──────────────────────────────────────────────────────────────────
+  signal_type?: "trend" | "driver" | "signal" | null;
+  secondary_pillars?: string[];
+  anchor_scores?: {
+    equity: number;
+    affordability: number;
+    innovation: number;
+    sustainability_resiliency: number;
+    proactive_prevention: number;
+    community_trust: number;
+  } | null;
+  csp_goal_ids?: string[];
+  csp_measure_ids?: string[];
+  issue_tags?: string[];
+  budget_assessment?: {
+    relevance: number;
+    dimensions: string[];
+    magnitude_band: string | null;
+    cycle: string | null;
+    notes: string | null;
+  } | null;
+  climate_assessment?: {
+    relevance: number;
+    drivers: string[];
+    horizon: string | null;
+    notes: string | null;
+  } | null;
+  user_metadata?: {
+    overrides: Record<string, unknown>;
+    added: Record<string, string[]>;
+    removed: Record<string, string[]>;
+  } | null;
+  classifier_version?: string | null;
+  classified_at?: string | null;
 }
 
 /**

@@ -804,11 +804,62 @@ class DiscoveryService:
         self.ai_service = AIService(openai_client)
         self.query_generator = QueryGenerator()
 
+        # Lens classification cascade — lazy-instantiated on first new card so
+        # discovery runs that only enrich existing cards don't pay the
+        # CSP-taxonomy load.
+        self._lens_service = None
+
+        # Strong refs for fire-and-forget cascade tasks. The event loop
+        # only holds weak refs to bare ``asyncio.create_task`` results, so
+        # without this set the task can be GC'd mid-flight and silently
+        # leave a card unclassified. Tasks remove themselves on done.
+        self._pending_lens_tasks: set[asyncio.Task] = set()
+
         # Import research service components for search execution
         # Using dynamic import to avoid circular dependencies
         from .research_service import ResearchService
 
         self.research_service = ResearchService(supabase, openai_client)
+
+    def _get_lens_service(self):
+        """Lazy-init the lens cascade. Uses the async OpenAI client."""
+        if self._lens_service is None:
+            from .lens_classification_service import LensClassificationService
+            from .openai_provider import openai_async_client
+
+            self._lens_service = LensClassificationService(
+                openai_async_client, self.supabase
+            )
+        return self._lens_service
+
+    async def _classify_card_lens(
+        self, card_id: str, card_dict: Dict[str, Any]
+    ) -> None:
+        """Run the lens cascade for a freshly-created card. Best-effort.
+
+        Writes only LLM-derived columns; ``user_metadata`` is untouched. A
+        failure here never propagates — discovery returning a card without
+        lens metadata is recoverable via ``/admin/classify/backfill``.
+        """
+        try:
+            service = self._get_lens_service()
+            result = await service.classify_card(card_dict)
+            update = result.to_card_update()
+            # Only stamp classified_at when classifier_version is set —
+            # which the cascade only does when all required stages
+            # succeeded. On partial failure, leave timestamps null so the
+            # backfill picks the card up again next pass.
+            if update.get("classifier_version") is not None:
+                update["classified_at"] = service.now_iso()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .update(update)
+                .eq("id", card_id)
+                .execute()
+            )
+            logger.debug("Lens cascade complete for card %s", card_id)
+        except Exception as exc:
+            logger.warning("Lens cascade failed for card %s: %s", card_id, exc)
 
     # ========================================================================
     # Main Entry Point
@@ -3341,6 +3392,30 @@ class DiscoveryService:
                     event_type="discovered",
                     description="Card discovered via automated scan",
                 )
+
+                # Lens cascade — fire-and-forget. The cascade does ~5 LLM
+                # round-trips (~$0.006/card); blocking would inflate the
+                # discovery-run wall clock by minutes. The admin backfill
+                # endpoint is the recovery path if any card slips through.
+                primary_pillar_code = (
+                    analysis.pillars[0] if analysis.pillars else None
+                )
+                lens_task = asyncio.create_task(
+                    self._classify_card_lens(
+                        card_id,
+                        {
+                            "name": analysis.suggested_card_name,
+                            "summary": analysis.summary,
+                            "pillar_id": convert_pillar_id(primary_pillar_code)
+                            if primary_pillar_code
+                            else None,
+                            "horizon": analysis.horizon,
+                            "stage_id": stage_id,
+                        },
+                    )
+                )
+                self._pending_lens_tasks.add(lens_task)
+                lens_task.add_done_callback(self._pending_lens_tasks.discard)
 
                 return card_id
 
