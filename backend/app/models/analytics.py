@@ -364,26 +364,150 @@ class PillarAffinity(BaseModel):
 class PersonalStats(BaseModel):
     """
     Personal analytics for the current user.
-    
+
     Contains user-specific statistics and comparisons to community.
     """
     # User's follows
     following: List[UserFollowItem] = Field(default_factory=list)
     total_following: int = Field(0, ge=0)
-    
+
     # Engagement comparison
     engagement: UserEngagementComparison = Field(default_factory=UserEngagementComparison)
-    
+
     # Pillar preferences
     pillar_affinity: List[PillarAffinity] = Field(default_factory=list)
-    
+
     # Social discovery - what others are following that user isn't
     popular_not_followed: List[PopularCard] = Field(default_factory=list)
     recently_popular: List[PopularCard] = Field(default_factory=list)
-    
+
     # User activity
     workstream_count: int = Field(0, ge=0)
     cards_in_workstreams: int = Field(0, ge=0)
-    
+
     # Metadata
+    generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# ============================================================================
+# Lens Overview (dashboard v2)
+# ============================================================================
+# Aggregated views over the lens metadata introduced in PR #26
+# (`docs/18_FEATURE_Lens_Architecture.md`). Drives the strategic-anchor radar,
+# CSP coverage heatmap, signal-type donut, issue-tag chips, and the KPI
+# sparklines + 24h delta strip on the dashboard.
+#
+# All counts respect each card's *effective* metadata — i.e. LLM-derived
+# values overlaid with the requesting user's `cards.user_metadata`. A user's
+# own anchor overrides and tag edits show up in their aggregate views.
+
+
+class AnchorOverview(BaseModel):
+    """Aggregate of one Strategic Anchor across the active card corpus."""
+
+    code: str = Field(..., description="Anchor code, e.g. 'equity'")
+    name: str = Field(..., description="Display name")
+    mean_score: float = Field(
+        0.0,
+        ge=0.0,
+        le=100.0,
+        description="Mean 0-100 effective score across cards with anchor data",
+    )
+    high_score_count: int = Field(
+        0,
+        ge=0,
+        description="Cards whose effective score for this anchor is >= 70",
+    )
+    scored_card_count: int = Field(
+        0,
+        ge=0,
+        description="Cards that contributed to the mean (i.e. have anchor_scores set)",
+    )
+
+
+class CspGoalCoverage(BaseModel):
+    """One CSP goal with its current card count for the heatmap."""
+
+    goal_id: str = Field(..., description="csp_goals.id (UUID)")
+    code: str = Field(..., description="Pillar.Goal code, e.g. 'CH.1'")
+    name: str
+    pillar_code: str = Field(..., pattern=r"^[A-Z]{2}$")
+    card_count: int = Field(0, ge=0)
+
+
+class SignalTypeMix(BaseModel):
+    """One slice of the signal-type mix donut."""
+
+    signal_type: str = Field(
+        ...,
+        description="One of: 'trend', 'driver', 'signal', 'unclassified'",
+    )
+    count: int = Field(0, ge=0)
+
+
+class IssueTagCount(BaseModel):
+    """One chip in the issue-tag cloud."""
+
+    tag: str
+    count: int = Field(0, ge=0)
+
+
+class SparklinePoint(BaseModel):
+    """One day on a sparkline."""
+
+    date: str = Field(..., description="ISO date YYYY-MM-DD")
+    value: int = Field(0, ge=0)
+
+
+class KpiSparkline(BaseModel):
+    """Daily values for one dashboard KPI over the request window.
+
+    ``metric`` is one of: ``new_cards``, ``updated_cards``,
+    ``new_classifications``, ``new_follows``, ``new_workstream_cards``.
+    """
+
+    metric: str
+    points: List[SparklinePoint] = Field(default_factory=list)
+
+
+class LensDelta24h(BaseModel):
+    """Counts of things that happened in the last 24 hours.
+
+    ``new_follows`` and ``new_workstream_cards`` are scoped to the
+    requesting user; the other two are system-wide.
+    """
+
+    new_cards: int = Field(0, ge=0)
+    new_classifications: int = Field(0, ge=0)
+    new_follows: int = Field(0, ge=0)
+    new_workstream_cards: int = Field(0, ge=0)
+
+
+class LensOverviewResponse(BaseModel):
+    """Aggregated lens metadata for the dashboard v2."""
+
+    # Snapshot aggregates
+    anchor_means: List[AnchorOverview] = Field(default_factory=list)
+    csp_coverage: List[CspGoalCoverage] = Field(default_factory=list)
+    signal_type_counts: List[SignalTypeMix] = Field(default_factory=list)
+    top_issue_tags: List[IssueTagCount] = Field(default_factory=list)
+    budget_flag_count: int = Field(
+        0, ge=0, description="Active cards with budget_assessment.relevance >= 60"
+    )
+    climate_flag_count: int = Field(
+        0, ge=0, description="Active cards with climate_assessment.relevance >= 60"
+    )
+
+    # Time series + change
+    sparklines: List[KpiSparkline] = Field(default_factory=list)
+    delta_24h: LensDelta24h = Field(default_factory=LensDelta24h)
+
+    # Coverage stats — useful for empty-state messaging in the UI
+    classified_card_count: int = Field(
+        0, ge=0, description="Active cards with non-null classifier_version"
+    )
+    total_active_cards: int = Field(0, ge=0)
+
+    # Echo of the request window for client labelling
+    period_days: int = Field(14, ge=1)
     generated_at: datetime = Field(default_factory=datetime.now)
