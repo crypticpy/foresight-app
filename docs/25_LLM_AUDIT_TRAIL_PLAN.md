@@ -137,7 +137,8 @@ table or new provider wrapper.
 - Scheduler runs the abuse monitor every 30 min when
   `FORESIGHT_ENABLE_SCHEDULER=true`.
 - Tests: 32 passing (pattern unit, abuse aggregation + dedupe,
-  router list/detail/patch + RBAC, chat-path block + clean-path pass).
+  router list/detail/patch + RBAC + iso8601 tz-required,
+  chat-path block + clean-path pass).
 
 ## Per-phase workflow (the review cadence the user asked for)
 

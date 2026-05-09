@@ -109,6 +109,8 @@ class _Query:
         self._store = store
         self._eq: dict[str, Any] = {}
         self._gte: dict[str, Any] = {}
+        # PostgREST jsonb-path filters, e.g. metadata->>window_start.
+        self._json_eq: dict[str, Any] = {}
         self._select_only = False
 
     def select(self, *_a, **_kw):
@@ -123,13 +125,18 @@ class _Query:
         self._gte[k] = v
         return self
 
+    def filter(self, k, op, v):
+        # We only mock the operations actually used by the production code.
+        if op == "eq" and "->>" in k:
+            self._json_eq[k] = v
+        else:
+            raise NotImplementedError(f"filter({k!r}, {op!r}) not mocked")
+        return self
+
     def limit(self, _n):
         return self
 
     def insert(self, row):
-        # The real DB sets created_at via DEFAULT NOW(); mirror that so the
-        # dedupe query (gte created_at, window_start) can match.
-        row.setdefault("created_at", "2026-05-09T12:30:00+00:00")
         self._store.setdefault(self._name, []).append(row)
         return _InsertExec(row)
 
@@ -147,6 +154,15 @@ class _Query:
             for k, v in self._gte.items():
                 rv = r.get(k)
                 if rv is None or rv < v:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            for path, expected in self._json_eq.items():
+                # Format: "<column>->><key>"
+                column, _, key = path.partition("->>")
+                value = r.get(column) or {}
+                if not isinstance(value, dict) or value.get(key) != expected:
                     ok = False
                     break
             if ok:

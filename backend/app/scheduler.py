@@ -4,6 +4,7 @@ Contains all nightly / weekly background jobs and the scheduler lifecycle
 helpers ``start_scheduler()`` and ``shutdown_scheduler()``.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -340,10 +341,10 @@ async def run_abuse_monitor():
     """
     logger.info("Starting scheduled abuse monitor pass...")
     try:
-        findings = detect_user_abuse(supabase)
+        findings = await asyncio.to_thread(detect_user_abuse, supabase)
         if not findings:
             return
-        inserted = record_abuse_findings(supabase, findings)
+        inserted = await asyncio.to_thread(record_abuse_findings, supabase, findings)
         logger.info(
             "Abuse monitor: %d finding(s), %d new incident(s) inserted",
             len(findings),

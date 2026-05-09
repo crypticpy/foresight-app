@@ -257,9 +257,11 @@ def record_abuse_findings(
             }
         )
 
-    # Cheap dedupe: skip insert if a matching (user_id, pattern_id, window_start)
-    # already exists. We do this in Python rather than SQL because the supabase
-    # client doesn't expose a clean "ON CONFLICT DO NOTHING" for jsonb fields.
+    # Cheap dedupe: skip insert if a matching
+    # (user_id, pattern_id, metadata.window_start) already exists. Matching on
+    # the stored window boundary (not on row creation time) means a re-run with
+    # the same window doesn't double-write, even if the previous run's row was
+    # written some time ago.
     inserted = 0
     for row in rows:
         try:
@@ -269,8 +271,9 @@ def record_abuse_findings(
                 .eq("kind", "abuse")
                 .eq("user_id", row["user_id"])
                 .eq("pattern_id", row["pattern_id"])
-                .gte(
-                    "created_at",
+                .filter(
+                    "metadata->>window_start",
+                    "eq",
                     row["metadata"]["window_start"],
                 )
                 .limit(1)

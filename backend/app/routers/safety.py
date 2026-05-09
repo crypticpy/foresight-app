@@ -32,15 +32,29 @@ _SEVERITIES = ("low", "medium", "high")
 
 
 def _validate_iso8601(value: Optional[str], field_name: str) -> Optional[str]:
+    """Validate the value is an ISO8601 timestamp with explicit timezone.
+
+    Naive timestamps (no offset, no ``Z``) are rejected — the database stores
+    UTC and we don't want to silently treat the caller's wall clock as UTC.
+    The returned value is normalized to UTC ISO8601.
+    """
     if not value:
         return None
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise HTTPException(
             status_code=400, detail=f"Invalid ISO8601 timestamp for {field_name}"
         ) from exc
-    return value
+    if parsed.tzinfo is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Timestamp for {field_name} must include a timezone offset "
+                "(e.g. '2026-05-09T00:00:00Z' or '+00:00')"
+            ),
+        )
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 @router.get("/admin/safety/incidents")

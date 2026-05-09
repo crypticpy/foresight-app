@@ -300,6 +300,15 @@ def test_list_validates_iso8601(monkeypatch):
     assert exc.value.status_code == 400
 
 
+def test_list_rejects_naive_iso8601(monkeypatch):
+    """Naive timestamps (no tz offset) must be rejected, not silently UTC."""
+    _patch_supabase(monkeypatch, [])
+    with pytest.raises(HTTPException) as exc:
+        _call_list(monkeypatch, from_ts="2026-05-09T12:00:00")
+    assert exc.value.status_code == 400
+    assert "timezone" in (exc.value.detail or "").lower()
+
+
 def test_detail_404_when_missing(monkeypatch):
     _patch_supabase(monkeypatch, [])
     with pytest.raises(HTTPException) as exc:

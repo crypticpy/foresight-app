@@ -2628,11 +2628,14 @@ class DiscoveryService:
                 # Prompt-injection scan (PR 5): patterns are cheap, the LLM
                 # call we'd make next is not. On any HIGH-severity match,
                 # log incidents to safety_incidents and drop the source so
-                # its payload never reaches the triage LLM.
-                if source.content:
-                    matches = scan_for_injection(
-                        f"{source.title or ''}\n\n{source.content}"
-                    )
+                # its payload never reaches the triage LLM. We scan title +
+                # content (the title alone flows into the auto-pass path
+                # below, so a malicious title must still be blocked).
+                scan_target = "\n\n".join(
+                    part for part in (source.title, source.content) if part
+                )
+                if scan_target:
+                    matches = scan_for_injection(scan_target)
                     blocking = [m for m in matches if m.is_blocking]
                     if blocking:
                         injection_block_count += 1
@@ -2641,7 +2644,8 @@ class DiscoveryService:
                             source.url or "(no url)",
                             [m.pattern_id for m in blocking],
                         )
-                        record_injection_incident(
+                        await asyncio.to_thread(
+                            record_injection_incident,
                             self.supabase,
                             matches=blocking,
                             source="discovery",

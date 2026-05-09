@@ -3199,7 +3199,8 @@ const AdminConsole: React.FC = () => {
   const [llmAuditExportOpen, setLlmAuditExportOpen] = useState(false);
   const [llmAuditExporting, setLlmAuditExporting] = useState(false);
 
-  // Safety tab state
+  // Safety tab state. Offset is intentionally separate from filters so the
+  // fetch effect doesn't retrigger when pagination advances.
   const [safetyData, setSafetyData] = useState<SafetyIncidentsResponse | null>(
     null,
   );
@@ -3207,8 +3208,8 @@ const AdminConsole: React.FC = () => {
   const [safetyFilters, setSafetyFilters] = useState<SafetyIncidentsParams>({
     disposition: "open",
     limit: 50,
-    offset: 0,
   });
+  const [safetyOffset, setSafetyOffset] = useState(0);
   const [safetyExpandedId, setSafetyExpandedId] = useState<string | null>(null);
   const [safetyAbuseScanRunning, setSafetyAbuseScanRunning] = useState(false);
   const safetyGenRef = useRef(0);
@@ -3605,7 +3606,7 @@ const AdminConsole: React.FC = () => {
         });
         if (safetyGenRef.current !== myGen) return;
         setSafetyData(data);
-        setSafetyFilters((prev) => ({ ...prev, offset: data.offset }));
+        setSafetyOffset(data.offset);
       } catch (err) {
         if (safetyGenRef.current !== myGen) return;
         setError(
@@ -3632,14 +3633,14 @@ const AdminConsole: React.FC = () => {
         const token = await getToken();
         await updateSafetyIncident(token, incidentId, { disposition });
         setNotice(`Marked incident as ${disposition.replace("_", " ")}`);
-        loadSafetyIncidents(safetyFilters.offset ?? 0);
+        loadSafetyIncidents(safetyOffset);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to update incident",
         );
       }
     },
-    [loadSafetyIncidents, safetyFilters.offset],
+    [loadSafetyIncidents, safetyOffset],
   );
 
   const handleSafetyAbuseScan = useCallback(async () => {
@@ -4011,16 +4012,17 @@ const AdminConsole: React.FC = () => {
               data={safetyData}
               loading={safetyLoading}
               filters={safetyFilters}
+              offset={safetyOffset}
               expandedId={safetyExpandedId}
               abuseScanRunning={safetyAbuseScanRunning}
               onFilterChange={(next) =>
-                setSafetyFilters((prev) => ({ ...prev, ...next, offset: 0 }))
+                setSafetyFilters((prev) => ({ ...prev, ...next }))
               }
               onExpandToggle={(id) =>
                 setSafetyExpandedId((prev) => (prev === id ? null : id))
               }
               onPageChange={(offset) => loadSafetyIncidents(offset)}
-              onRefresh={() => loadSafetyIncidents(safetyFilters.offset ?? 0)}
+              onRefresh={() => loadSafetyIncidents(safetyOffset)}
               onDisposition={handleSafetyDisposition}
               onRunAbuseScan={handleSafetyAbuseScan}
             />
@@ -4338,6 +4340,7 @@ function SafetyTab({
   data,
   loading,
   filters,
+  offset,
   expandedId,
   abuseScanRunning,
   onFilterChange,
@@ -4350,6 +4353,7 @@ function SafetyTab({
   data: SafetyIncidentsResponse | null;
   loading: boolean;
   filters: SafetyIncidentsParams;
+  offset: number;
   expandedId: string | null;
   abuseScanRunning: boolean;
   onFilterChange: (next: Partial<SafetyIncidentsParams>) => void;
@@ -4360,7 +4364,6 @@ function SafetyTab({
   onRunAbuseScan: () => void;
 }) {
   const items = data?.items ?? [];
-  const offset = data?.offset ?? 0;
   const nextOffset = data?.next_offset ?? null;
   const openCounts = data?.open_counts ?? { high: 0, medium: 0, low: 0 };
 
@@ -4599,7 +4602,16 @@ function SafetyIncidentRow({
     <>
       <tr
         onClick={onExpandToggle}
-        className="cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onExpandToggle();
+          }
+        }}
+        tabIndex={0}
+        role="button"
+        aria-expanded={expanded}
+        className="cursor-pointer hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-blue/40 dark:hover:bg-dark-surface-hover"
       >
         <td className="whitespace-nowrap px-4 py-2 text-xs text-gray-600 dark:text-gray-300">
           {formatDate(row.created_at)}
