@@ -589,6 +589,10 @@ class ForesightWorker:
             ]
             max_queries = schedule.get("max_search_queries_per_run") or 20
             process_rss = schedule.get("process_rss_first", True)
+            # PR E adds per-schedule scope. Older rows (pre-extension) won't
+            # have these keys; we treat absence as "no override".
+            categories_to_scan = schedule.get("categories_to_scan") or None
+            source_ids = schedule.get("source_ids") or None
 
             # Claim the schedule by advancing next_run_at (optimistic lock)
             next_run = now + timedelta(hours=interval_hours)
@@ -675,13 +679,21 @@ class ForesightWorker:
                 # Step 3: Create a discovery run with the scheduled pillars
                 try:
                     run_id = str(uuid.uuid4())
-                    config_data = {
+                    config_data: dict = {
                         "max_queries_per_run": max_queries,
                         "max_sources_total": max_queries * 10,  # ~10 sources per query
                         "auto_approve_threshold": 0.95,
                         "pillars_filter": pillars,
                         "dry_run": False,
                     }
+                    # Per-schedule scope overrides (PR E). Stored on the run
+                    # so operators can see what scope a scheduled run used,
+                    # even when the discovery service eventually consumes
+                    # them in a follow-up.
+                    if categories_to_scan:
+                        config_data["categories_to_scan"] = categories_to_scan
+                    if source_ids:
+                        config_data["source_ids"] = source_ids
 
                     run_record = {
                         "id": run_id,
