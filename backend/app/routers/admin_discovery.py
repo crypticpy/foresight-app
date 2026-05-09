@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import ipaddress
 import logging
+import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
@@ -24,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, HttpUrl
 
 from app.authz import require_admin
-from app.deps import get_current_user, supabase
+from app.deps import get_current_user, limiter, supabase
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin-discovery"])
@@ -46,6 +48,22 @@ CategoryLiteral = Literal[
 # keep the admin's "Add source" click responsive, long enough to clear
 # slow but legitimate feeds.
 RSS_VALIDATION_TIMEOUT_S = 8.0
+
+
+async def _safe_audit_log(**kwargs: Any) -> None:
+    """Best-effort audit log — never fail the primary request.
+
+    The audit table is non-critical metadata; if it's down or its schema
+    has drifted, the underlying source mutation has already succeeded and
+    the operator should still see a 2xx. Swallow + log the error rather
+    than turning a successful mutation into a 500.
+    """
+    from app.routers.admin import _log_admin_action
+
+    try:
+        await asyncio.to_thread(_log_admin_action, **kwargs)
+    except Exception:
+        logger.exception("Audit log write failed (non-fatal)")
 
 
 class AdminSourceCreate(BaseModel):
@@ -112,7 +130,7 @@ def _aggregate_health_stats(
             },
         )
         bucket["items"] += 1
-        if row.get("triage_passed"):
+        if row.get("triage_is_relevant"):
             bucket["passed"] += 1
         seen_at = row.get("created_at")
         if seen_at and (not bucket["last_seen"] or seen_at > bucket["last_seen"]):
@@ -214,7 +232,7 @@ async def list_admin_sources(
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         discovered = (
             supabase.table("discovered_sources")
-            .select("url,triage_passed,created_at")
+            .select("url,triage_is_relevant,created_at")
             .gte("created_at", seven_days_ago)
             .limit(5000)
             .execute()
@@ -233,6 +251,54 @@ async def list_admin_sources(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_MAX_VALIDATION_REDIRECTS = 5
+
+
+def _assert_public_host(url: str) -> None:
+    """Reject URLs that resolve to a non-public IP.
+
+    Guards the validator's outbound HEAD/GET against SSRF: an admin token
+    must not be reusable to probe loopback, link-local, RFC1918, or
+    multicast endpoints from the backend's network. Public DNS names that
+    resolve to private space are also rejected, so a CNAME like
+    ``internal.example.com → 10.0.0.1`` cannot slip past the check.
+
+    Only ``http(s)`` schemes are allowed; raises ``HTTPException(400)``.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400, detail="Only http(s) URLs are allowed."
+        )
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status_code=400, detail="URL is missing a host.")
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Could not resolve host: {exc}"
+        )
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Host {host} resolves to a non-public address ({ip}).",
+            )
+
+
 async def _validate_rss_url(url: str) -> None:
     """Confirm a URL responds with 2xx/3xx before adding it as an RSS feed.
 
@@ -241,18 +307,38 @@ async def _validate_rss_url(url: str) -> None:
     with a human-readable reason. We do NOT verify XML payload here —
     feedparser inside the discovery pipeline handles that, and a feed that
     serves valid XML but a 200 HTML fallback would still pass triage.
+
+    Redirects are walked manually (rather than letting httpx follow them) so
+    every hop is re-validated against the public-host check. This blocks
+    SSRF attacks where the initial URL is public but redirects to an
+    internal host.
     """
+    current_url = url
     try:
         async with httpx.AsyncClient(
-            timeout=RSS_VALIDATION_TIMEOUT_S, follow_redirects=True
+            timeout=RSS_VALIDATION_TIMEOUT_S, follow_redirects=False
         ) as client:
-            try:
-                response = await client.head(url)
-                if response.status_code == 405:
-                    response = await client.get(url)
-            except httpx.UnsupportedProtocol as exc:
+            for _ in range(_MAX_VALIDATION_REDIRECTS + 1):
+                _assert_public_host(current_url)
+                try:
+                    response = await client.head(current_url)
+                    if response.status_code == 405:
+                        response = await client.get(current_url)
+                except httpx.UnsupportedProtocol as exc:
+                    raise HTTPException(
+                        status_code=400, detail=f"Unsupported URL scheme: {exc}"
+                    )
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("location")
+                    if not location:
+                        break
+                    current_url = str(httpx.URL(current_url).join(location))
+                    continue
+                break
+            else:
                 raise HTTPException(
-                    status_code=400, detail=f"Unsupported URL scheme: {exc}"
+                    status_code=400,
+                    detail="Source URL exceeded the redirect limit.",
                 )
         if response.status_code >= 400:
             raise HTTPException(
@@ -271,6 +357,7 @@ async def _validate_rss_url(url: str) -> None:
 
 
 @router.post("/admin/sources", status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def create_admin_source(
     request: Request,
     body: AdminSourceCreate,
@@ -328,11 +415,9 @@ async def create_admin_source(
         raise HTTPException(status_code=500, detail=message)
 
     # Audit-log the create. Done after the insert so we never write an
-    # audit row for a failed mutation.
-    from app.routers.admin import _log_admin_action
-
-    await asyncio.to_thread(
-        _log_admin_action,
+    # audit row for a failed mutation. Best-effort: a failure here must not
+    # turn a successful insert into a 500.
+    await _safe_audit_log(
         actor=current_user,
         action="admin.source.create",
         target_type="source",
@@ -345,6 +430,7 @@ async def create_admin_source(
 
 
 @router.patch("/admin/sources/{source_id}")
+@limiter.limit("30/minute")
 async def update_admin_source(
     request: Request,
     source_id: str,
@@ -397,10 +483,7 @@ async def update_admin_source(
         logger.exception("Failed to update admin source")
         raise HTTPException(status_code=500, detail=str(e))
 
-    from app.routers.admin import _log_admin_action
-
-    await asyncio.to_thread(
-        _log_admin_action,
+    await _safe_audit_log(
         actor=current_user,
         action="admin.source.update",
         target_type="source",
@@ -413,6 +496,7 @@ async def update_admin_source(
 
 
 @router.delete("/admin/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
 async def delete_admin_source(
     request: Request,
     source_id: str,
@@ -451,10 +535,7 @@ async def delete_admin_source(
         logger.exception("Failed to delete admin source")
         raise HTTPException(status_code=500, detail=str(e))
 
-    from app.routers.admin import _log_admin_action
-
-    await asyncio.to_thread(
-        _log_admin_action,
+    await _safe_audit_log(
         actor=current_user,
         action="admin.source.delete",
         target_type="source",

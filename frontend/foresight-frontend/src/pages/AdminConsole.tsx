@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -498,27 +504,45 @@ function OperationsTab({
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {rows.slice(0, 12).map((row, index) => {
               const id = typeof row.id === "string" ? row.id : null;
-              const clickable = id && options.onClickRow;
+              const clickable = Boolean(id && options.onClickRow);
+              const onActivate =
+                clickable && id ? () => options.onClickRow?.(id) : undefined;
               return (
                 <tr
                   key={String(row.id || index)}
                   className={cn(
                     clickable &&
-                      "cursor-pointer transition-colors hover:bg-brand-blue/5 dark:hover:bg-brand-blue/10",
+                      "cursor-pointer transition-colors hover:bg-brand-blue/5 focus-within:bg-brand-blue/5 dark:hover:bg-brand-blue/10 dark:focus-within:bg-brand-blue/10",
                   )}
-                  onClick={
-                    clickable && id ? () => options.onClickRow?.(id) : undefined
-                  }
+                  // The row is the click target so the entire row hits the inspect handler,
+                  // but `<tr role="button">` is invalid (the implicit `row` role wins). The
+                  // accessible activator is the focusable button in the first cell below;
+                  // the row click is mouse-only sugar.
+                  onClick={onActivate}
                 >
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
-                      {String(
-                        row.task_type || row.triggered_by || row.id || "Job",
-                      )}
-                      {clickable && (
+                    {clickable ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onActivate?.();
+                        }}
+                        className="-mx-1 flex w-full items-center gap-2 rounded px-1 text-left font-medium text-gray-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue dark:text-white"
+                        aria-label={`Inspect run ${String(row.id || "")}`}
+                      >
+                        {String(
+                          row.task_type || row.triggered_by || row.id || "Job",
+                        )}
                         <Telescope className="h-3.5 w-3.5 text-gray-400" />
-                      )}
-                    </div>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
+                        {String(
+                          row.task_type || row.triggered_by || row.id || "Job",
+                        )}
+                      </div>
+                    )}
                     <div className="text-xs text-gray-500">
                       {formatDate(row.created_at || row.started_at)}
                     </div>
@@ -3109,6 +3133,16 @@ const AdminConsole: React.FC = () => {
   >([]);
   const [coverageDays, setCoverageDays] = useState<CoverageWindowDays>(7);
   const [coverageLoading, setCoverageLoading] = useState(false);
+  // True once we've attempted (success or fail) the lazy coverage load for
+  // this session. Without this flag, a failed fetch would leave
+  // `pillarCoverage === null` and the open-tab effect would keep re-firing,
+  // hammering the API in a tight retry loop.
+  const [coverageAttempted, setCoverageAttempted] = useState(false);
+  // Per-window generation token. Used to skip a slow response when the
+  // operator has already moved on to a different window — without this,
+  // a 7d response landing after the user clicked 30d would clobber the
+  // newer data.
+  const coverageGenRef = useRef(0);
   const [inspectRunId, setInspectRunId] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [schedulesLoading, setSchedulesLoading] = useState(false);
@@ -3328,27 +3362,38 @@ const AdminConsole: React.FC = () => {
   // avoid re-counting workstream scans for a UI-only knob.
   const loadCoverage = useCallback(async (days: CoverageWindowDays) => {
     setCoverageLoading(true);
+    const gen = ++coverageGenRef.current;
     try {
       const token = await getToken();
       const [pillars, workstreams] = await Promise.all([
         fetchPillarCoverage(token, days),
         fetchWorkstreamCoverage(token),
       ]);
+      // Stale-overwrite guard: bail if the operator changed windows mid-flight.
+      if (gen !== coverageGenRef.current) return;
       setPillarCoverage(pillars);
       setWorkstreamCoverage(workstreams.items);
     } catch (err) {
+      if (gen !== coverageGenRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load coverage");
     } finally {
+      // Always flip the attempted flag so a failed first load can't loop.
+      // The `gen` check below is intentionally absent: the cleanup is per-
+      // attempt, not per-window.
+      setCoverageAttempted(true);
       setCoverageLoading(false);
     }
   }, []);
 
   const loadPillarOnly = useCallback(async (days: CoverageWindowDays) => {
+    const gen = ++coverageGenRef.current;
     try {
       const token = await getToken();
       const pillars = await fetchPillarCoverage(token, days);
+      if (gen !== coverageGenRef.current) return;
       setPillarCoverage(pillars);
     } catch (err) {
+      if (gen !== coverageGenRef.current) return;
       setError(
         err instanceof Error ? err.message : "Failed to refresh pillar window",
       );
@@ -3357,11 +3402,14 @@ const AdminConsole: React.FC = () => {
 
   // Lazy-load coverage when the tab is first opened. Subsequent window
   // changes hit loadPillarOnly so we don't re-aggregate the WS table.
+  // Gate on `coverageAttempted` (not `pillarCoverage === null`) so a
+  // failed initial fetch doesn't keep re-firing this effect — otherwise
+  // a 5xx upstream would put us in a tight retry loop.
   useEffect(() => {
     if (
       isAdmin &&
       activeTab === "coverage" &&
-      pillarCoverage === null &&
+      !coverageAttempted &&
       !coverageLoading
     ) {
       loadCoverage(coverageDays);
@@ -3369,7 +3417,7 @@ const AdminConsole: React.FC = () => {
   }, [
     isAdmin,
     activeTab,
-    pillarCoverage,
+    coverageAttempted,
     coverageLoading,
     coverageDays,
     loadCoverage,

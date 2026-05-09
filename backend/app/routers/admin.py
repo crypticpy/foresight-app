@@ -278,9 +278,13 @@ DISCOVERY_PRESETS: dict[str, dict[str, Any]] = {
         "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL": 200,
         "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": 8,
         "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": 0.97,
-        "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": 0.90,
-        "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": 0.80,
-        "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": 0.85,
+        # 0.92 matches the historical strict dedup threshold documented in
+        # CLAUDE.md. Operators picking the conservative preset get the
+        # tightest dedup we ship; balanced/aggressive trade dedup strictness
+        # for enrichment recall.
+        "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": 0.92,
+        "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": 0.82,
+        "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": 0.88,
     },
     "balanced": {
         "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN": 100,
