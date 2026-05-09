@@ -34,6 +34,7 @@ from app.chat_tools import (
     get_all_tools,
     progress_label,
 )
+from app.usage_telemetry import augment_usage_context
 
 logger = logging.getLogger(__name__)
 
@@ -583,6 +584,13 @@ async def chat(
             logger.error(f"Failed to manage conversation: {e}")
             yield _sse_error("Failed to create or find conversation. Please try again.")
             return
+
+        # Tag every downstream LLM call with the now-known conversation_id
+        # (needed for the admin replay endpoint). The router-level wrap
+        # already set user_id; this layer adds conversation_id once it is
+        # known. Title-generation for brand-new conversations runs *before*
+        # this point and is intentionally not associated with a conversation.
+        augment_usage_context(conversation_id=conv_id)
 
         # Store the user message
         await _store_message(supabase_client, conv_id, "user", message)

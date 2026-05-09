@@ -1,11 +1,15 @@
 """Admin usage telemetry endpoints for pilot cost benchmarking."""
 
 import asyncio
+import csv
+import io
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.authz import require_admin
 from app.deps import get_current_user, limiter, supabase
@@ -190,7 +194,7 @@ _LIST_COLUMNS = (
     "id,created_at,user_id,provider,model,operation,request_kind,status,"
     "error_type,input_tokens,output_tokens,cached_input_tokens,total_tokens,"
     "estimated_cost_usd,latency_ms,run_id,task_id,card_id,workstream_id,"
-    "redaction_flags"
+    "conversation_id,redaction_flags"
 )
 
 
@@ -329,3 +333,279 @@ async def get_usage_event(
     if row is None:
         raise HTTPException(status_code=404, detail="Usage event not found")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Replay — interleave a chat conversation's stored messages with every LLM
+# call recorded under the same conversation_id. Powers the admin "Replay"
+# view in the LLM-activity tab and the FOIA-style timeline export.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/usage/conversations/{conversation_id}/replay")
+@limiter.limit("60/minute")
+async def replay_conversation(
+    request: Request,
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return an ordered timeline for ``conversation_id``.
+
+    Joins ``chat_messages`` (the user/assistant turns the operator typed and
+    received) with ``llm_usage_events`` (every LLM call recorded under that
+    conversation, including RAG query expansion, reranking, and suggestions).
+    Items are sorted by ``created_at`` ASC; ties break by kind so messages
+    sort before the LLM events that produced them. Returns 404 if no
+    conversation row exists with that id.
+    """
+    require_admin(current_user)
+
+    def _fetch():
+        conv_resp = (
+            supabase.table("chat_conversations")
+            .select("id,user_id,scope,scope_id,title,created_at,updated_at")
+            .eq("id", conversation_id)
+            .limit(1)
+            .execute()
+        )
+        conv = (conv_resp.data or [None])[0]
+        if conv is None:
+            return None, [], []
+        messages = (
+            supabase.table("chat_messages")
+            .select("id,role,content,citations,tokens_used,model,created_at")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=False)
+            .execute()
+            .data
+            or []
+        )
+        events = (
+            supabase.table("llm_usage_events")
+            .select("*")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=False)
+            .execute()
+            .data
+            or []
+        )
+        return conv, messages, events
+
+    conv, messages, events = await asyncio.to_thread(_fetch)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    timeline: list[dict[str, Any]] = []
+    for msg in messages:
+        timeline.append(
+            {
+                "kind": "message",
+                "created_at": msg.get("created_at"),
+                "data": msg,
+            }
+        )
+    for evt in events:
+        timeline.append(
+            {
+                "kind": "llm_event",
+                "created_at": evt.get("created_at"),
+                "data": evt,
+            }
+        )
+    # Stable sort by (created_at, kind) — message before llm_event on ties so
+    # the user message reads before the calls it triggered.
+    timeline.sort(
+        key=lambda item: (item["created_at"] or "", 0 if item["kind"] == "message" else 1)
+    )
+    return {
+        "conversation": conv,
+        "timeline": timeline,
+        "message_count": len(messages),
+        "llm_event_count": len(events),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Export — bulk CSV / JSON download of LLM events matching a filter snapshot.
+# Streams the rows directly so we never materialise the whole result in
+# memory; capped at 10k rows per export to keep run-time bounded.
+# ---------------------------------------------------------------------------
+
+
+_EXPORT_HARD_CAP = 10_000
+
+
+class _ExportFilters(BaseModel):
+    operation: Optional[str] = None
+    request_kind: Optional[str] = None
+    user_id: Optional[str] = None
+    model: Optional[str] = None
+    status: Optional[str] = None
+    from_ts: Optional[str] = Field(default=None, alias="from")
+    to_ts: Optional[str] = Field(default=None, alias="to")
+    min_cost: Optional[float] = Field(default=None, ge=0)
+    audited_only: bool = False
+    conversation_id: Optional[str] = None
+    format: str = Field(default="csv", pattern="^(csv|json)$")
+    limit: int = Field(default=_EXPORT_HARD_CAP, ge=1, le=_EXPORT_HARD_CAP)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+_EXPORT_COLUMNS = (
+    "id",
+    "created_at",
+    "user_id",
+    "conversation_id",
+    "provider",
+    "model",
+    "operation",
+    "request_kind",
+    "status",
+    "error_type",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "total_tokens",
+    "estimated_cost_usd",
+    "latency_ms",
+    "run_id",
+    "task_id",
+    "card_id",
+    "workstream_id",
+    "redaction_flags",
+    "prompt_excerpt",
+    "response_excerpt",
+)
+
+
+@router.post("/admin/usage/export")
+@limiter.limit("12/minute")
+async def export_usage_events(
+    request: Request,
+    filters: _ExportFilters,
+    current_user: dict = Depends(get_current_user),
+):
+    """Stream a CSV or NDJSON export of LLM usage events.
+
+    Reuses the same filter shape as ``/admin/usage/events`` plus an optional
+    ``conversation_id`` and ``format`` knob. Includes the redacted
+    ``prompt_excerpt`` / ``response_excerpt`` columns so the file is
+    self-contained for FOIA fulfilment. Capped at ``_EXPORT_HARD_CAP`` rows.
+    """
+    require_admin(current_user)
+    from_ts = _validate_iso8601(filters.from_ts, "from")
+    to_ts = _validate_iso8601(filters.to_ts, "to")
+
+    def _fetch_all() -> list[dict[str, Any]]:
+        # PostgREST hard-caps a single query at 1k rows by default, so paginate
+        # until we hit the requested limit or exhaust the result set.
+        chunk = 1000
+        collected: list[dict[str, Any]] = []
+        offset = 0
+        while len(collected) < filters.limit:
+            remaining = filters.limit - len(collected)
+            page_size = min(chunk, remaining)
+            query = (
+                supabase.table("llm_usage_events")
+                .select(",".join(_EXPORT_COLUMNS))
+                .order("created_at", desc=True)
+                .order("id", desc=True)
+                .range(offset, offset + page_size - 1)
+            )
+            if filters.operation:
+                query = query.eq("operation", filters.operation)
+            if filters.request_kind:
+                query = query.eq("request_kind", filters.request_kind)
+            if filters.user_id:
+                query = query.eq("user_id", filters.user_id)
+            if filters.model:
+                query = query.eq("model", filters.model)
+            if filters.status:
+                query = query.eq("status", filters.status)
+            if filters.conversation_id:
+                query = query.eq("conversation_id", filters.conversation_id)
+            if from_ts:
+                query = query.gte("created_at", from_ts)
+            if to_ts:
+                query = query.lt("created_at", to_ts)
+            if filters.min_cost is not None:
+                query = query.gte("estimated_cost_usd", filters.min_cost)
+            if filters.audited_only:
+                ops = ",".join(_AUDITED_OPERATIONS)
+                kinds = ",".join(_AUDITED_REQUEST_KINDS)
+                query = query.or_(
+                    f"operation.in.({ops}),request_kind.in.({kinds})"
+                )
+            page = query.execute().data or []
+            collected.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return collected
+
+    rows = await asyncio.to_thread(_fetch_all)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    if filters.format == "json":
+        import json as _json
+
+        def _stream_ndjson():
+            for row in rows:
+                yield _json.dumps(row, default=str) + "\n"
+
+        return StreamingResponse(
+            _stream_ndjson(),
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="llm-audit-{stamp}.ndjson"'
+                )
+            },
+        )
+
+    def _csv_safe(value: Any) -> Any:
+        # CSV-injection mitigation: spreadsheet apps interpret cells starting
+        # with =, +, -, @, TAB, or CR as formulas. Prefix a single quote so
+        # the cell renders as a literal string. prompt_excerpt /
+        # response_excerpt are user-influenced so this matters even though we
+        # redact PII upstream.
+        if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + value
+        return value
+
+    def _stream_csv():
+        buffer = io.StringIO()
+        writer = csv.DictWriter(
+            buffer,
+            fieldnames=_EXPORT_COLUMNS,
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for row in rows:
+            flat = {col: row.get(col) for col in _EXPORT_COLUMNS}
+            # CSV cells can't hold lists/dicts cleanly — stringify them, then
+            # escape any string cell that begins with a formula trigger.
+            for key, value in list(flat.items()):
+                if isinstance(value, (list, dict)):
+                    flat[key] = _csv_safe(str(value))
+                else:
+                    flat[key] = _csv_safe(value)
+            writer.writerow(flat)
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(
+        _stream_csv(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="llm-audit-{stamp}.csv"'
+            )
+        },
+    )

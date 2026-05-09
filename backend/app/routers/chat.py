@@ -23,6 +23,7 @@ from app.chat_service import (
     generate_suggestions as chat_generate_suggestions,
 )
 from app.openai_provider import azure_openai_async_client, get_chat_mini_deployment
+from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -231,16 +232,25 @@ async def chat_endpoint(
         mention_dicts = [m.model_dump() for m in request.mentions]
 
     async def event_generator():
-        async for event in chat_service_chat(
-            scope=request.scope,
-            scope_id=request.scope_id,
-            message=request.message,
-            conversation_id=request.conversation_id,
+        # Don't seed conversation_id here — request.conversation_id is
+        # caller-supplied and may be stale or owned by a different user.
+        # `chat_service.chat()` calls augment_usage_context(conversation_id=…)
+        # only after `_get_or_create_conversation` returns a verified id, so
+        # the title-gen / RAG / completion calls all attribute correctly.
+        with llm_usage_context(
             user_id=user_id,
-            supabase_client=supabase,
-            mentions=mention_dicts,
+            operation="chat.message",
         ):
-            yield event
+            async for event in chat_service_chat(
+                scope=request.scope,
+                scope_id=request.scope_id,
+                message=request.message,
+                conversation_id=request.conversation_id,
+                user_id=user_id,
+                supabase_client=supabase,
+                mentions=mention_dicts,
+            ):
+                yield event
 
     return StreamingResponse(
         event_generator(),

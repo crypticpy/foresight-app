@@ -86,6 +86,20 @@ def get_usage_context() -> dict[str, Any]:
     return dict(_usage_context.get())
 
 
+def augment_usage_context(**fields: Any) -> None:
+    """Merge fields into the current task's usage context.
+
+    Unlike :func:`llm_usage_context`, no context manager / cleanup is
+    involved — the values persist for the remainder of the current async
+    task. Use this when a context value (e.g. ``conversation_id``) only
+    becomes known after the outer :func:`llm_usage_context` block has been
+    entered. ``None`` values are ignored so callers can pass-through.
+    """
+    current = _usage_context.get()
+    merged = {**current, **{k: v for k, v in fields.items() if v is not None}}
+    _usage_context.set(merged)
+
+
 def _get_supabase_client() -> Client | None:
     global _supabase_client
     if _supabase_client is not None:
@@ -368,6 +382,7 @@ def record_llm_usage_event(
         "task_id": context.get("task_id"),
         "card_id": context.get("card_id"),
         "workstream_id": context.get("workstream_id"),
+        "conversation_id": context.get("conversation_id"),
         "metadata": {**(metadata or {}), **context.get("metadata", {})},
     }
     # Defer audit-payload building (and the cached admin_settings lookup it
