@@ -393,7 +393,9 @@ async def list_admin_users(
 
 
 @router.patch("/admin/users/{user_id}")
+@limiter.limit("30/minute")
 async def update_admin_user(
+    request: Request,
     user_id: str,
     update: AdminUserUpdate,
     current_user: dict = Depends(get_current_user),
@@ -433,7 +435,16 @@ async def list_admin_settings(current_user: dict = Depends(get_current_user)):
             env_value = _parse_env_value(
                 os.getenv(key), definition["value_type"], definition["default"]
             )
-            value = override.get("value") if override else env_value
+            # An override row with value=NULL means "explicitly cleared —
+            # fall back to env / default" (admin_settings.value is nullable).
+            # Keep has_override true so the UI can show the row exists, but
+            # surface env_value as the effective value.
+            override_value = override.get("value") if override else None
+            value = (
+                override_value
+                if override is not None and override_value is not None
+                else env_value
+            )
             items.append(
                 {
                     **definition,
@@ -450,7 +461,9 @@ async def list_admin_settings(current_user: dict = Depends(get_current_user)):
 
 
 @router.patch("/admin/settings/{key}")
+@limiter.limit("30/minute")
 async def update_admin_setting(
+    request: Request,
     key: str,
     update: AdminSettingUpdate,
     current_user: dict = Depends(get_current_user),
@@ -487,12 +500,21 @@ async def update_admin_setting(
 
     saved = await asyncio.to_thread(save)
     # Some settings are cached at import time. Refresh in-memory state so the
-    # change takes effect this process — without a restart.
+    # change takes effect this process — without a restart. If the reload
+    # fails the DB row is already saved but the running process is on stale
+    # config; surface as 500 so the admin doesn't think the change applied.
     if key.startswith("OPENAI_"):
         try:
             reload_openai_config()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to reload OpenAI config after admin save")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Setting persisted but in-memory OpenAI config reload "
+                    "failed; restart the API to pick up the change."
+                ),
+            ) from exc
     return saved
 
 

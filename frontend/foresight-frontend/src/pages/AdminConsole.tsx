@@ -550,15 +550,21 @@ function SettingRow({
           <input
             type={setting.value_type === "number" ? "number" : "text"}
             value={value == null ? "" : String(value)}
-            onChange={(event) =>
-              setValue(
-                setting.value_type === "number"
-                  ? event.target.value === ""
-                    ? null
-                    : Number(event.target.value)
-                  : event.target.value,
-              )
-            }
+            onChange={(event) => {
+              if (setting.value_type !== "number") {
+                setValue(event.target.value);
+                return;
+              }
+              const raw = event.target.value;
+              if (raw === "") {
+                setValue(null);
+                return;
+              }
+              // Reject NaN / partial inputs ("-", "1e", ".") so they don't
+              // get serialized as JSON null and silently clear the setting.
+              const parsed = Number(raw);
+              if (Number.isFinite(parsed)) setValue(parsed);
+            }}
             className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
           />
         )}
@@ -763,6 +769,14 @@ const AdminConsole: React.FC = () => {
     if (isAdmin) loadUsage();
   }, [isAdmin, loadUsage]);
 
+  // Refresh-console button: refetch everything, including usage. loadAll on
+  // its own omits usage by design (so changing the usage window doesn't
+  // re-pull the rest of the console).
+  const refreshAll = useCallback(() => {
+    loadAll();
+    loadUsage();
+  }, [loadAll, loadUsage]);
+
   const refreshUsers = useCallback(
     async (filters: { search?: string; account_type?: string; role?: string } = {}) => {
       try {
@@ -854,7 +868,7 @@ const AdminConsole: React.FC = () => {
           </div>
         </div>
         <button
-          onClick={loadAll}
+          onClick={refreshAll}
           className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
