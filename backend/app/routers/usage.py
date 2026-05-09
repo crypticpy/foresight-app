@@ -565,6 +565,16 @@ async def export_usage_events(
             },
         )
 
+    def _csv_safe(value: Any) -> Any:
+        # CSV-injection mitigation: spreadsheet apps interpret cells starting
+        # with =, +, -, @, TAB, or CR as formulas. Prefix a single quote so
+        # the cell renders as a literal string. prompt_excerpt /
+        # response_excerpt are user-influenced so this matters even though we
+        # redact PII upstream.
+        if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + value
+        return value
+
     def _stream_csv():
         buffer = io.StringIO()
         writer = csv.DictWriter(
@@ -578,10 +588,13 @@ async def export_usage_events(
         buffer.truncate(0)
         for row in rows:
             flat = {col: row.get(col) for col in _EXPORT_COLUMNS}
-            # CSV cells can't hold lists/dicts cleanly — stringify them.
+            # CSV cells can't hold lists/dicts cleanly — stringify them, then
+            # escape any string cell that begins with a formula trigger.
             for key, value in list(flat.items()):
                 if isinstance(value, (list, dict)):
-                    flat[key] = str(value)
+                    flat[key] = _csv_safe(str(value))
+                else:
+                    flat[key] = _csv_safe(value)
             writer.writerow(flat)
             yield buffer.getvalue()
             buffer.seek(0)

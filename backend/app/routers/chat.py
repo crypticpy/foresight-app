@@ -232,12 +232,13 @@ async def chat_endpoint(
         mention_dicts = [m.model_dump() for m in request.mentions]
 
     async def event_generator():
-        # Tag every LLM call made during this chat turn with user_id and
-        # conversation_id (the latter is augmented inside chat_service once a
-        # new conversation row is created — see chat_service.chat).
+        # Don't seed conversation_id here — request.conversation_id is
+        # caller-supplied and may be stale or owned by a different user.
+        # `chat_service.chat()` calls augment_usage_context(conversation_id=…)
+        # only after `_get_or_create_conversation` returns a verified id, so
+        # the title-gen / RAG / completion calls all attribute correctly.
         with llm_usage_context(
             user_id=user_id,
-            conversation_id=request.conversation_id,
             operation="chat.message",
         ):
             async for event in chat_service_chat(

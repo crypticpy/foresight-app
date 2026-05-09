@@ -310,6 +310,34 @@ def test_export_rejects_invalid_iso(monkeypatch):
     assert excinfo.value.status_code == 400
 
 
+def test_export_csv_escapes_formula_injection(monkeypatch):
+    # CSV injection: cells starting with =, +, -, @, \t, \r are treated as
+    # formulas by Excel/Sheets. We prefix a single quote so they render as
+    # literal text. prompt_excerpt is the most likely vector since it's
+    # caller-influenced even after PII redaction.
+    rows = [
+        _make_event_row(id="r1", prompt_excerpt="=SUM(A1:A2)"),
+        _make_event_row(id="r2", response_excerpt="@SignedTextThing"),
+        _make_event_row(id="r3", prompt_excerpt="+1 (555) 123-4567"),
+        _make_event_row(id="r4", prompt_excerpt="-not a formula"),
+        _make_event_row(id="r5", prompt_excerpt="\thidden tab"),
+        _make_event_row(id="r6", prompt_excerpt="hello there"),  # benign
+    ]
+    _patch_supabase(monkeypatch, {"llm_usage_events": rows})
+    _bypass_admin(monkeypatch)
+
+    response = _call_export(monkeypatch)
+    body = _consume(response)
+
+    # Each dangerous prefix should now be quoted; the benign row should not.
+    assert "'=SUM" in body
+    assert "'@SignedTextThing" in body
+    assert "'+1 (555)" in body
+    assert "'-not a formula" in body
+    assert "'\thidden tab" in body
+    assert "'hello" not in body
+
+
 def test_export_rbac_denies_non_admin(monkeypatch):
     from app import authz
     from app.routers import usage as usage_router
