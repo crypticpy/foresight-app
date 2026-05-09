@@ -6,6 +6,7 @@ import {
   Bot,
   CheckCircle2,
   Database,
+  History,
   Loader2,
   Play,
   RefreshCw,
@@ -18,6 +19,7 @@ import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { cn } from "../lib/utils";
 import {
+  fetchAdminAuditLog,
   fetchAdminOverview,
   fetchAdminSettings,
   fetchAdminUsers,
@@ -27,6 +29,7 @@ import {
   triggerAdminAction,
   updateAdminSetting,
   updateAdminUser,
+  type AdminAuditEntry,
   type AdminOverview,
   type AdminSetting,
   type AdminUser,
@@ -35,7 +38,13 @@ import {
   type UsageSummary,
 } from "../lib/admin-api";
 
-type AdminTab = "overview" | "users" | "operations" | "settings" | "usage";
+type AdminTab =
+  | "overview"
+  | "users"
+  | "operations"
+  | "settings"
+  | "usage"
+  | "audit";
 
 const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -43,6 +52,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: "operations", label: "Operations", icon: Activity },
   { id: "settings", label: "Models & Chat", icon: SlidersHorizontal },
   { id: "usage", label: "Usage", icon: Database },
+  { id: "audit", label: "Audit log", icon: History },
 ];
 
 async function getToken(): Promise<string> {
@@ -73,7 +83,10 @@ function StatusPill({ status }: { status?: unknown }) {
   const className =
     text === "completed" || text === "healthy" || text === "success"
       ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
-      : text === "queued" || text === "running" || text === "processing" || text === "started"
+      : text === "queued" ||
+          text === "running" ||
+          text === "processing" ||
+          text === "started"
         ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800"
         : text === "failed" || text === "error"
           ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
@@ -197,7 +210,10 @@ function OverviewTab({ overview }: { overview: AdminOverview | null }) {
           <h3 className="font-medium text-gray-900 dark:text-white">Runtime</h3>
           <dl className="mt-3 space-y-2 text-sm">
             {Object.entries(overview.runtime).map(([key, value]) => (
-              <div key={key} className="flex items-center justify-between gap-4">
+              <div
+                key={key}
+                className="flex items-center justify-between gap-4"
+              >
                 <dt className="text-gray-500 dark:text-gray-400">{key}</dt>
                 <dd className="font-medium text-gray-900 dark:text-white">
                   {String(value)}
@@ -211,12 +227,16 @@ function OverviewTab({ overview }: { overview: AdminOverview | null }) {
             Research Task Status
           </h3>
           <div className="mt-3 flex flex-wrap gap-2">
-            {Object.entries(overview.research_tasks.by_status).map(([status, count]) => (
-              <span key={status} className="text-sm">
-                <StatusPill status={status} />{" "}
-                <span className="text-gray-700 dark:text-gray-300">{count}</span>
-              </span>
-            ))}
+            {Object.entries(overview.research_tasks.by_status).map(
+              ([status, count]) => (
+                <span key={status} className="text-sm">
+                  <StatusPill status={status} />{" "}
+                  <span className="text-gray-700 dark:text-gray-300">
+                    {count}
+                  </span>
+                </span>
+              ),
+            )}
           </div>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-dark-surface">
@@ -228,11 +248,17 @@ function OverviewTab({ overview }: { overview: AdminOverview | null }) {
               <dt className="text-gray-500 dark:text-gray-400">
                 Discovery runs sampled
               </dt>
-              <dd className="font-medium">{overview.discovery_runs.recent_count}</dd>
+              <dd className="font-medium">
+                {overview.discovery_runs.recent_count}
+              </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-gray-500 dark:text-gray-400">Scans sampled</dt>
-              <dd className="font-medium">{overview.workstream_scans.recent_count}</dd>
+              <dt className="text-gray-500 dark:text-gray-400">
+                Scans sampled
+              </dt>
+              <dd className="font-medium">
+                {overview.workstream_scans.recent_count}
+              </dd>
             </div>
           </dl>
         </div>
@@ -247,7 +273,11 @@ function UsersTab({
   onSave,
 }: {
   users: AdminUser[];
-  onRefresh: (filters?: { search?: string; account_type?: string; role?: string }) => void;
+  onRefresh: (filters?: {
+    search?: string;
+    account_type?: string;
+    role?: string;
+  }) => void;
   onSave: (user: AdminUser, patch: Partial<AdminUser>) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -312,10 +342,18 @@ function UsersTab({
           <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-dark-surface-elevated">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">User</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Account</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  User
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Role
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Account
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Created
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -330,7 +368,9 @@ function UsersTab({
                   <td className="px-4 py-3">
                     <select
                       value={user.role || "user"}
-                      onChange={(event) => onSave(user, { role: event.target.value })}
+                      onChange={(event) =>
+                        onSave(user, { role: event.target.value })
+                      }
                       className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
                     >
                       <option value="user">User</option>
@@ -343,7 +383,8 @@ function UsersTab({
                       value={user.account_type || "paid"}
                       onChange={(event) =>
                         onSave(user, {
-                          account_type: event.target.value as AdminUser["account_type"],
+                          account_type: event.target
+                            .value as AdminUser["account_type"],
                         })
                       }
                       className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
@@ -407,7 +448,9 @@ function OperationsTab({
               <tr key={String(row.id || index)}>
                 <td className="px-4 py-3">
                   <div className="font-medium text-gray-900 dark:text-white">
-                    {String(row.task_type || row.triggered_by || row.id || "Job")}
+                    {String(
+                      row.task_type || row.triggered_by || row.id || "Job",
+                    )}
                   </div>
                   <div className="text-xs text-gray-500">
                     {formatDate(row.created_at || row.started_at)}
@@ -499,7 +542,11 @@ function SettingsTab({
             </div>
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {items.map((setting) => (
-                <SettingRow key={setting.key} setting={setting} onSave={onSave} />
+                <SettingRow
+                  key={setting.key}
+                  setting={setting}
+                  onSave={onSave}
+                />
               ))}
             </div>
           </div>
@@ -523,7 +570,9 @@ function SettingRow({
     <div className="grid grid-cols-1 gap-3 px-4 py-3 lg:grid-cols-[1fr_18rem_auto] lg:items-center">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <p className="font-medium text-gray-900 dark:text-white">{setting.label}</p>
+          <p className="font-medium text-gray-900 dark:text-white">
+            {setting.label}
+          </p>
           {setting.has_override && (
             <span className="rounded-full bg-brand-blue/10 px-2 py-0.5 text-xs font-medium text-brand-blue">
               override
@@ -626,13 +675,18 @@ function UsageTab({
             <MetricCard
               label="External APIs"
               value={usage.external_api_totals.calls}
-              subtext={formatMoney(usage.external_api_totals.estimated_cost_usd)}
+              subtext={formatMoney(
+                usage.external_api_totals.estimated_cost_usd,
+              )}
               icon={Database}
             />
           </div>
           <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <BreakdownTable title="By Model" rows={usage.llm_by_model} />
-            <BreakdownTable title="By Operation" rows={usage.llm_by_operation} />
+            <BreakdownTable
+              title="By Operation"
+              rows={usage.llm_by_operation}
+            />
           </div>
         </>
       )}
@@ -664,6 +718,160 @@ function UsageTab({
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditLogTab({
+  entries,
+  filters,
+  onFilterChange,
+  onRefresh,
+}: {
+  entries: AdminAuditEntry[];
+  filters: { target_type?: "user" | "setting" | ""; sinceDays: number };
+  onFilterChange: (
+    next: Partial<{ target_type: "user" | "setting" | ""; sinceDays: number }>,
+  ) => void;
+  onRefresh: () => void;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (id: string) =>
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  return (
+    <div>
+      <SectionHeader
+        title="Audit log"
+        description="Every admin user / setting mutation is recorded here. Append-only."
+        action={
+          <button
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
+        }
+      />
+
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-dark-surface md:grid-cols-3">
+        <select
+          value={filters.target_type ?? ""}
+          onChange={(event) =>
+            onFilterChange({
+              target_type: event.target.value as "user" | "setting" | "",
+            })
+          }
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
+        >
+          <option value="">All targets</option>
+          <option value="user">User changes</option>
+          <option value="setting">Setting changes</option>
+        </select>
+        <select
+          value={filters.sinceDays}
+          onChange={(event) =>
+            onFilterChange({ sinceDays: Number(event.target.value) })
+          }
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
+        >
+          <option value={1}>Last 24 hours</option>
+          <option value={7}>Last 7 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+          <option value={0}>All time</option>
+        </select>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-dark-surface">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-dark-surface-elevated">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Time
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Actor
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Action
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Target
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Diff
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {entries.map((entry) => {
+                const open = Boolean(expanded[entry.id]);
+                return (
+                  <tr key={entry.id} className="align-top">
+                    <td className="whitespace-nowrap px-4 py-3 text-gray-500">
+                      {formatDate(entry.created_at)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900 dark:text-white">
+                        {entry.actor_email || entry.actor_id || "unknown"}
+                      </div>
+                      {entry.request_ip && (
+                        <div className="text-xs text-gray-500">
+                          {entry.request_ip}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-200">
+                      {entry.action}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-200">
+                      <div className="text-xs uppercase tracking-wide text-gray-400">
+                        {entry.target_type}
+                      </div>
+                      <div className="font-mono text-xs">{entry.target_id}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => toggle(entry.id)}
+                        className="text-xs font-medium text-brand-blue hover:underline"
+                      >
+                        {open ? "Hide" : "Show"} diff
+                      </button>
+                      {open && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                          <pre className="max-h-40 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-dark-surface-elevated dark:text-gray-200">
+                            <span className="text-gray-400">before</span>
+                            {"\n"}
+                            {JSON.stringify(entry.before, null, 2)}
+                          </pre>
+                          <pre className="max-h-40 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-dark-surface-elevated dark:text-gray-200">
+                            <span className="text-gray-400">after</span>
+                            {"\n"}
+                            {JSON.stringify(entry.after, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {entries.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-gray-500"
+                  >
+                    No audit entries match these filters.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -718,9 +926,13 @@ const AdminConsole: React.FC = () => {
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [recentUsage, setRecentUsage] = useState<UsageEvent[]>([]);
   const [usageDays, setUsageDays] = useState(7);
+  const [auditEntries, setAuditEntries] = useState<AdminAuditEntry[]>([]);
+  const [auditFilters, setAuditFilters] = useState<{
+    target_type: "user" | "setting" | "";
+    sinceDays: number;
+  }>({ target_type: "", sinceDays: 7 });
 
-  const isAdmin =
-    profile?.role === "admin" || profile?.role === "service_role";
+  const isAdmin = profile?.role === "admin" || profile?.role === "service_role";
 
   // loadAll fetches everything except usage (which is parameterized by
   // usageDays). Splitting them prevents a full console reload every time
@@ -730,18 +942,21 @@ const AdminConsole: React.FC = () => {
     setError(null);
     try {
       const token = await getToken();
-      const [overviewData, usersData, settingsData, jobsData] = await Promise.all([
-        fetchAdminOverview(token),
-        fetchAdminUsers(token),
-        fetchAdminSettings(token),
-        fetchRecentJobs(token),
-      ]);
+      const [overviewData, usersData, settingsData, jobsData] =
+        await Promise.all([
+          fetchAdminOverview(token),
+          fetchAdminUsers(token),
+          fetchAdminSettings(token),
+          fetchRecentJobs(token),
+        ]);
       setOverview(overviewData);
       setUsers(usersData.items);
       setSettings(settingsData.items);
       setJobs(jobsData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load admin data");
+      setError(
+        err instanceof Error ? err.message : "Failed to load admin data",
+      );
     } finally {
       setLoading(false);
     }
@@ -761,6 +976,26 @@ const AdminConsole: React.FC = () => {
     }
   }, [usageDays]);
 
+  const loadAudit = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const since =
+        auditFilters.sinceDays > 0
+          ? new Date(
+              Date.now() - auditFilters.sinceDays * 24 * 60 * 60 * 1000,
+            ).toISOString()
+          : undefined;
+      const data = await fetchAdminAuditLog(token, {
+        limit: 200,
+        target_type: auditFilters.target_type || undefined,
+        since,
+      });
+      setAuditEntries(data.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load audit log");
+    }
+  }, [auditFilters.target_type, auditFilters.sinceDays]);
+
   useEffect(() => {
     if (isAdmin) loadAll();
   }, [isAdmin, loadAll]);
@@ -769,16 +1004,23 @@ const AdminConsole: React.FC = () => {
     if (isAdmin) loadUsage();
   }, [isAdmin, loadUsage]);
 
-  // Refresh-console button: refetch everything, including usage. loadAll on
-  // its own omits usage by design (so changing the usage window doesn't
-  // re-pull the rest of the console).
+  useEffect(() => {
+    if (isAdmin) loadAudit();
+  }, [isAdmin, loadAudit]);
+
+  // Refresh-console button: refetch everything, including usage and audit.
+  // loadAll on its own omits the windowed sections by design (so changing
+  // the usage / audit window doesn't re-pull the rest of the console).
   const refreshAll = useCallback(() => {
     loadAll();
     loadUsage();
-  }, [loadAll, loadUsage]);
+    loadAudit();
+  }, [loadAll, loadUsage, loadAudit]);
 
   const refreshUsers = useCallback(
-    async (filters: { search?: string; account_type?: string; role?: string } = {}) => {
+    async (
+      filters: { search?: string; account_type?: string; role?: string } = {},
+    ) => {
       try {
         const token = await getToken();
         const data = await fetchAdminUsers(token, filters);
@@ -790,40 +1032,51 @@ const AdminConsole: React.FC = () => {
     [],
   );
 
-  const saveUser = useCallback(async (user: AdminUser, patch: Partial<AdminUser>) => {
-    try {
-      const token = await getToken();
-      const updated = await updateAdminUser(token, user.id, patch);
-      setUsers((prev) => prev.map((item) => (item.id === user.id ? updated : item)));
-      setNotice("User updated");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update user");
-    }
-  }, []);
+  const saveUser = useCallback(
+    async (user: AdminUser, patch: Partial<AdminUser>) => {
+      try {
+        const token = await getToken();
+        const updated = await updateAdminUser(token, user.id, patch);
+        setUsers((prev) =>
+          prev.map((item) => (item.id === user.id ? updated : item)),
+        );
+        setNotice("User updated");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update user");
+      }
+    },
+    [],
+  );
 
-  const saveSetting = useCallback(async (setting: AdminSetting, value: unknown) => {
-    try {
-      const token = await getToken();
-      await updateAdminSetting(token, setting.key, value);
-      const refreshed = await fetchAdminSettings(token);
-      setSettings(refreshed.items);
-      setNotice("Setting saved");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save setting");
-    }
-  }, []);
+  const saveSetting = useCallback(
+    async (setting: AdminSetting, value: unknown) => {
+      try {
+        const token = await getToken();
+        await updateAdminSetting(token, setting.key, value);
+        const refreshed = await fetchAdminSettings(token);
+        setSettings(refreshed.items);
+        setNotice("Setting saved");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save setting");
+      }
+    },
+    [],
+  );
 
-  const runAction = useCallback(async (action: "scan" | "velocity" | "quality" | "lens-backfill") => {
-    try {
-      const token = await getToken();
-      const result = await triggerAdminAction(token, action);
-      setNotice(String(result.message || result.status || "Action started"));
-      setJobs(await fetchRecentJobs(token));
-      setOverview(await fetchAdminOverview(token));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start action");
-    }
-  }, []);
+  const runAction = useCallback(
+    async (action: "scan" | "velocity" | "quality" | "lens-backfill") => {
+      try {
+        const token = await getToken();
+        const result = await triggerAdminAction(token, action);
+        setNotice(String(result.message || result.status || "Action started"));
+        setJobs(await fetchRecentJobs(token));
+        setOverview(await fetchAdminOverview(token));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to start action");
+      }
+    },
+    [],
+  );
 
   // Just update usageDays — the loadUsage effect picks up the change and
   // refetches once.
@@ -840,7 +1093,8 @@ const AdminConsole: React.FC = () => {
             <div>
               <h1 className="text-lg font-semibold">Admin access required</h1>
               <p className="mt-1 text-sm">
-                Your account does not have permission to open the administration console.
+                Your account does not have permission to open the administration
+                console.
               </p>
             </div>
           </div>
@@ -862,7 +1116,8 @@ const AdminConsole: React.FC = () => {
                 Administration
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Users, operations, model settings, chat limits, and usage telemetry.
+                Users, operations, model settings, chat limits, and usage
+                telemetry.
               </p>
             </div>
           </div>
@@ -871,7 +1126,11 @@ const AdminConsole: React.FC = () => {
           onClick={refreshAll}
           className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
           Refresh console
         </button>
       </div>
@@ -901,7 +1160,10 @@ const AdminConsole: React.FC = () => {
       )}
 
       <div className="mb-6 overflow-x-auto border-b border-gray-200 dark:border-gray-700">
-        <nav className="-mb-px flex min-w-max gap-4" aria-label="Admin sections">
+        <nav
+          className="-mb-px flex min-w-max gap-4"
+          aria-label="Admin sections"
+        >
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -932,7 +1194,11 @@ const AdminConsole: React.FC = () => {
         <>
           {activeTab === "overview" && <OverviewTab overview={overview} />}
           {activeTab === "users" && (
-            <UsersTab users={users} onRefresh={refreshUsers} onSave={saveUser} />
+            <UsersTab
+              users={users}
+              onRefresh={refreshUsers}
+              onSave={saveUser}
+            />
           )}
           {activeTab === "operations" && (
             <OperationsTab jobs={jobs} onAction={runAction} />
@@ -946,6 +1212,16 @@ const AdminConsole: React.FC = () => {
               recentUsage={recentUsage}
               days={usageDays}
               onDaysChange={updateUsageWindow}
+            />
+          )}
+          {activeTab === "audit" && (
+            <AuditLogTab
+              entries={auditEntries}
+              filters={auditFilters}
+              onFilterChange={(next) =>
+                setAuditFilters((prev) => ({ ...prev, ...next }))
+              }
+              onRefresh={loadAudit}
             />
           )}
         </>

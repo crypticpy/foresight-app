@@ -18,7 +18,9 @@ async function apiRequest<T>(
     const error = await response
       .json()
       .catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || error.message || `API error: ${response.status}`);
+    throw new Error(
+      error.detail || error.message || `API error: ${response.status}`,
+    );
   }
 
   return response.json();
@@ -171,11 +173,55 @@ export function fetchRecentJobs(token: string) {
 }
 
 export function fetchUsageSummary(token: string, days: number) {
-  return apiRequest<UsageSummary>(`/api/v1/admin/usage/summary?days=${days}`, token);
+  return apiRequest<UsageSummary>(
+    `/api/v1/admin/usage/summary?days=${days}`,
+    token,
+  );
 }
 
 export function fetchRecentUsage(token: string, limit = 50) {
-  return apiRequest<UsageEvent[]>(`/api/v1/admin/usage/recent?limit=${limit}`, token);
+  return apiRequest<UsageEvent[]>(
+    `/api/v1/admin/usage/recent?limit=${limit}`,
+    token,
+  );
+}
+
+export interface AdminAuditEntry {
+  id: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  action: string;
+  target_type: string;
+  target_id: string;
+  before: unknown;
+  after: unknown;
+  request_ip: string | null;
+  created_at: string;
+}
+
+export interface AdminAuditResponse {
+  items: AdminAuditEntry[];
+  total: number;
+}
+
+export function fetchAdminAuditLog(
+  token: string,
+  params: {
+    limit?: number;
+    offset?: number;
+    target_type?: "user" | "setting";
+    actor_id?: string;
+    since?: string;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  if (params.target_type) query.set("target_type", params.target_type);
+  if (params.actor_id) query.set("actor_id", params.actor_id);
+  if (params.since) query.set("since", params.since);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiRequest<AdminAuditResponse>(`/api/v1/admin/audit${suffix}`, token);
 }
 
 export function triggerAdminAction(
@@ -185,7 +231,10 @@ export function triggerAdminAction(
   const endpoints = {
     scan: { endpoint: "/api/v1/admin/scan", body: undefined },
     velocity: { endpoint: "/api/v1/admin/velocity/calculate", body: undefined },
-    quality: { endpoint: "/api/v1/admin/quality/recalculate-all", body: undefined },
+    quality: {
+      endpoint: "/api/v1/admin/quality/recalculate-all",
+      body: undefined,
+    },
     "lens-backfill": {
       endpoint: "/api/v1/admin/classify/backfill",
       body: { limit: 100, force: false },
