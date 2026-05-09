@@ -3577,8 +3577,9 @@ const AdminConsole: React.FC = () => {
     setLlmAuditDetailLoading(true);
     setLlmAuditDetail({ id: eventId } as LlmAuditEventDetail);
     setLlmAuditReplay(null);
+    let token: string;
     try {
-      const token = await getToken();
+      token = await getToken();
       const detail = await fetchLlmAuditEvent(token, eventId);
       if (
         llmAuditDetailGenRef.current !== myGen ||
@@ -3587,36 +3588,43 @@ const AdminConsole: React.FC = () => {
         return;
       }
       setLlmAuditDetail(detail);
+      // Replay must not gate detail rendering — a slow /replay would leave
+      // the modal stuck on "Loading event…" while the (already-fetched)
+      // payload is invisible. Kick the replay off in the background and
+      // flip the detail-loading flag now.
+      setLlmAuditDetailLoading(false);
       if (detail.conversation_id) {
         const convId = detail.conversation_id;
         setLlmAuditReplayLoading(true);
-        try {
-          const replay = await fetchLlmAuditReplay(token, convId);
-          if (
-            llmAuditDetailGenRef.current === myGen &&
-            llmAuditSelectedRef.current === eventId
-          ) {
-            setLlmAuditReplay(replay);
+        void (async () => {
+          try {
+            const replay = await fetchLlmAuditReplay(token, convId);
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setLlmAuditReplay(replay);
+            }
+          } catch (replayErr) {
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setError(
+                replayErr instanceof Error
+                  ? replayErr.message
+                  : "Failed to load replay",
+              );
+            }
+          } finally {
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setLlmAuditReplayLoading(false);
+            }
           }
-        } catch (replayErr) {
-          if (
-            llmAuditDetailGenRef.current === myGen &&
-            llmAuditSelectedRef.current === eventId
-          ) {
-            setError(
-              replayErr instanceof Error
-                ? replayErr.message
-                : "Failed to load replay",
-            );
-          }
-        } finally {
-          if (
-            llmAuditDetailGenRef.current === myGen &&
-            llmAuditSelectedRef.current === eventId
-          ) {
-            setLlmAuditReplayLoading(false);
-          }
-        }
+        })();
       }
     } catch (err) {
       if (
@@ -3629,10 +3637,7 @@ const AdminConsole: React.FC = () => {
       setError(
         err instanceof Error ? err.message : "Failed to load event detail",
       );
-    } finally {
-      if (llmAuditDetailGenRef.current === myGen) {
-        setLlmAuditDetailLoading(false);
-      }
+      setLlmAuditDetailLoading(false);
     }
   }, []);
 
