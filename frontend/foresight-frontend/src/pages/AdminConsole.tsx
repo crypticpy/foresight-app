@@ -3517,9 +3517,14 @@ const AdminConsole: React.FC = () => {
         );
         setNotice(`Schedule "${updated.name}" updated`);
       } catch (err) {
+        // Surface the error in the console banner *and* rethrow so the
+        // caller (typically the edit modal) sees the rejection and can
+        // keep itself open with an inline error. Resolving the promise
+        // here would tell the modal the save succeeded.
         setError(
           err instanceof Error ? err.message : "Failed to update schedule",
         );
+        throw err;
       }
     },
     [],

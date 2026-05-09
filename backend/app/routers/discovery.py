@@ -165,6 +165,8 @@ async def execute_discovery_run_background(
             auto_approve_threshold=config.auto_approve_threshold,
             pillars_filter=config.pillars_filter or [],
             dry_run=config.dry_run,
+            categories_to_scan=config.categories_to_scan,
+            source_ids=config.source_ids,
         )
 
         # Execute discovery using the service (pass existing run_id to avoid duplicate)

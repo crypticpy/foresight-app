@@ -360,6 +360,10 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
     RSS source category, so admin enable/disable from the catalog tab
     takes effect on the next config build with no extra plumbing.
 
+    Two extra kwargs (``categories_to_scan`` and ``source_ids``) are
+    swallowed before constructing the dataclass — they are PR-E schedule
+    scope overrides, not config fields.
+
     Reads supabase synchronously; async callers should wrap in
     ``asyncio.to_thread``.
     """
@@ -367,6 +371,13 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
     explicit_non_none = {
         key: value for key, value in explicit.items() if value is not None
     }
+    # Pull schedule-scope overrides out before constructing DiscoveryConfig —
+    # the dataclass doesn't know about them.
+    categories_to_scan: Optional[List[str]] = explicit_non_none.pop(
+        "categories_to_scan", None
+    )
+    source_ids: Optional[List[str]] = explicit_non_none.pop("source_ids", None)
+
     merged = {**admin_overrides, **explicit_non_none}
     config = DiscoveryConfig(**merged)
 
@@ -375,7 +386,73 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
         rss_cat = config.source_categories.get(SourceCategory.RSS.value)
         if rss_cat is not None:
             rss_cat.rss_feeds = rss_feeds
+
+    # Schedule scope overrides apply *after* the registry overlay so they
+    # see the post-registry feed list when filtering by source_ids.
+    if categories_to_scan or source_ids:
+        _apply_schedule_scope(config, categories_to_scan, source_ids)
     return config
+
+
+def _apply_schedule_scope(
+    config: DiscoveryConfig,
+    categories_to_scan: Optional[List[str]],
+    source_ids: Optional[List[str]],
+) -> None:
+    """Restrict ``config`` to a per-schedule scope (PR E).
+
+    - ``categories_to_scan``: disable any source_category not in the list.
+      An empty list is treated the same as None (no filter applied).
+    - ``source_ids``: load the matching discovery_sources_registry rows and
+      replace each affected category's URL list with just those URLs. RSS
+      uses ``rss_feeds``; news/academic/government/tech_blog use the same
+      mechanism via ``rss_feeds`` today (see SourceCategoryConfig). When
+      no registry rows match, leave the category empty rather than falling
+      back to defaults.
+    """
+    if categories_to_scan:
+        wanted = set(categories_to_scan)
+        for cat_key, cat_cfg in config.source_categories.items():
+            if cat_key not in wanted:
+                cat_cfg.enabled = False
+
+    if not source_ids:
+        return
+
+    from app.deps import supabase
+
+    try:
+        rows = (
+            supabase.table("discovery_sources_registry")
+            .select("id,category,url,enabled")
+            .in_("id", source_ids)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        logger.exception(
+            "Failed to resolve schedule source_ids; ignoring source-id filter"
+        )
+        return
+
+    by_category: Dict[str, List[str]] = {}
+    for row in rows:
+        if not row.get("enabled"):
+            continue
+        url = row.get("url")
+        cat = row.get("category")
+        if url and cat:
+            by_category.setdefault(cat, []).append(url)
+
+    for cat_key, cat_cfg in config.source_categories.items():
+        if cat_key in by_category:
+            cat_cfg.rss_feeds = by_category[cat_key]
+            cat_cfg.enabled = True
+        else:
+            # Operator picked a scope that excludes this category — turn it
+            # off so we don't fetch defaults instead.
+            cat_cfg.enabled = False
 
 
 def apply_source_preferences(

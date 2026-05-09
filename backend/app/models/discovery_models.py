@@ -43,6 +43,23 @@ class DiscoveryConfigRequest(BaseModel):
         None, description="Filter by pillar IDs"
     )
     dry_run: bool = Field(False, description="Run in dry-run mode without persisting")
+    # Per-schedule scope overrides (PR E). Optional; when set, restrict the
+    # run to these source categories and / or registry rows. Without these
+    # fields the discovery service falls back to the global config.
+    categories_to_scan: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Restrict the run to these source categories (e.g. ['rss','news']). "
+            "Categories not in the list are disabled for this run."
+        ),
+    )
+    source_ids: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Restrict the run to these discovery_sources_registry row IDs. "
+            "Only URLs from these rows are scanned."
+        ),
+    )
 
 
 class DiscoveryRun(BaseModel):

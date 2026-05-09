@@ -103,7 +103,10 @@ class ForesightWorker:
         # that would spend money on external APIs (RSS triage, scheduled
         # discovery, APScheduler nightly/weekly jobs). User-initiated jobs
         # (research, briefs, discovery runs from the UI) still process.
-        self.demo_freeze = _truthy(os.getenv("FORESIGHT_DEMO_FREEZE", "false"))
+        # Bootstrap value from env; the loop re-reads from admin_settings each
+        # iteration so the admin "Pause" toggle takes effect without restart.
+        self._demo_freeze_env = _truthy(os.getenv("FORESIGHT_DEMO_FREEZE", "false"))
+        self.demo_freeze = self._demo_freeze_env
         if self.demo_freeze:
             self.enable_scheduler = False
         self._stop_event = asyncio.Event()
@@ -112,6 +115,40 @@ class ForesightWorker:
 
     def request_stop(self) -> None:
         self._stop_event.set()
+
+    def _read_demo_freeze_setting(self) -> bool:
+        """Return the live ``FORESIGHT_DEMO_FREEZE`` flag.
+
+        Resolution: admin_settings row > startup env value. The admin row's
+        ``value`` is JSONB and may be ``true``/``false``/``"true"``/``"false"``;
+        treat anything truthy as a freeze. On any error, keep the last known
+        state so a transient supabase outage doesn't accidentally un-pause a
+        deliberate freeze.
+        """
+        try:
+            rows = (
+                supabase.table("admin_settings")
+                .select("value")
+                .eq("key", "FORESIGHT_DEMO_FREEZE")
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            logger.warning(
+                "Could not refresh FORESIGHT_DEMO_FREEZE; keeping current value",
+                exc_info=False,
+            )
+            return self.demo_freeze
+        if not rows:
+            return self._demo_freeze_env
+        raw = rows[0].get("value")
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+        return bool(raw)
 
     async def run(self) -> None:
         logger.info(
@@ -140,6 +177,14 @@ class ForesightWorker:
 
         while not self._stop_event.is_set():
             did_work = False
+
+            # Re-read the freeze flag each iteration so an admin flipping the
+            # toggle in the UI takes effect on the next poll without a worker
+            # restart. The lookup is a single supabase round-trip; if it
+            # fails we keep the previously-known value.
+            self.demo_freeze = await asyncio.to_thread(
+                self._read_demo_freeze_setting
+            )
 
             try:
                 did_work = await self._process_one_research_task() or did_work

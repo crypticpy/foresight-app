@@ -252,6 +252,94 @@ def test_build_discovery_config_none_explicit_falls_through(monkeypatch):
     assert cfg.max_queries_per_run == 42
 
 
+def test_build_discovery_config_categories_to_scan_disables_others(monkeypatch):
+    """``categories_to_scan`` from a schedule must turn off any category
+    not in the list, otherwise scope overrides have no effect."""
+    from app import discovery_service
+
+    monkeypatch.setattr(
+        discovery_service, "load_discovery_admin_overrides", lambda: {}
+    )
+    monkeypatch.setattr(
+        discovery_service, "load_active_source_urls", lambda category: []
+    )
+    cfg = discovery_service.build_discovery_config(categories_to_scan=["rss"])
+    cats = cfg.source_categories
+    assert cats[discovery_service.SourceCategory.RSS.value].enabled is True
+    assert cats[discovery_service.SourceCategory.NEWS.value].enabled is False
+    assert cats[discovery_service.SourceCategory.ACADEMIC.value].enabled is False
+
+
+def test_build_discovery_config_source_ids_filters_registry(monkeypatch):
+    """``source_ids`` must restrict each category's URL list to URLs from
+    those registry rows, and disable categories with no matching rows."""
+    from app import deps
+    from app import discovery_service
+
+    monkeypatch.setattr(
+        discovery_service, "load_discovery_admin_overrides", lambda: {}
+    )
+    monkeypatch.setattr(
+        discovery_service, "load_active_source_urls", lambda category: []
+    )
+
+    class _Tbl:
+        def __init__(self, rows):
+            self._rows = rows
+            self._ids = []
+
+        def select(self, _cols):
+            return self
+
+        def in_(self, _key, ids):
+            self._ids = list(ids)
+            return self
+
+        def execute(self):
+            class _R:
+                pass
+
+            r = _R()
+            r.data = [row for row in self._rows if row["id"] in self._ids]
+            return r
+
+    class _SB:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def table(self, _name):
+            return _Tbl(self._rows)
+
+    monkeypatch.setattr(
+        deps,
+        "supabase",
+        _SB(
+            [
+                {
+                    "id": "id-1",
+                    "category": "rss",
+                    "url": "https://feed-a/rss",
+                    "enabled": True,
+                },
+                {
+                    "id": "id-2",
+                    "category": "rss",
+                    "url": "https://feed-b/rss",
+                    "enabled": False,
+                },
+            ]
+        ),
+    )
+
+    cfg = discovery_service.build_discovery_config(source_ids=["id-1", "id-2"])
+    rss_cat = cfg.source_categories[discovery_service.SourceCategory.RSS.value]
+    assert rss_cat.enabled is True
+    assert rss_cat.rss_feeds == ["https://feed-a/rss"]
+    # Categories without matching rows should be disabled.
+    news_cat = cfg.source_categories[discovery_service.SourceCategory.NEWS.value]
+    assert news_cat.enabled is False
+
+
 def test_build_discovery_config_no_overrides_returns_defaults(monkeypatch):
     from app import discovery_service
 
