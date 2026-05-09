@@ -722,6 +722,7 @@ export interface LlmAuditEventListItem {
   task_id: string | null;
   card_id: string | null;
   workstream_id: string | null;
+  conversation_id: string | null;
   redaction_flags: string[] | null;
 }
 
@@ -773,4 +774,95 @@ export function fetchLlmAuditEvent(token: string, eventId: string) {
     `/api/v1/admin/usage/events/${encodeURIComponent(eventId)}`,
     token,
   );
+}
+
+export interface LlmAuditReplayMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: unknown[] | null;
+  tokens_used: number | null;
+  model: string | null;
+  created_at: string;
+  conversation_id?: string;
+}
+
+export interface LlmAuditReplayConversation {
+  id: string;
+  user_id: string;
+  scope: string;
+  scope_id: string | null;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LlmAuditReplayItem {
+  kind: "message" | "llm_event";
+  created_at: string;
+  data: LlmAuditReplayMessage | LlmAuditEventDetail;
+}
+
+export interface LlmAuditReplayResponse {
+  conversation: LlmAuditReplayConversation;
+  timeline: LlmAuditReplayItem[];
+  message_count: number;
+  llm_event_count: number;
+}
+
+export function fetchLlmAuditReplay(token: string, conversationId: string) {
+  return apiRequest<LlmAuditReplayResponse>(
+    `/api/v1/admin/usage/conversations/${encodeURIComponent(
+      conversationId,
+    )}/replay`,
+    token,
+  );
+}
+
+export interface LlmAuditExportFilters {
+  operation?: string;
+  request_kind?: string;
+  user_id?: string;
+  model?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  min_cost?: number;
+  audited_only?: boolean;
+  conversation_id?: string;
+  format?: "csv" | "json";
+  limit?: number;
+}
+
+export async function downloadLlmAuditExport(
+  token: string,
+  filters: LlmAuditExportFilters,
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/usage/export`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(filters),
+  });
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Export failed" }));
+    throw new Error(
+      error.detail || error.message || `Export failed: ${response.status}`,
+    );
+  }
+  // Pull the filename out of Content-Disposition; fall back to a sensible
+  // default if the header isn't present (e.g. mocked in tests).
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename =
+    match?.[1] ??
+    `llm-audit-${new Date().toISOString().replace(/[:.]/g, "-")}.${
+      filters.format === "json" ? "ndjson" : "csv"
+    }`;
+  const blob = await response.blob();
+  return { blob, filename };
 }

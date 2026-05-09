@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Download,
   ExternalLink,
   Gauge,
   History,
@@ -50,8 +51,10 @@ import {
   fetchAdminSettings,
   fetchAdminSources,
   fetchAdminUsers,
+  downloadLlmAuditExport,
   fetchLlmAuditEvent,
   fetchLlmAuditEvents,
+  fetchLlmAuditReplay,
   fetchPillarCoverage,
   fetchRecentJobs,
   fetchRecentUsage,
@@ -81,6 +84,9 @@ import {
   type LlmAuditEventDetail,
   type LlmAuditEventListItem,
   type LlmAuditEventsParams,
+  type LlmAuditExportFilters,
+  type LlmAuditReplayResponse,
+  type LlmAuditReplayMessage,
   type PillarCoverageResponse,
   type RecentJobsResponse,
   type SchedulePillar,
@@ -3176,6 +3182,11 @@ const AdminConsole: React.FC = () => {
   const llmAuditGenRef = useRef(0);
   const llmAuditDetailGenRef = useRef(0);
   const llmAuditSelectedRef = useRef<string | null>(null);
+  const [llmAuditReplay, setLlmAuditReplay] =
+    useState<LlmAuditReplayResponse | null>(null);
+  const [llmAuditReplayLoading, setLlmAuditReplayLoading] = useState(false);
+  const [llmAuditExportOpen, setLlmAuditExportOpen] = useState(false);
+  const [llmAuditExporting, setLlmAuditExporting] = useState(false);
 
   const isAdmin = profile?.role === "admin" || profile?.role === "service_role";
 
@@ -3565,8 +3576,10 @@ const AdminConsole: React.FC = () => {
     llmAuditSelectedRef.current = eventId;
     setLlmAuditDetailLoading(true);
     setLlmAuditDetail({ id: eventId } as LlmAuditEventDetail);
+    setLlmAuditReplay(null);
+    let token: string;
     try {
-      const token = await getToken();
+      token = await getToken();
       const detail = await fetchLlmAuditEvent(token, eventId);
       if (
         llmAuditDetailGenRef.current !== myGen ||
@@ -3575,6 +3588,44 @@ const AdminConsole: React.FC = () => {
         return;
       }
       setLlmAuditDetail(detail);
+      // Replay must not gate detail rendering — a slow /replay would leave
+      // the modal stuck on "Loading event…" while the (already-fetched)
+      // payload is invisible. Kick the replay off in the background and
+      // flip the detail-loading flag now.
+      setLlmAuditDetailLoading(false);
+      if (detail.conversation_id) {
+        const convId = detail.conversation_id;
+        setLlmAuditReplayLoading(true);
+        void (async () => {
+          try {
+            const replay = await fetchLlmAuditReplay(token, convId);
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setLlmAuditReplay(replay);
+            }
+          } catch (replayErr) {
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setError(
+                replayErr instanceof Error
+                  ? replayErr.message
+                  : "Failed to load replay",
+              );
+            }
+          } finally {
+            if (
+              llmAuditDetailGenRef.current === myGen &&
+              llmAuditSelectedRef.current === eventId
+            ) {
+              setLlmAuditReplayLoading(false);
+            }
+          }
+        })();
+      }
     } catch (err) {
       if (
         llmAuditDetailGenRef.current !== myGen ||
@@ -3586,10 +3637,7 @@ const AdminConsole: React.FC = () => {
       setError(
         err instanceof Error ? err.message : "Failed to load event detail",
       );
-    } finally {
-      if (llmAuditDetailGenRef.current === myGen) {
-        setLlmAuditDetailLoading(false);
-      }
+      setLlmAuditDetailLoading(false);
     }
   }, []);
 
@@ -3865,18 +3913,64 @@ const AdminConsole: React.FC = () => {
               onPageChange={(offset) => loadLlmAuditEvents(offset)}
               onRefresh={() => loadLlmAuditEvents(llmAuditPage.offset)}
               onSelect={openLlmAuditDetail}
+              onExport={() => setLlmAuditExportOpen(true)}
             />
           )}
         </>
+      )}
+
+      {llmAuditExportOpen && (
+        <LlmAuditExportModal
+          filters={llmAuditFilters}
+          exporting={llmAuditExporting}
+          onClose={() => setLlmAuditExportOpen(false)}
+          onDownload={async (format) => {
+            setLlmAuditExporting(true);
+            try {
+              const token = await getToken();
+              const exportFilters: LlmAuditExportFilters = {
+                operation: llmAuditFilters.operation,
+                model: llmAuditFilters.model,
+                status: llmAuditFilters.status,
+                audited_only: llmAuditFilters.audited_only,
+                from: llmAuditFilters.from,
+                to: llmAuditFilters.to,
+                min_cost: llmAuditFilters.min_cost,
+                format,
+              };
+              const { blob, filename } = await downloadLlmAuditExport(
+                token,
+                exportFilters,
+              );
+              const url = URL.createObjectURL(blob);
+              const anchor = document.createElement("a");
+              anchor.href = url;
+              anchor.download = filename;
+              document.body.appendChild(anchor);
+              anchor.click();
+              document.body.removeChild(anchor);
+              URL.revokeObjectURL(url);
+              setLlmAuditExportOpen(false);
+              setNotice(`Exported ${filename}`);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Export failed");
+            } finally {
+              setLlmAuditExporting(false);
+            }
+          }}
+        />
       )}
 
       {llmAuditDetail && (
         <LlmAuditDetailModal
           detail={llmAuditDetail}
           loading={llmAuditDetailLoading}
+          replay={llmAuditReplay}
+          replayLoading={llmAuditReplayLoading}
           onClose={() => {
             llmAuditSelectedRef.current = null;
             setLlmAuditDetail(null);
+            setLlmAuditReplay(null);
           }}
         />
       )}
@@ -3907,6 +4001,7 @@ function LlmActivityTab({
   onPageChange,
   onRefresh,
   onSelect,
+  onExport,
 }: {
   events: LlmAuditEventListItem[];
   loading: boolean;
@@ -3916,6 +4011,7 @@ function LlmActivityTab({
   onPageChange: (offset: number) => void;
   onRefresh: () => void;
   onSelect: (eventId: string) => void;
+  onExport: () => void;
 }) {
   return (
     <div>
@@ -3923,13 +4019,22 @@ function LlmActivityTab({
         title="LLM activity"
         description="Audit trail of every LLM call. Prompt / response excerpts are redacted (PII / secrets) and only persisted when the FORESIGHT_AUDIT_LLM_CONTENT setting is enabled."
         action={
-          <button
-            onClick={onRefresh}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onExport}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </button>
+            <button
+              onClick={onRefresh}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -4123,10 +4228,14 @@ function LlmActivityTab({
 function LlmAuditDetailModal({
   detail,
   loading,
+  replay,
+  replayLoading,
   onClose,
 }: {
   detail: LlmAuditEventDetail;
   loading: boolean;
+  replay: LlmAuditReplayResponse | null;
+  replayLoading: boolean;
   onClose: () => void;
 }) {
   // detail.created_at is undefined on the placeholder we set while loading.
@@ -4277,8 +4386,301 @@ function LlmAuditDetailModal({
                 </div>
               </div>
             )}
+
+            {detail.conversation_id && (
+              <ReplayTimeline
+                conversationId={detail.conversation_id}
+                replay={replay}
+                loading={replayLoading}
+              />
+            )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ReplayTimeline({
+  conversationId,
+  replay,
+  loading,
+}: {
+  conversationId: string;
+  replay: LlmAuditReplayResponse | null;
+  loading: boolean;
+}) {
+  return (
+    <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase text-gray-400">
+          Conversation replay
+        </h3>
+        {replay ? (
+          <span className="text-xs text-gray-500">
+            {replay.message_count} messages · {replay.llm_event_count} LLM calls
+          </span>
+        ) : null}
+      </div>
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading replay…
+        </div>
+      )}
+      {!loading && !replay && (
+        <p className="text-xs text-gray-500">
+          No replay available for conversation{" "}
+          <span className="font-mono">{conversationId}</span>.
+        </p>
+      )}
+      {replay && (
+        <>
+          <dl className="mb-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
+            <div>
+              <dt className="text-gray-400">Title</dt>
+              <dd className="text-gray-900 dark:text-white">
+                {replay.conversation.title || "Untitled"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-400">Scope</dt>
+              <dd className="font-mono text-gray-900 dark:text-white">
+                {replay.conversation.scope}
+                {replay.conversation.scope_id
+                  ? ` · ${replay.conversation.scope_id.slice(0, 8)}`
+                  : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-400">Started</dt>
+              <dd className="text-gray-900 dark:text-white">
+                {formatDate(replay.conversation.created_at)}
+              </dd>
+            </div>
+          </dl>
+          <ol className="space-y-2">
+            {replay.timeline.map((item, idx) => (
+              <li key={idx}>
+                {item.kind === "message" ? (
+                  <ReplayMessageRow
+                    message={item.data as LlmAuditReplayMessage}
+                  />
+                ) : (
+                  <ReplayEventRow event={item.data as LlmAuditEventDetail} />
+                )}
+              </li>
+            ))}
+            {replay.timeline.length === 0 && (
+              <li className="text-xs text-gray-500">
+                Conversation has no recorded turns yet.
+              </li>
+            )}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReplayMessageRow({ message }: { message: LlmAuditReplayMessage }) {
+  const isUser = message.role === "user";
+  return (
+    <div
+      className={`rounded-md border p-2 text-xs ${
+        isUser
+          ? "border-brand-blue/30 bg-brand-blue/5 dark:bg-brand-blue/10"
+          : "border-gray-200 bg-white dark:border-gray-700 dark:bg-dark-surface-elevated"
+      }`}
+    >
+      <div className="mb-1 flex items-center justify-between">
+        <span
+          className={`font-mono text-[10px] uppercase ${
+            isUser ? "text-brand-blue dark:text-brand-blue/80" : "text-gray-500"
+          }`}
+        >
+          {message.role}
+        </span>
+        <span className="text-[10px] text-gray-400">
+          {formatDate(message.created_at)}
+        </span>
+      </div>
+      <div className="whitespace-pre-wrap text-gray-800 dark:text-gray-100">
+        {message.content}
+      </div>
+      {message.tokens_used != null || message.model ? (
+        <div className="mt-1 text-[10px] text-gray-500">
+          {message.model ? (
+            <span className="font-mono">{message.model}</span>
+          ) : null}
+          {message.tokens_used != null
+            ? ` · ${message.tokens_used} tokens`
+            : ""}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReplayEventRow({ event }: { event: LlmAuditEventDetail }) {
+  return (
+    <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-2 text-xs dark:border-gray-600 dark:bg-dark-surface">
+      <div className="mb-0.5 flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase text-gray-500">
+          llm · {event.operation || "—"}
+        </span>
+        <span className="text-[10px] text-gray-400">
+          {formatDate(event.created_at)}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+        <span className="font-mono">{event.model || "—"}</span>
+        <StatusPill status={event.status} />
+        <span>{event.total_tokens ?? "—"} tokens</span>
+        <span>
+          {event.estimated_cost_usd != null
+            ? formatMoney(event.estimated_cost_usd)
+            : "—"}
+        </span>
+        {event.latency_ms != null ? <span>{event.latency_ms}ms</span> : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Export modal — pick CSV / NDJSON, preview the active filter snapshot, kick
+// off the streamed download. The filter state mirrors what the list endpoint
+// is currently using; we don't re-issue date pickers here on purpose so the
+// export always matches what's visible in the table.
+// ---------------------------------------------------------------------------
+
+function LlmAuditExportModal({
+  filters,
+  exporting,
+  onClose,
+  onDownload,
+}: {
+  filters: LlmAuditEventsParams;
+  exporting: boolean;
+  onClose: () => void;
+  onDownload: (format: "csv" | "json") => void | Promise<void>;
+}) {
+  const [format, setFormat] = useState<"csv" | "json">("csv");
+
+  const filterRows: Array<[string, string]> = [
+    ["Operation", filters.operation || "—"],
+    ["Model", filters.model || "—"],
+    ["Status", filters.status || "—"],
+    [
+      "Audited only",
+      filters.audited_only ? "yes (chat / responses only)" : "no",
+    ],
+    ["From", filters.from || "—"],
+    ["To", filters.to || "—"],
+    [
+      "Min cost",
+      filters.min_cost != null ? formatMoney(filters.min_cost) : "—",
+    ],
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-xl bg-white shadow-2xl dark:bg-dark-surface"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Export LLM events
+            </h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Streams up to 10,000 rows matching the current filters.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={exporting}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-dark-surface-hover"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase text-gray-400">
+              Format
+            </label>
+            <div className="flex gap-3 text-sm">
+              <label className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                <input
+                  type="radio"
+                  name="export-format"
+                  value="csv"
+                  checked={format === "csv"}
+                  onChange={() => setFormat("csv")}
+                />
+                CSV
+              </label>
+              <label className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                <input
+                  type="radio"
+                  name="export-format"
+                  value="json"
+                  checked={format === "json"}
+                  onChange={() => setFormat("json")}
+                />
+                NDJSON
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="mb-1 text-xs font-medium uppercase text-gray-400">
+              Filter snapshot
+            </h3>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md border border-gray-200 bg-gray-50 p-3 text-xs dark:border-gray-700 dark:bg-dark-surface-elevated">
+              {filterRows.map(([label, value]) => (
+                <React.Fragment key={label}>
+                  <dt className="text-gray-500">{label}</dt>
+                  <dd className="text-gray-900 dark:text-white">{value}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+            <p className="mt-2 text-[11px] text-gray-500">
+              Includes redacted prompt / response excerpts when present.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-gray-200 p-4 dark:border-gray-700">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={exporting}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onDownload(format)}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 rounded-md bg-brand-blue px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Download
+          </button>
+        </div>
       </div>
     </div>
   );
