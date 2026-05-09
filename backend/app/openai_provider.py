@@ -198,6 +198,68 @@ def _resolve_model(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_request_messages(
+    request_kind: str, kwargs: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """Return the request messages for chat-style calls, ``None`` otherwise."""
+    if request_kind == "chat.completions":
+        messages = kwargs.get("messages")
+        return messages if isinstance(messages, list) else None
+    if request_kind == "responses":
+        # The Responses API accepts either ``input`` (string or list of items)
+        # or ``messages``. Normalize to a list-of-dicts shape.
+        if isinstance(messages := kwargs.get("messages"), list):
+            return messages
+        if (raw := kwargs.get("input")) is not None:
+            if isinstance(raw, str):
+                return [{"role": "user", "content": raw}]
+            if isinstance(raw, list):
+                return [m for m in raw if isinstance(m, dict)]
+    return None
+
+
+def _extract_response_payload(
+    request_kind: str, response: Any
+) -> tuple[str | None, list[dict[str, Any]] | None]:
+    """Return ``(response_text, tool_calls)`` extracted from a non-streaming
+    response. Failures are swallowed — audit must never break the call path.
+    """
+    try:
+        if request_kind == "chat.completions":
+            choices = getattr(response, "choices", None) or []
+            if not choices:
+                return None, None
+            message = getattr(choices[0], "message", None)
+            text = getattr(message, "content", None) if message is not None else None
+            tool_calls_raw = (
+                getattr(message, "tool_calls", None) if message is not None else None
+            )
+            tool_calls = _normalize_tool_calls(tool_calls_raw)
+            return (text if isinstance(text, str) else None), tool_calls
+        if request_kind == "responses":
+            text = getattr(response, "output_text", None)
+            return (text if isinstance(text, str) else None), None
+    except Exception:  # pragma: no cover — defensive only
+        return None, None
+    return None, None
+
+
+def _normalize_tool_calls(raw: Any) -> list[dict[str, Any]] | None:
+    if not raw:
+        return None
+    out: list[dict[str, Any]] = []
+    for call in raw:
+        function = getattr(call, "function", None)
+        name = getattr(function, "name", None) if function else getattr(call, "name", None)
+        arguments = (
+            getattr(function, "arguments", None)
+            if function
+            else getattr(call, "arguments", None)
+        )
+        out.append({"name": name, "arguments": arguments})
+    return out or None
+
+
 class _SyncCreateProxy:
     def __init__(self, create_func, request_kind: str):
         self._create_func = create_func
@@ -205,6 +267,7 @@ class _SyncCreateProxy:
 
     def __call__(self, *args, **kwargs):
         model = _resolve_model(args, kwargs)
+        request_messages = _extract_request_messages(self._request_kind, kwargs)
         started = monotonic_ms()
         try:
             response = self._create_func(*args, **kwargs)
@@ -217,11 +280,16 @@ class _SyncCreateProxy:
                 latency_ms=monotonic_ms() - started,
                 status="error",
                 error_type=type(exc).__name__,
+                messages=request_messages,
             )
             raise
 
         usage = extract_openai_usage(response)
-        status = "stream_started" if kwargs.get("stream") else "success"
+        is_stream = bool(kwargs.get("stream"))
+        status = "stream_started" if is_stream else "success"
+        response_text, tool_calls = (
+            (None, None) if is_stream else _extract_response_payload(self._request_kind, response)
+        )
         record_llm_usage_event(
             provider="openai",
             model=model,
@@ -229,6 +297,9 @@ class _SyncCreateProxy:
             request_kind=self._request_kind,
             latency_ms=monotonic_ms() - started,
             status=status,
+            messages=request_messages,
+            response_text=response_text,
+            tool_calls=tool_calls,
             **usage,
         )
         return response
@@ -244,6 +315,7 @@ class _AsyncCreateProxy:
 
     async def __call__(self, *args, **kwargs):
         model = _resolve_model(args, kwargs)
+        request_messages = _extract_request_messages(self._request_kind, kwargs)
         started = monotonic_ms()
         try:
             response = await self._create_func(*args, **kwargs)
@@ -256,11 +328,18 @@ class _AsyncCreateProxy:
                 latency_ms=monotonic_ms() - started,
                 status="error",
                 error_type=type(exc).__name__,
+                messages=request_messages,
             )
             raise
 
         usage = extract_openai_usage(response)
-        status = "stream_started" if kwargs.get("stream") else "success"
+        is_stream = bool(kwargs.get("stream"))
+        status = "stream_started" if is_stream else "success"
+        response_text, tool_calls = (
+            (None, None)
+            if is_stream
+            else _extract_response_payload(self._request_kind, response)
+        )
         record_llm_usage_event(
             provider="openai",
             model=model,
@@ -268,6 +347,9 @@ class _AsyncCreateProxy:
             request_kind=self._request_kind,
             latency_ms=monotonic_ms() - started,
             status=status,
+            messages=request_messages,
+            response_text=response_text,
+            tool_calls=tool_calls,
             **usage,
         )
         return response

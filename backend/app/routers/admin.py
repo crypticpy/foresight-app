@@ -167,6 +167,18 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "default": False,
     },
     {
+        "key": "FORESIGHT_AUDIT_LLM_CONTENT",
+        "group_name": "runtime",
+        "label": "Capture LLM prompt/response content",
+        "description": (
+            "Persist redacted prompts and responses to llm_usage_events for the "
+            "admin audit tab. Off by default — enable when you need a content "
+            "trail for FOIA / oversight. Token & cost metrics are always captured."
+        ),
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
         "key": "FORESIGHT_ENABLE_PUBLIC_SHARE",
         "group_name": "features",
         "label": "Public/share links",

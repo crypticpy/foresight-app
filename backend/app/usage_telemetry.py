@@ -20,6 +20,8 @@ from typing import Any, Iterator
 
 from supabase import Client, create_client
 
+from app.redaction import merge_flags, redact_and_truncate
+
 logger = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="usage-telemetry")
@@ -29,6 +31,19 @@ _supabase_client: Client | None = None
 _usage_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "usage_context", default={}
 )
+
+# Audit-content capture flag, cached to avoid hitting admin_settings on every
+# LLM call. The flag is admin-controlled via the FORESIGHT_AUDIT_LLM_CONTENT
+# row; the cache TTL bounds how long a flip takes to propagate.
+_AUDIT_FLAG_KEY = "FORESIGHT_AUDIT_LLM_CONTENT"
+_AUDIT_FLAG_TTL_S = 60.0
+_audit_flag_cache: dict[str, Any] = {"value": False, "expires_at": 0.0}
+
+# Request kinds that carry semantically interesting prompt/response content.
+# Embeddings are excluded — capturing every embedded card body would balloon
+# the audit table without adding investigative value the metadata doesn't
+# already provide.
+_AUDIT_REQUEST_KINDS = frozenset({"chat.completions", "responses"})
 
 
 # Order matters — _load_pricing's matcher uses ``model.startswith(prefix)`` and
@@ -184,6 +199,128 @@ def extract_openai_usage(response: Any) -> dict[str, int | None]:
     }
 
 
+def is_audit_content_enabled() -> bool:
+    """Return True when prompt/response payload capture is enabled.
+
+    Reads ``admin_settings`` with a 60s in-process cache. Fails closed —
+    any error or missing row returns False so we never write content the
+    operator hasn't explicitly opted into.
+    """
+    now = time.monotonic()
+    if _audit_flag_cache["expires_at"] > now:
+        return bool(_audit_flag_cache["value"])
+
+    enabled = False
+    client = _get_supabase_client()
+    if client is not None:
+        try:
+            resp = (
+                client.table("admin_settings")
+                .select("value")
+                .eq("key", _AUDIT_FLAG_KEY)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(resp, "data", None) or []
+            if rows:
+                raw = rows[0].get("value")
+                if isinstance(raw, bool):
+                    enabled = raw
+                elif isinstance(raw, str):
+                    enabled = raw.strip().lower() in {"1", "true", "t", "yes", "on"}
+        except Exception as exc:  # pragma: no cover — fail closed on any error
+            logger.debug("Audit flag lookup failed: %s", exc)
+
+    _audit_flag_cache["value"] = enabled
+    _audit_flag_cache["expires_at"] = now + _AUDIT_FLAG_TTL_S
+    return enabled
+
+
+def reset_audit_flag_cache() -> None:
+    """Force the audit-content cache to refresh on the next call.
+    Tests use this to flip the flag without waiting for TTL."""
+    _audit_flag_cache["expires_at"] = 0.0
+
+
+def _stringify_messages(messages: list[dict[str, Any]] | None) -> str:
+    if not messages:
+        return ""
+    parts: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role", "?"))
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            # Vision / multimodal: stringify each part's text field if present.
+            chunks: list[str] = []
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text") or part.get("input_text") or ""
+                    if text:
+                        chunks.append(str(text))
+                else:
+                    chunks.append(str(part))
+            content = "\n".join(chunks)
+        parts.append(f"[{role}]\n{content}")
+    return "\n\n".join(parts)
+
+
+def _sanitize_tool_calls(tool_calls: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], list[str]]:
+    if not tool_calls:
+        return [], []
+    sanitized: list[dict[str, Any]] = []
+    all_flags: list[list[str]] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        name = call.get("name") or call.get("function", {}).get("name") if isinstance(call.get("function"), dict) else call.get("name")
+        raw_args = call.get("arguments")
+        if raw_args is None and isinstance(call.get("function"), dict):
+            raw_args = call["function"].get("arguments")
+        args_str = raw_args if isinstance(raw_args, str) else json.dumps(raw_args, default=str) if raw_args is not None else ""
+        redacted_args, flags = redact_and_truncate(args_str)
+        sanitized.append({"name": name, "arguments": redacted_args})
+        all_flags.append(flags)
+    return sanitized, merge_flags(all_flags)
+
+
+def _build_audit_payload(
+    *,
+    request_kind: str,
+    messages: list[dict[str, Any]] | None,
+    response_text: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Return audit fields to merge into the usage event row.
+
+    Returns an empty dict (no payload columns set) when capture is disabled,
+    when this request_kind is not audited, or when nothing is provided.
+    """
+    if request_kind not in _AUDIT_REQUEST_KINDS:
+        return {}
+    if not is_audit_content_enabled():
+        return {}
+    if not (messages or response_text or tool_calls):
+        return {}
+
+    prompt_str = _stringify_messages(messages)
+    prompt_excerpt, prompt_flags = redact_and_truncate(prompt_str)
+    response_excerpt, response_flags = redact_and_truncate(response_text)
+    sanitized_tool_calls, tool_flags = _sanitize_tool_calls(tool_calls)
+
+    flags = merge_flags([prompt_flags, response_flags, tool_flags])
+
+    payload: dict[str, Any] = {"redaction_flags": flags}
+    if prompt_excerpt:
+        payload["prompt_excerpt"] = prompt_excerpt
+    if response_excerpt:
+        payload["response_excerpt"] = response_excerpt
+    if sanitized_tool_calls:
+        payload["tool_calls"] = sanitized_tool_calls
+    return payload
+
+
 def record_llm_usage_event(
     *,
     provider: str,
@@ -198,8 +335,16 @@ def record_llm_usage_event(
     status: str = "success",
     error_type: str | None = None,
     metadata: dict[str, Any] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    response_text: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Queue an LLM usage event insert. Failures are logged and swallowed."""
+    """Queue an LLM usage event insert. Failures are logged and swallowed.
+
+    ``messages``, ``response_text``, and ``tool_calls`` populate the audit
+    payload columns when ``FORESIGHT_AUDIT_LLM_CONTENT`` is enabled. When
+    disabled (default), they are ignored — only token / cost metrics persist.
+    """
     context = get_usage_context()
     estimated_cost = estimate_openai_cost_usd(
         model, input_tokens, output_tokens, cached_input_tokens
@@ -224,6 +369,14 @@ def record_llm_usage_event(
         "workstream_id": context.get("workstream_id"),
         "metadata": {**(metadata or {}), **context.get("metadata", {})},
     }
+    audit_payload = _build_audit_payload(
+        request_kind=request_kind,
+        messages=messages,
+        response_text=response_text,
+        tool_calls=tool_calls,
+    )
+    if audit_payload:
+        event.update(audit_payload)
     _executor.submit(_insert_event, "llm_usage_events", event)
 
 
