@@ -23,6 +23,7 @@ from app.chat_service import (
     generate_suggestions as chat_generate_suggestions,
 )
 from app.openai_provider import azure_openai_async_client, get_chat_mini_deployment
+from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -231,16 +232,24 @@ async def chat_endpoint(
         mention_dicts = [m.model_dump() for m in request.mentions]
 
     async def event_generator():
-        async for event in chat_service_chat(
-            scope=request.scope,
-            scope_id=request.scope_id,
-            message=request.message,
-            conversation_id=request.conversation_id,
+        # Tag every LLM call made during this chat turn with user_id and
+        # conversation_id (the latter is augmented inside chat_service once a
+        # new conversation row is created — see chat_service.chat).
+        with llm_usage_context(
             user_id=user_id,
-            supabase_client=supabase,
-            mentions=mention_dicts,
+            conversation_id=request.conversation_id,
+            operation="chat.message",
         ):
-            yield event
+            async for event in chat_service_chat(
+                scope=request.scope,
+                scope_id=request.scope_id,
+                message=request.message,
+                conversation_id=request.conversation_id,
+                user_id=user_id,
+                supabase_client=supabase,
+                mentions=mention_dicts,
+            ):
+                yield event
 
     return StreamingResponse(
         event_generator(),
