@@ -701,3 +701,76 @@ export function triggerAdminAction(
     body: config.body ? JSON.stringify(config.body) : undefined,
   });
 }
+
+export interface LlmAuditEventListItem {
+  id: string;
+  created_at: string;
+  user_id: string | null;
+  provider: string | null;
+  model: string | null;
+  operation: string | null;
+  request_kind: string | null;
+  status: string | null;
+  error_type: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_input_tokens: number | null;
+  total_tokens: number | null;
+  estimated_cost_usd: number | null;
+  latency_ms: number | null;
+  run_id: string | null;
+  task_id: string | null;
+  card_id: string | null;
+  workstream_id: string | null;
+  redaction_flags: string[] | null;
+}
+
+export interface LlmAuditEventDetail extends LlmAuditEventListItem {
+  prompt_excerpt: string | null;
+  response_excerpt: string | null;
+  tool_calls: Array<Record<string, unknown>> | null;
+  metadata: Record<string, unknown> | null;
+  prompt_messages_full_ref: string | null;
+}
+
+export interface LlmAuditEventsResponse {
+  items: LlmAuditEventListItem[];
+  limit: number;
+  offset: number;
+  next_offset: number | null;
+}
+
+export interface LlmAuditEventsParams {
+  limit?: number;
+  offset?: number;
+  operation?: string;
+  request_kind?: string;
+  user_id?: string;
+  model?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  min_cost?: number;
+  audited_only?: boolean;
+}
+
+export function fetchLlmAuditEvents(
+  token: string,
+  params: LlmAuditEventsParams = {},
+) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const qs = search.toString();
+  const endpoint = `/api/v1/admin/usage/events${qs ? `?${qs}` : ""}`;
+  return apiRequest<LlmAuditEventsResponse>(endpoint, token);
+}
+
+export function fetchLlmAuditEvent(token: string, eventId: string) {
+  return apiRequest<LlmAuditEventDetail>(
+    `/api/v1/admin/usage/events/${encodeURIComponent(eventId)}`,
+    token,
+  );
+}
