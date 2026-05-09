@@ -129,6 +129,17 @@ def _set_cached_profile(user_id: str, profile: dict) -> None:
     _user_profile_cache[user_id] = (profile, time.time())
 
 
+def evict_cached_profile(user_id: str) -> None:
+    """Drop a user's profile from the TTL cache so the next request refetches.
+
+    Why: role / account_type changes must take effect immediately. Without
+    eviction, an admin demoted via /admin/users/{id} could keep hitting
+    admin endpoints for up to _CACHE_TTL seconds because require_admin()
+    reads the cached profile.
+    """
+    _user_profile_cache.pop(user_id, None)
+
+
 # ---------------------------------------------------------------------------
 # Authentication dependency
 # ---------------------------------------------------------------------------

@@ -473,8 +473,9 @@ function SettingsTab({
 }) {
   const groups = useMemo(() => {
     return settings.reduce<Record<string, AdminSetting[]>>((acc, setting) => {
-      acc[setting.group_name] = acc[setting.group_name] || [];
-      acc[setting.group_name].push(setting);
+      const list = acc[setting.group_name] ?? [];
+      list.push(setting);
+      acc[setting.group_name] = list;
       return acc;
     }, {});
   }, [settings]);
@@ -715,36 +716,52 @@ const AdminConsole: React.FC = () => {
   const isAdmin =
     profile?.role === "admin" || profile?.role === "service_role";
 
+  // loadAll fetches everything except usage (which is parameterized by
+  // usageDays). Splitting them prevents a full console reload every time
+  // the user changes the usage window.
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const token = await getToken();
-      const [overviewData, usersData, settingsData, jobsData, usageData, recentData] =
-        await Promise.all([
-          fetchAdminOverview(token),
-          fetchAdminUsers(token),
-          fetchAdminSettings(token),
-          fetchRecentJobs(token),
-          fetchUsageSummary(token, usageDays),
-          fetchRecentUsage(token, 50),
-        ]);
+      const [overviewData, usersData, settingsData, jobsData] = await Promise.all([
+        fetchAdminOverview(token),
+        fetchAdminUsers(token),
+        fetchAdminSettings(token),
+        fetchRecentJobs(token),
+      ]);
       setOverview(overviewData);
       setUsers(usersData.items);
       setSettings(settingsData.items);
       setJobs(jobsData);
-      setUsage(usageData);
-      setRecentUsage(recentData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load admin data");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadUsage = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const [usageData, recentData] = await Promise.all([
+        fetchUsageSummary(token, usageDays),
+        fetchRecentUsage(token, 50),
+      ]);
+      setUsage(usageData);
+      setRecentUsage(recentData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load usage");
     }
   }, [usageDays]);
 
   useEffect(() => {
     if (isAdmin) loadAll();
   }, [isAdmin, loadAll]);
+
+  useEffect(() => {
+    if (isAdmin) loadUsage();
+  }, [isAdmin, loadUsage]);
 
   const refreshUsers = useCallback(
     async (filters: { search?: string; account_type?: string; role?: string } = {}) => {
@@ -794,14 +811,10 @@ const AdminConsole: React.FC = () => {
     }
   }, []);
 
-  const updateUsageWindow = useCallback(async (days: number) => {
+  // Just update usageDays — the loadUsage effect picks up the change and
+  // refetches once.
+  const updateUsageWindow = useCallback((days: number) => {
     setUsageDays(days);
-    try {
-      const token = await getToken();
-      setUsage(await fetchUsageSummary(token, days));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load usage");
-    }
   }, []);
 
   if (!isAdmin) {

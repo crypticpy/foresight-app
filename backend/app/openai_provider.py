@@ -312,6 +312,25 @@ class _InstrumentedClientProxy:
         return getattr(self._client, name)
 
 
+def reload_config() -> None:
+    """Re-read OpenAI model env vars into the cached _config.
+
+    Why: model env vars (OPENAI_CHAT_MODEL etc.) are read into OpenAIConfig
+    once at import. The admin console's PATCH /admin/settings/{key} mutates
+    os.environ, but get_chat_deployment() returns _config.model_chat — so
+    without a refresh, saved overrides don't apply until the process restarts.
+    Call this after saving a model-group setting.
+
+    Note: this only refreshes the in-memory model name lookups. The OpenAI
+    client objects (_sync_client, _async_client) are not rebuilt, since
+    OPENAI_API_KEY / OPENAI_BASE_URL are not admin-controlled.
+    """
+    global _config
+    new_config = OpenAIConfig()
+    _initialize_model_mapping(new_config)
+    _config = new_config
+
+
 try:
     _config = OpenAIConfig()
     _initialize_model_mapping(_config)
@@ -398,4 +417,6 @@ __all__ = [
     # Validation
     "validate_azure_connection",
     "validate_openai_connection",
+    # Runtime config refresh
+    "reload_config",
 ]

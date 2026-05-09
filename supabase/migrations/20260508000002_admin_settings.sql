@@ -2,7 +2,11 @@
 
 CREATE TABLE IF NOT EXISTS public.admin_settings (
     key TEXT PRIMARY KEY,
-    value JSONB NOT NULL,
+    -- value is nullable: clearing a number-typed override (e.g.
+    -- FORESIGHT_MAX_RESEARCH_TASK_ESTIMATED_COST_USD) sets value to NULL,
+    -- which the API treats as "fall back to env / default" without
+    -- deleting the row.
+    value JSONB,
     value_type TEXT NOT NULL CHECK (value_type IN ('string', 'number', 'boolean', 'json')),
     group_name TEXT NOT NULL,
     label TEXT NOT NULL,

@@ -10,7 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.authz import require_admin
-from app.deps import supabase, get_current_user, _safe_error, limiter
+from app.deps import (
+    supabase,
+    get_current_user,
+    _safe_error,
+    limiter,
+    evict_cached_profile,
+)
+from app.openai_provider import reload_config as reload_openai_config
 from app.models.source_rating import (
     SourceRatingCreate,
     SourceRatingResponse,
@@ -216,10 +223,23 @@ def _coerce_setting_value(value: Any, value_type: str) -> Any:
     if value_type == "number":
         if value is None or value == "":
             return None
+        if isinstance(value, bool):
+            # bool is a subclass of int — reject so admins don't accidentally
+            # save True/False under a numeric setting.
+            raise HTTPException(
+                status_code=400,
+                detail="Numeric setting requires a number, not a boolean",
+            )
         if isinstance(value, (int, float)):
             return value
-        text = str(value)
-        return float(text) if "." in text else int(text)
+        text = str(value).strip()
+        try:
+            return float(text) if "." in text else int(text)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid number for setting: {value!r}",
+            ) from exc
     if value_type == "json":
         return value
     return "" if value is None else str(value)
@@ -391,7 +411,11 @@ async def update_admin_user(
             raise HTTPException(status_code=404, detail="User not found")
         return result.data[0]
 
-    return await asyncio.to_thread(update_row)
+    updated = await asyncio.to_thread(update_row)
+    # Evict the edited user's cached profile so role / account_type changes
+    # apply on their next request instead of waiting up to 5 minutes.
+    evict_cached_profile(user_id)
+    return updated
 
 
 @router.get("/admin/settings")
@@ -455,10 +479,21 @@ async def update_admin_setting(
         result = supabase.table("admin_settings").upsert(row, on_conflict="key").execute()
         if not result.data:
             raise HTTPException(status_code=400, detail="Failed to save setting")
-        os.environ[key] = "" if value is None else str(value)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = str(value)
         return result.data[0]
 
-    return await asyncio.to_thread(save)
+    saved = await asyncio.to_thread(save)
+    # Some settings are cached at import time. Refresh in-memory state so the
+    # change takes effect this process — without a restart.
+    if key.startswith("OPENAI_"):
+        try:
+            reload_openai_config()
+        except Exception:
+            logger.exception("Failed to reload OpenAI config after admin save")
+    return saved
 
 
 @router.get("/admin/jobs/recent")
