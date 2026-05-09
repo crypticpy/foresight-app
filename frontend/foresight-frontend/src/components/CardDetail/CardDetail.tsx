@@ -732,8 +732,8 @@ export const CardDetail: React.FC<CardDetailProps> = ({
       {activeTab === "research" && (
         <ResearchTab
           researchHistory={researchHistory}
-          onRequestDeepResearch={handleDeepResearch}
-          canRequestDeepResearch={canDeepResearch ?? false}
+          onRequestDeepResearch={readOnly ? undefined : handleDeepResearch}
+          canRequestDeepResearch={!readOnly && (canDeepResearch ?? false)}
         />
       )}
       {activeTab === "sources" && <SourcesTab sources={sources} />}
