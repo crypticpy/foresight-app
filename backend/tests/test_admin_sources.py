@@ -168,6 +168,12 @@ def _bypass_admin(monkeypatch):
     monkeypatch.setattr(authz, "require_admin", lambda user: None)
 
 
+def _disable_rate_limiter(monkeypatch):
+    from app.deps import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
+
 def _patch_supabase(monkeypatch, mock_sb):
     """Patch supabase in both modules that touch the registry / audit log."""
     from app.routers import admin as admin_router
@@ -210,14 +216,15 @@ def test_list_sources_joins_health_stats(monkeypatch):
             }
         ],
         "discovered_sources": [
-            {"url": rss_url, "triage_passed": True, "created_at": "2026-05-08"},
-            {"url": rss_url, "triage_passed": True, "created_at": "2026-05-09"},
-            {"url": rss_url, "triage_passed": False, "created_at": "2026-05-09"},
+            {"url": rss_url, "triage_is_relevant": True, "created_at": "2026-05-08"},
+            {"url": rss_url, "triage_is_relevant": True, "created_at": "2026-05-09"},
+            {"url": rss_url, "triage_is_relevant": False, "created_at": "2026-05-09"},
         ],
     }
     mock_sb = _MockSupabase(tables)
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     result = asyncio.run(
@@ -242,6 +249,7 @@ def test_create_rss_source_writes_audit_row(monkeypatch):
     mock_sb = _MockSupabase(tables)
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
     _stub_rss_validator(monkeypatch)
 
     body = admin_discovery.AdminSourceCreate(
@@ -282,6 +290,7 @@ def test_create_source_rejects_missing_url(monkeypatch):
     mock_sb = _MockSupabase({"discovery_sources_registry": []})
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     body = admin_discovery.AdminSourceCreate(
         category="rss", name="Missing URL", url=None
@@ -306,6 +315,7 @@ def test_create_web_search_allows_null_url(monkeypatch):
     )
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     body = admin_discovery.AdminSourceCreate(
         category="web_search",
@@ -343,6 +353,7 @@ def test_create_duplicate_returns_409(monkeypatch):
     )
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
     _stub_rss_validator(monkeypatch)
 
     body = admin_discovery.AdminSourceCreate(
@@ -381,6 +392,7 @@ def test_update_source_audits_before_after(monkeypatch):
     )
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     body = admin_discovery.AdminSourceUpdate(name="New name", enabled=False)
     row = asyncio.run(
@@ -412,6 +424,7 @@ def test_update_missing_source_returns_404(monkeypatch):
     mock_sb = _MockSupabase({"discovery_sources_registry": []})
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     body = admin_discovery.AdminSourceUpdate(enabled=False)
     with pytest.raises(HTTPException) as exc_info:
@@ -446,6 +459,7 @@ def test_delete_source_removes_row_and_audits(monkeypatch):
     )
     _patch_supabase(monkeypatch, mock_sb)
     _bypass_admin(monkeypatch)
+    _disable_rate_limiter(monkeypatch)
 
     asyncio.run(
         admin_discovery.delete_admin_source(
@@ -502,6 +516,25 @@ def test_load_active_source_urls_falls_back_to_defaults(monkeypatch):
     )
     urls = discovery_service.load_active_source_urls("rss")
     assert urls == discovery_service.DEFAULT_RSS_FEEDS
+
+
+def test_load_active_source_urls_returns_empty_when_all_disabled(monkeypatch):
+    """If the operator has registered RSS rows but flipped every one off,
+    honor that: do NOT silently revert to DEFAULT_RSS_FEEDS, because that
+    would re-enable feeds the operator just disabled."""
+    from app import deps
+    from app import discovery_service
+
+    rows = [
+        {"url": "https://feed-a.example.com/rss", "category": "rss", "enabled": False},
+        {"url": "https://feed-b.example.com/rss", "category": "rss", "enabled": False},
+    ]
+    monkeypatch.setattr(
+        deps,
+        "supabase",
+        _MockSupabase({"discovery_sources_registry": rows}),
+    )
+    assert discovery_service.load_active_source_urls("rss") == []
 
 
 def test_load_active_source_urls_other_category_returns_empty(monkeypatch):
