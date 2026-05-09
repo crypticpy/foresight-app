@@ -129,6 +129,24 @@ def _set_cached_profile(user_id: str, profile: dict) -> None:
     _user_profile_cache[user_id] = (profile, time.time())
 
 
+def evict_cached_profile(user_id: str) -> None:
+    """Drop a user's profile from the TTL cache so the next request refetches.
+
+    Why: role / account_type changes must take effect immediately. Without
+    eviction, an admin demoted via /admin/users/{id} could keep hitting
+    admin endpoints for up to _CACHE_TTL seconds because require_admin()
+    reads the cached profile.
+
+    Scope limitation: this only clears the cache in the *current process*.
+    Foresight currently runs a single web worker on Railway, so a local
+    eviction covers all serving threads. If we ever scale to multiple
+    workers (or add a standalone worker that authenticates), we will need
+    a shared eviction channel (e.g. Redis pub/sub or shortening _CACHE_TTL
+    for admin-mutated rows).
+    """
+    _user_profile_cache.pop(user_id, None)
+
+
 # ---------------------------------------------------------------------------
 # Authentication dependency
 # ---------------------------------------------------------------------------
