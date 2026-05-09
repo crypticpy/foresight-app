@@ -249,6 +249,44 @@ def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
     return {item["key"]: item for item in SETTING_DEFINITIONS}
 
 
+def _log_admin_action(
+    *,
+    actor: dict,
+    action: str,
+    target_type: str,
+    target_id: str,
+    before: Any,
+    after: Any,
+    request: Optional[Request] = None,
+) -> None:
+    """Insert an admin_audit_log row.
+
+    Failures are logged but never raised — the caller's mutation has already
+    succeeded by the time we get here, so a missed audit row should not
+    surface as an HTTP error. Operators monitor via the logger.
+    """
+    try:
+        supabase.table("admin_audit_log").insert(
+            {
+                "actor_id": actor.get("id"),
+                "actor_email": actor.get("email"),
+                "action": action,
+                "target_type": target_type,
+                "target_id": target_id,
+                "before": before,
+                "after": after,
+                "request_ip": request.client.host if request and request.client else None,
+            }
+        ).execute()
+    except Exception:
+        logger.exception(
+            "Failed to write admin_audit_log entry: action=%s target=%s/%s",
+            action,
+            target_type,
+            target_id,
+        )
+
+
 @router.get("/admin/overview")
 async def get_admin_overview(current_user: dict = Depends(get_current_user)):
     """Return high-level operational metrics for the admin console."""
@@ -403,20 +441,46 @@ async def update_admin_user(
     """Update user role, account type, or display name."""
     require_admin(current_user)
 
-    def update_row() -> dict[str, Any]:
+    def update_row() -> tuple[dict[str, Any], dict[str, Any]]:
         data = update.model_dump(exclude_none=True)
         if not data:
             raise HTTPException(status_code=400, detail="No user fields provided")
+
+        # Read the previous row so the audit `before` snapshot is meaningful.
+        # Restricted to the fields actually being changed so we don't store a
+        # full user dump on every audit row.
+        previous_row = (
+            supabase.table("users")
+            .select("id, role, account_type, display_name")
+            .eq("id", user_id)
+            .single()
+            .execute()
+        )
+        if not previous_row.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        before_snapshot = {key: previous_row.data.get(key) for key in data}
+
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         result = supabase.table("users").update(data).eq("id", user_id).execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="User not found")
-        return result.data[0]
+        return result.data[0], before_snapshot
 
-    updated = await asyncio.to_thread(update_row)
+    updated, before_snapshot = await asyncio.to_thread(update_row)
     # Evict the edited user's cached profile so role / account_type changes
     # apply on their next request instead of waiting up to 5 minutes.
     evict_cached_profile(user_id)
+    after_snapshot = {key: updated.get(key) for key in before_snapshot}
+    await asyncio.to_thread(
+        _log_admin_action,
+        actor=current_user,
+        action="admin.user.update",
+        target_type="user",
+        target_id=user_id,
+        before=before_snapshot,
+        after=after_snapshot,
+        request=request,
+    )
     return updated
 
 
@@ -477,7 +541,19 @@ async def update_admin_setting(
 
     value = _coerce_setting_value(update.value, definition["value_type"])
 
-    def save() -> dict[str, Any]:
+    def save() -> tuple[dict[str, Any], Any]:
+        # Read prior value so the audit `before` is meaningful even when the
+        # row didn't exist yet (None == "no override; was falling back to env").
+        prior_resp = (
+            supabase.table("admin_settings")
+            .select("value")
+            .eq("key", key)
+            .execute()
+        )
+        prior_value = (
+            prior_resp.data[0].get("value") if prior_resp.data else None
+        )
+
         now = datetime.now(timezone.utc).isoformat()
         row = {
             "key": key,
@@ -496,9 +572,19 @@ async def update_admin_setting(
             os.environ.pop(key, None)
         else:
             os.environ[key] = str(value)
-        return result.data[0]
+        return result.data[0], prior_value
 
-    saved = await asyncio.to_thread(save)
+    saved, prior_value = await asyncio.to_thread(save)
+    await asyncio.to_thread(
+        _log_admin_action,
+        actor=current_user,
+        action="admin.setting.update",
+        target_type="setting",
+        target_id=key,
+        before={"value": prior_value},
+        after={"value": value},
+        request=request,
+    )
     # Some settings are cached at import time. Refresh in-memory state so the
     # change takes effect this process — without a restart. If the reload
     # fails the DB row is already saved but the running process is on stale
@@ -559,6 +645,42 @@ async def list_recent_admin_jobs(
             "discovery_runs": discovery,
             "workstream_scans": scans,
         }
+
+    return await asyncio.to_thread(load)
+
+
+@router.get("/admin/audit")
+@limiter.limit("60/minute")
+async def list_admin_audit(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    target_type: Optional[Literal["user", "setting"]] = None,
+    actor_id: Optional[str] = None,
+    since: Optional[datetime] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Paginated admin audit log with optional filters."""
+    require_admin(current_user)
+
+    def load() -> dict[str, Any]:
+        query = supabase.table("admin_audit_log").select(
+            "id, actor_id, actor_email, action, target_type, target_id, "
+            "before, after, request_ip, created_at",
+            count="exact",
+        )
+        if target_type:
+            query = query.eq("target_type", target_type)
+        if actor_id:
+            query = query.eq("actor_id", actor_id)
+        if since:
+            query = query.gte("created_at", since.isoformat())
+        result = (
+            query.order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return {"items": result.data or [], "total": result.count or 0}
 
     return await asyncio.to_thread(load)
 
