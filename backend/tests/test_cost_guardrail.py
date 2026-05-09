@@ -64,6 +64,11 @@ class _Query:
     def limit(self, _n):
         return self
 
+    def order(self, _column, desc=False):  # noqa: ARG002 — stub
+        # Real PostgREST orders rows; the stub returns a stable order from
+        # the underlying list, which is sufficient for the guardrail tests.
+        return self
+
     def range(self, start: int, end: int):
         # PostgREST range is inclusive on both ends.
         self._range = (start, end)
@@ -438,3 +443,27 @@ def test_sum_spend_paginates_past_page_size(stub_supabase, monkeypatch):
 
     state = asyncio.run(cost_guardrail.get_budget_state(force=True))
     assert state.spent_usd == pytest.approx(7.0)
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed when spend cannot be computed
+# ---------------------------------------------------------------------------
+
+
+def test_fails_closed_when_spend_unavailable(stub_supabase, monkeypatch):
+    """If pagination breaks, the guardrail must trip — not silently undercount.
+
+    Substituting the cap for unknown spend is the safe choice: callers see
+    ``tripped=True`` and stop guarded work until an admin investigates.
+    """
+    _put_setting(stub_supabase, cost_guardrail.COST_ENABLED_KEY, True)
+    _put_setting(stub_supabase, cost_guardrail.COST_BUDGET_KEY, 50.0)
+
+    def _boom(*_a, **_kw):
+        raise cost_guardrail.SpendUnavailableError("simulated outage")
+
+    monkeypatch.setattr(cost_guardrail, "_sum_spend", _boom)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(cost_guardrail.check_budget_or_raise())
+    assert exc.value.status_code == 503

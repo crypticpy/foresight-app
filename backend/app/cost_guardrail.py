@@ -131,12 +131,30 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 _SPEND_PAGE_SIZE = 50_000
 
 
+class SpendUnavailableError(Exception):
+    """Raised by ``_sum_spend`` when pagination cannot complete cleanly.
+
+    Callers must treat the budget as **unknown** rather than substituting
+    the partial sum, which would silently undercount and let guarded work
+    continue past the cap.
+    """
+
+
 def _sum_spend(start: datetime, end: datetime) -> float:
     """Sum estimated_cost_usd from llm + external events in [start, end).
 
     Paginates with ``.range()`` so high-volume windows (>50k events) are
     summed exhaustively instead of silently truncated. A page is the
     last one when fewer than ``_SPEND_PAGE_SIZE`` rows come back.
+
+    The pagination is ordered by ``(created_at, id)`` — without an explicit
+    order, PostgREST does not guarantee row order across pages, so we'd
+    risk skipping or double-counting events between offsets. ``id`` ties
+    the order so duplicate ``created_at`` values (low-resolution clocks
+    or simultaneous inserts) don't reshuffle.
+
+    Raises ``SpendUnavailableError`` if any page fails — see the class
+    docstring for why partial reads must not flow through.
     """
     total = 0.0
     for table in ("llm_usage_events", "external_api_usage_events"):
@@ -148,18 +166,22 @@ def _sum_spend(start: datetime, end: datetime) -> float:
                     .select("estimated_cost_usd")
                     .gte("created_at", start.isoformat())
                     .lt("created_at", end.isoformat())
+                    .order("created_at", desc=False)
+                    .order("id", desc=False)
                     .range(offset, offset + _SPEND_PAGE_SIZE - 1)
                     .execute()
                 )
             except Exception as exc:
                 logger.warning(
-                    "cost_guardrail: %s sum failed at offset %d: %s — partial total %.2f",
+                    "cost_guardrail: %s sum failed at offset %d after $%.2f: %s",
                     table,
                     offset,
-                    exc,
                     total,
+                    exc,
                 )
-                break
+                raise SpendUnavailableError(
+                    f"spend pagination failed on {table} at offset {offset}: {exc}"
+                ) from exc
             rows = resp.data or []
             for row in rows:
                 cost = row.get("estimated_cost_usd")
@@ -220,7 +242,22 @@ def _fetch_state_sync(now: datetime) -> BudgetState:
     # trip on the hot path for installs that haven't enabled the guardrail.
     spent = 0.0
     if enabled and (cap is not None or alert is not None):
-        spent = _sum_spend(effective_start_dt, now)
+        try:
+            spent = _sum_spend(effective_start_dt, now)
+        except SpendUnavailableError as exc:
+            # Fail closed: when we cannot compute spend, we cannot prove the
+            # window is under cap. Substitute the cap (or alert if no cap is
+            # set) so the natural >= comparisons below compute
+            # tripped/alerting=True. Returning the partial sum would let
+            # guarded work continue past an unverified budget — the opposite
+            # of what the guardrail exists to do.
+            logger.warning(
+                "cost_guardrail: spend unavailable, failing closed: %s", exc
+            )
+            if cap is not None:
+                spent = cap
+            elif alert is not None:
+                spent = alert
 
     tripped = enabled and cap is not None and spent >= cap
     alerting = enabled and alert is not None and spent >= alert

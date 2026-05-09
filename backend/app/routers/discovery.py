@@ -216,19 +216,24 @@ async def execute_discovery_run_background(
 
         # Update the run record with results (service already updates its own record,
         # but we update the one we created in the endpoint)
-        supabase.table("discovery_runs").update(
-            {
-                "status": result.status.value,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "queries_generated": result.queries_generated,
-                "sources_found": result.sources_discovered,
-                "sources_relevant": result.sources_triaged,
-                "cards_created": len(result.cards_created),
-                "cards_enriched": len(result.cards_enriched),
-                "cards_deduplicated": result.sources_duplicate,
-                "estimated_cost": result.estimated_cost,
-            }
-        ).eq("id", run_id).execute()
+        success_payload = {
+            "status": result.status.value,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "queries_generated": result.queries_generated,
+            "sources_found": result.sources_discovered,
+            "sources_relevant": result.sources_triaged,
+            "cards_created": len(result.cards_created),
+            "cards_enriched": len(result.cards_enriched),
+            "cards_deduplicated": result.sources_duplicate,
+            "estimated_cost": result.estimated_cost,
+        }
+
+        def _update_success() -> None:
+            supabase.table("discovery_runs").update(success_payload).eq(
+                "id", run_id
+            ).execute()
+
+        await asyncio.to_thread(_update_success)
 
         logger.info(
             f"Discovery run {run_id} completed: {len(result.cards_created)} cards created, {len(result.cards_enriched)} enriched"
@@ -245,14 +250,23 @@ async def execute_discovery_run_background(
 
     except Exception as e:
         logger.error(f"Discovery run {run_id} failed: {str(e)}", exc_info=True)
-        # Update as failed
-        supabase.table("discovery_runs").update(
-            {
-                "status": "failed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error_message": str(e),
-            }
-        ).eq("id", run_id).execute()
+        failure_payload = {
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_message": str(e),
+        }
+
+        def _update_failure() -> None:
+            supabase.table("discovery_runs").update(failure_payload).eq(
+                "id", run_id
+            ).execute()
+
+        try:
+            await asyncio.to_thread(_update_failure)
+        except Exception:
+            logger.exception(
+                "Failed to mark discovery run %s as failed after error", run_id
+            )
 
 
 # ============================================================================
