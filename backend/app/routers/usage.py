@@ -12,11 +12,13 @@ from app.deps import get_current_user, limiter, supabase
 
 router = APIRouter(prefix="/api/v1", tags=["usage"])
 
-# Operations / request_kinds that the admin audit tab will surface. Mirrors
-# the audited request_kinds in usage_telemetry, but accepts both forms (raw
-# request_kind and the prefixed operation string) since older rows persisted
-# only one or the other.
-_AUDITED_OPERATION_PREFIXES = ("openai.chat.completions", "openai.responses")
+# Operations / request_kinds that the admin audit tab will surface.
+# `record_llm_usage_event` writes ``operation = context.get("operation") or
+# operation``, so a research path stores ``operation = "research.deep_research"``
+# while ``request_kind`` stays ``"chat.completions"``. The audited filter must
+# match either column to avoid silently dropping legitimate audited rows.
+_AUDITED_OPERATIONS = ("openai.chat.completions", "openai.responses")
+_AUDITED_REQUEST_KINDS = ("chat.completions", "responses")
 
 
 def _since(days: int) -> str:
@@ -263,6 +265,9 @@ async def list_usage_events(
             supabase.table("llm_usage_events")
             .select(_LIST_COLUMNS)
             .order("created_at", desc=True)
+            # Stable secondary key — avoids duplicate/missed rows across pages
+            # when multiple events share the same created_at timestamp.
+            .order("id", desc=True)
             # Fetch one extra row so we can flag whether more pages exist
             # without a separate count query.
             .range(offset, offset + limit)
@@ -284,7 +289,9 @@ async def list_usage_events(
         if min_cost is not None:
             query = query.gte("estimated_cost_usd", min_cost)
         if audited_only:
-            query = query.in_("operation", list(_AUDITED_OPERATION_PREFIXES))
+            ops = ",".join(_AUDITED_OPERATIONS)
+            kinds = ",".join(_AUDITED_REQUEST_KINDS)
+            query = query.or_(f"operation.in.({ops}),request_kind.in.({kinds})")
         return query.execute().data or []
 
     rows = await asyncio.to_thread(_fetch)

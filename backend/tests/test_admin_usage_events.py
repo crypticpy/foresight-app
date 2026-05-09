@@ -38,16 +38,17 @@ class _Query:
         self._gte: dict[str, Any] = {}
         self._lt: dict[str, Any] = {}
         self._in: dict[str, list[Any]] = {}
+        self._or: list[list[tuple[str, str, list[Any]]]] = []
+        self._order_keys: list[tuple[str, bool]] = []
         self._range: tuple[int, int] | None = None
         self._limit: int | None = None
-        self._order_desc = True
 
     # Builder methods ------------------------------------------------------
     def select(self, *_a, **_kw):
         return self
 
-    def order(self, _key, desc=True):
-        self._order_desc = desc
+    def order(self, key, desc=True):
+        self._order_keys.append((key, desc))
         return self
 
     def eq(self, key, value):
@@ -66,6 +67,36 @@ class _Query:
         self._in[key] = list(values)
         return self
 
+    def or_(self, expr: str):
+        # Split on top-level commas — values inside ``in.(...)`` parens are kept.
+        parts: list[str] = []
+        depth = 0
+        buf = ""
+        for ch in expr:
+            if ch == "(":
+                depth += 1
+                buf += ch
+            elif ch == ")":
+                depth -= 1
+                buf += ch
+            elif ch == "," and depth == 0:
+                parts.append(buf)
+                buf = ""
+            else:
+                buf += ch
+        if buf:
+            parts.append(buf)
+        clauses: list[tuple[str, str, list[Any]]] = []
+        for part in parts:
+            col, op, rest = part.split(".", 2)
+            if op == "in":
+                values = [v for v in rest.strip("()").split(",") if v]
+            else:
+                values = [rest]
+            clauses.append((col, op, values))
+        self._or.append(clauses)
+        return self
+
     def range(self, start, end):
         self._range = (start, end)
         return self
@@ -75,6 +106,18 @@ class _Query:
         return self
 
     # Executor -------------------------------------------------------------
+    @staticmethod
+    def _or_clause_matches(
+        row: dict[str, Any], clause: tuple[str, str, list[Any]]
+    ) -> bool:
+        col, op, values = clause
+        v = row.get(col)
+        if op == "in":
+            return v in values
+        if op == "eq":
+            return str(v) == values[0]
+        return False
+
     def _matches(self, row: dict[str, Any]) -> bool:
         for k, v in self._eq.items():
             if row.get(k) != v:
@@ -88,11 +131,17 @@ class _Query:
         for k, vs in self._in.items():
             if row.get(k) not in vs:
                 return False
+        for clauses in self._or:
+            if not any(self._or_clause_matches(row, c) for c in clauses):
+                return False
         return True
 
     def execute(self) -> _Resp:
         filtered = [r for r in self._rows if self._matches(r)]
-        filtered.sort(key=lambda r: r.get("created_at", ""), reverse=self._order_desc)
+        # Stable sort applied in reverse so the first .order() call dominates.
+        order_keys = self._order_keys or [("created_at", True)]
+        for key, desc in reversed(order_keys):
+            filtered.sort(key=lambda r, k=key: r.get(k, ""), reverse=desc)
         if self._range is not None:
             start, end = self._range
             # Supabase range is inclusive on both ends
@@ -274,14 +323,43 @@ def test_list_min_cost_filter(monkeypatch):
 def test_list_audited_only_restricts_to_chat_and_responses(monkeypatch):
     rows = [
         _make_event(id="chat", operation="openai.chat.completions"),
-        _make_event(id="resp", operation="openai.responses"),
-        _make_event(id="emb", operation="openai.embeddings"),
+        _make_event(id="resp", operation="openai.responses", request_kind="responses"),
+        _make_event(id="emb", operation="openai.embeddings", request_kind="embeddings"),
     ]
     _patch_supabase(monkeypatch, rows)
     _bypass_admin(monkeypatch)
 
     result = _call_list(monkeypatch, audited_only=True)
     assert sorted(i["id"] for i in result["items"]) == ["chat", "resp"]
+
+
+def test_list_audited_only_includes_rows_with_business_operation(monkeypatch):
+    """Research and other contexts override `operation` while keeping
+    `request_kind` set to chat.completions/responses. Those rows must still
+    surface under audited_only=True.
+    """
+    rows = [
+        _make_event(
+            id="research",
+            operation="research.deep_research",
+            request_kind="chat.completions",
+        ),
+        _make_event(
+            id="raw",
+            operation="openai.chat.completions",
+            request_kind="chat.completions",
+        ),
+        _make_event(
+            id="embed",
+            operation="openai.embeddings",
+            request_kind="embeddings",
+        ),
+    ]
+    _patch_supabase(monkeypatch, rows)
+    _bypass_admin(monkeypatch)
+
+    result = _call_list(monkeypatch, audited_only=True)
+    assert sorted(i["id"] for i in result["items"]) == ["raw", "research"]
 
 
 def test_list_rejects_invalid_iso_timestamp(monkeypatch):
