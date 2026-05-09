@@ -120,7 +120,7 @@ async def recover_cards_from_discovered_sources(
     Returns:
         Dict with recovery statistics
     """
-    from app.discovery_service import DiscoveryConfig
+    from app.discovery_service import build_discovery_config
     from app.signal_agent_service import SignalAgentService
 
     logger.info(f"Starting card recovery for {date_start} to {date_end}")
@@ -228,8 +228,9 @@ async def recover_cards_from_discovered_sources(
     ).execute()
 
     # Step 6: Run through signal agent
-    config = DiscoveryConfig(
-        max_new_cards_per_run=50,  # Higher limit for recovery
+    config = await asyncio.to_thread(
+        build_discovery_config,
+        max_new_cards_per_run=50,  # Explicit recovery cap wins over admin settings.
         use_signal_agent=True,
     )
 
@@ -310,7 +311,7 @@ async def reprocess_errored_sources(
     feed the results through the signal agent.
     """
     from app.ai_service import AIService
-    from app.discovery_service import DiscoveryConfig
+    from app.discovery_service import build_discovery_config
     from app.openai_provider import (
         azure_openai_client,
     )  # Sync — AIService methods aren't truly async
@@ -481,8 +482,9 @@ async def reprocess_errored_sources(
     ).execute()
 
     # Step 4: Run through signal agent
-    config = DiscoveryConfig(
-        max_new_cards_per_run=50,
+    config = await asyncio.to_thread(
+        build_discovery_config,
+        max_new_cards_per_run=50,  # Explicit recovery cap wins over admin settings.
         use_signal_agent=True,
     )
 
@@ -561,7 +563,7 @@ async def recover_analyzed_errors(
     Both are then fed to the signal agent.
     """
     from app.ai_service import AIService
-    from app.discovery_service import DiscoveryConfig
+    from app.discovery_service import build_discovery_config
     from app.openai_provider import (
         azure_openai_client,
     )  # Sync client — AIService methods aren't truly async
@@ -732,8 +734,9 @@ async def recover_analyzed_errors(
     ).execute()
 
     # Run through signal agent
-    config = DiscoveryConfig(
-        max_new_cards_per_run=50,
+    config = await asyncio.to_thread(
+        build_discovery_config,
+        max_new_cards_per_run=50,  # Explicit recovery cap wins over admin settings.
         use_signal_agent=True,
     )
 

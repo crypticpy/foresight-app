@@ -198,7 +198,111 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "value_type": "boolean",
         "default": False,
     },
+    # Discovery pipeline knobs. These take effect on the *next* discovery
+    # run; in-flight runs keep their captured config. Edits here flow through
+    # ``app.discovery_service.build_discovery_config``.
+    {
+        "key": "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN",
+        "group_name": "discovery",
+        "label": "Max queries per run",
+        "description": "Cap on search queries executed per discovery run.",
+        "value_type": "number",
+        "default": 100,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_MAX_SOURCES_PER_QUERY",
+        "group_name": "discovery",
+        "label": "Max sources per query",
+        "description": "Cap on URLs taken from each individual search query.",
+        "value_type": "number",
+        "default": 10,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL",
+        "group_name": "discovery",
+        "label": "Max sources total",
+        "description": "Hard ceiling on URLs fetched per run, summed across all queries and categories.",
+        "value_type": "number",
+        "default": 500,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN",
+        "group_name": "discovery",
+        "label": "Max new cards per run",
+        "description": "Cap on brand-new cards a single run can create. Enrichments to existing cards are unlimited.",
+        "value_type": "number",
+        "default": 15,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD",
+        "group_name": "discovery",
+        "label": "Auto-approve threshold",
+        "description": "Confidence (0–1) above which new cards skip the review queue. Higher = stricter.",
+        "value_type": "number",
+        "default": 0.95,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD",
+        "group_name": "discovery",
+        "label": "Strong-match threshold",
+        "description": "Vector similarity (0–1) at which a source is treated as the same signal as an existing card and enriches it.",
+        "value_type": "number",
+        "default": 0.85,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD",
+        "group_name": "discovery",
+        "label": "Weak-match threshold",
+        "description": "Lower vector similarity bound that triggers an LLM tie-breaker between enriching and creating.",
+        "value_type": "number",
+        "default": 0.75,
+    },
+    {
+        "key": "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD",
+        "group_name": "discovery",
+        "label": "Name-match threshold",
+        "description": "String-similarity bound on titles used as a deduplication signal alongside the vector match.",
+        "value_type": "number",
+        "default": 0.80,
+    },
 ]
+
+
+# Coded discovery presets. Picking a preset bulk-PATCHes all eight discovery
+# knobs to the values below. The "balanced" preset matches the in-code defaults
+# so applying it cleanly resets any drift.
+DISCOVERY_PRESETS: dict[str, dict[str, Any]] = {
+    "conservative": {
+        "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN": 50,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_PER_QUERY": 5,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL": 200,
+        "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": 8,
+        "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": 0.97,
+        "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": 0.90,
+        "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": 0.80,
+        "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": 0.85,
+    },
+    "balanced": {
+        "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN": 100,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_PER_QUERY": 10,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL": 500,
+        "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": 15,
+        "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": 0.95,
+        "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": 0.85,
+        "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": 0.75,
+        "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": 0.80,
+    },
+    "aggressive": {
+        "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN": 200,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_PER_QUERY": 15,
+        "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL": 1000,
+        "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": 30,
+        "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": 0.92,
+        "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": 0.80,
+        "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": 0.70,
+        "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": 0.75,
+    },
+}
 
 
 def _parse_env_value(raw: str | None, value_type: str, default: Any) -> Any:
@@ -569,22 +673,24 @@ async def list_admin_settings(current_user: dict = Depends(get_current_user)):
     return await asyncio.to_thread(load)
 
 
-@router.patch("/admin/settings/{key}")
-@limiter.limit("30/minute")
-async def update_admin_setting(
-    request: Request,
+async def _apply_admin_setting_change(
+    *,
     key: str,
-    update: AdminSettingUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    """Persist an admin setting override and update process-local env for visibility."""
-    require_admin(current_user)
-    definitions = _setting_definitions_by_key()
-    definition = definitions.get(key)
+    raw_value: Any,
+    current_user: dict,
+    request: Optional[Request],
+    action: str = "admin.setting.update",
+) -> dict[str, Any]:
+    """Persist a single setting override, audit it, and refresh in-process state.
+
+    Shared by both the per-setting PATCH endpoint and the bulk preset endpoint
+    so they cannot drift on validation, audit shape, or the OpenAI reload hook.
+    """
+    definition = _setting_definitions_by_key().get(key)
     if not definition:
         raise HTTPException(status_code=404, detail="Unknown admin setting")
 
-    value = _coerce_setting_value(update.value, definition["value_type"])
+    value = _coerce_setting_value(raw_value, definition["value_type"])
 
     def save() -> tuple[dict[str, Any], Any]:
         # Read prior value so the audit `before` is meaningful even when the
@@ -623,7 +729,7 @@ async def update_admin_setting(
     await asyncio.to_thread(
         _log_admin_action,
         actor=current_user,
-        action="admin.setting.update",
+        action=action,
         target_type="setting",
         target_id=key,
         before={"value": prior_value},
@@ -647,6 +753,69 @@ async def update_admin_setting(
                 ),
             ) from exc
     return saved
+
+
+@router.patch("/admin/settings/{key}")
+@limiter.limit("30/minute")
+async def update_admin_setting(
+    request: Request,
+    key: str,
+    update: AdminSettingUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Persist an admin setting override and update process-local env for visibility."""
+    require_admin(current_user)
+    return await _apply_admin_setting_change(
+        key=key,
+        raw_value=update.value,
+        current_user=current_user,
+        request=request,
+    )
+
+
+class DiscoveryPresetApply(BaseModel):
+    """Request body for ``POST /admin/discovery/preset``.
+
+    ``preset`` must be one of the keys in ``DISCOVERY_PRESETS`` — the endpoint
+    rejects unknown values with 400 rather than silently doing nothing so
+    typos surface immediately.
+    """
+
+    preset: Literal["conservative", "balanced", "aggressive"]
+
+
+@router.post("/admin/discovery/preset")
+@limiter.limit("10/minute")
+async def apply_discovery_preset(
+    request: Request,
+    body: DiscoveryPresetApply,
+    current_user: dict = Depends(get_current_user),
+):
+    """Bulk-apply a coded discovery preset by writing each knob individually.
+
+    Each knob still flows through ``_apply_admin_setting_change`` so the audit
+    log captures one row per field change. We intentionally do NOT batch the
+    eight rows into a single audit entry — single-knob audit shape is the
+    contract, and reverting one knob from the preset later should be searchable.
+    """
+    require_admin(current_user)
+    values = DISCOVERY_PRESETS.get(body.preset)
+    if values is None:
+        # Pydantic Literal already rejects unknown presets, but guard against
+        # a future code path that bypasses validation.
+        raise HTTPException(status_code=400, detail="Unknown discovery preset")
+
+    saved: list[dict[str, Any]] = []
+    for key, value in values.items():
+        row = await _apply_admin_setting_change(
+            key=key,
+            raw_value=value,
+            current_user=current_user,
+            request=request,
+            action="admin.discovery.preset.apply",
+        )
+        saved.append(row)
+    return {"preset": body.preset, "items": saved}
 
 
 @router.get("/admin/jobs/recent")

@@ -19,6 +19,7 @@ import { supabase } from "../App";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { cn } from "../lib/utils";
 import {
+  applyDiscoveryPreset,
   fetchAdminAuditLog,
   fetchAdminOverview,
   fetchAdminSettings,
@@ -33,6 +34,7 @@ import {
   type AdminOverview,
   type AdminSetting,
   type AdminUser,
+  type DiscoveryPreset,
   type RecentJobsResponse,
   type UsageEvent,
   type UsageSummary,
@@ -510,9 +512,11 @@ function OperationsTab({
 function SettingsTab({
   settings,
   onSave,
+  onApplyPreset,
 }: {
   settings: AdminSetting[];
   onSave: (setting: AdminSetting, value: unknown) => void;
+  onApplyPreset: (preset: DiscoveryPreset) => Promise<void>;
 }) {
   const groups = useMemo(() => {
     return settings.reduce<Record<string, AdminSetting[]>>((acc, setting) => {
@@ -540,6 +544,9 @@ function SettingsTab({
                 {group}
               </h3>
             </div>
+            {group === "discovery" && (
+              <DiscoveryPresetRow onApply={onApplyPreset} />
+            )}
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {items.map((setting) => (
                 <SettingRow
@@ -550,6 +557,71 @@ function SettingsTab({
               ))}
             </div>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const DISCOVERY_PRESET_DESCRIPTIONS: Record<DiscoveryPreset, string> = {
+  conservative:
+    "Tight caps, strict thresholds. Lower spend, fewer false-positive cards.",
+  balanced: "Default values used in code. Resets any drift to baseline.",
+  aggressive:
+    "Higher caps, looser dedup. More coverage at higher LLM cost; more enrichment + new cards.",
+};
+
+function DiscoveryPresetRow({
+  onApply,
+}: {
+  onApply: (preset: DiscoveryPreset) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<DiscoveryPreset | null>(null);
+
+  const handleClick = async (preset: DiscoveryPreset) => {
+    if (pending) return;
+    const message =
+      `Apply the "${preset}" preset? This will overwrite all eight discovery ` +
+      `settings below and write one audit entry per knob.\n\n` +
+      DISCOVERY_PRESET_DESCRIPTIONS[preset];
+    if (!window.confirm(message)) return;
+    setPending(preset);
+    try {
+      await onApply(preset);
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <div className="border-b border-gray-200 bg-gray-50 px-4 py-3 text-sm dark:border-gray-700 dark:bg-dark-surface-deep/40">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-[16rem]">
+          <p className="font-medium text-gray-900 dark:text-white">
+            Quick presets
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Bulk-apply all eight discovery knobs. Takes effect on the next run.
+          </p>
+        </div>
+        {(["conservative", "balanced", "aggressive"] as const).map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            disabled={pending !== null}
+            onClick={() => handleClick(preset)}
+            className={cn(
+              "inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors",
+              "border-gray-300 bg-white text-gray-700 hover:border-brand-blue hover:text-brand-blue",
+              "dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-gray-200 dark:hover:border-brand-blue dark:hover:text-brand-blue",
+              "disabled:cursor-not-allowed disabled:opacity-60",
+            )}
+          >
+            {pending === preset && (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            )}
+            {preset}
+          </button>
         ))}
       </div>
     </div>
@@ -1063,6 +1135,20 @@ const AdminConsole: React.FC = () => {
     [],
   );
 
+  const applyPreset = useCallback(async (preset: DiscoveryPreset) => {
+    try {
+      const token = await getToken();
+      const result = await applyDiscoveryPreset(token, preset);
+      const refreshed = await fetchAdminSettings(token);
+      setSettings(refreshed.items);
+      setNotice(
+        `Applied ${result.preset} preset to ${result.items.length} discovery settings`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply preset");
+    }
+  }, []);
+
   const runAction = useCallback(
     async (action: "scan" | "velocity" | "quality" | "lens-backfill") => {
       try {
@@ -1204,7 +1290,11 @@ const AdminConsole: React.FC = () => {
             <OperationsTab jobs={jobs} onAction={runAction} />
           )}
           {activeTab === "settings" && (
-            <SettingsTab settings={settings} onSave={saveSetting} />
+            <SettingsTab
+              settings={settings}
+              onSave={saveSetting}
+              onApplyPreset={applyPreset}
+            />
           )}
           {activeTab === "usage" && (
             <UsageTab

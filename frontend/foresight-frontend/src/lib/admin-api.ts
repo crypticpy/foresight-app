@@ -168,6 +168,24 @@ export function updateAdminSetting(token: string, key: string, value: unknown) {
   });
 }
 
+export type DiscoveryPreset = "conservative" | "balanced" | "aggressive";
+
+export interface DiscoveryPresetResponse {
+  preset: DiscoveryPreset;
+  items: AdminSetting[];
+}
+
+export function applyDiscoveryPreset(token: string, preset: DiscoveryPreset) {
+  return apiRequest<DiscoveryPresetResponse>(
+    "/api/v1/admin/discovery/preset",
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({ preset }),
+    },
+  );
+}
+
 export function fetchRecentJobs(token: string) {
   return apiRequest<RecentJobsResponse>("/api/v1/admin/jobs/recent", token);
 }
