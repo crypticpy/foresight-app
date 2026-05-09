@@ -301,11 +301,54 @@ def load_discovery_admin_overrides() -> Dict[str, Any]:
     return overrides
 
 
+def load_active_source_urls(category: str) -> List[str]:
+    """Return the list of enabled source URLs for ``category`` from the registry.
+
+    Resolution: ``discovery_sources_registry`` rows where ``enabled=TRUE``
+    win; on supabase failure or empty registry, the RSS category falls
+    back to the in-code ``DEFAULT_RSS_FEEDS`` (cold-boot safety) and other
+    categories return ``[]``.
+
+    Reads supabase synchronously; async callers should wrap in
+    ``asyncio.to_thread``.
+    """
+    from app.deps import supabase
+
+    try:
+        rows = (
+            supabase.table("discovery_sources_registry")
+            .select("url")
+            .eq("category", category)
+            .eq("enabled", True)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load discovery sources registry for category %s; "
+            "falling back to in-code defaults",
+            category,
+        )
+        rows = []
+
+    urls = [row["url"] for row in rows if row.get("url")]
+    if urls:
+        return urls
+    if category == SourceCategory.RSS.value:
+        return DEFAULT_RSS_FEEDS.copy()
+    return []
+
+
 def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
     """Build a ``DiscoveryConfig`` with admin-settings overrides applied.
 
     Resolution per field: explicit (non-None kwarg) > admin_settings row >
     legacy env var > in-code default.
+
+    Also overlays the discovery_sources_registry RSS feed list onto the
+    RSS source category, so admin enable/disable from the catalog tab
+    takes effect on the next config build with no extra plumbing.
 
     Reads supabase synchronously; async callers should wrap in
     ``asyncio.to_thread``.
@@ -315,7 +358,14 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
         key: value for key, value in explicit.items() if value is not None
     }
     merged = {**admin_overrides, **explicit_non_none}
-    return DiscoveryConfig(**merged)
+    config = DiscoveryConfig(**merged)
+
+    rss_feeds = load_active_source_urls(SourceCategory.RSS.value)
+    if rss_feeds:
+        rss_cat = config.source_categories.get(SourceCategory.RSS.value)
+        if rss_cat is not None:
+            rss_cat.rss_feeds = rss_feeds
+    return config
 
 
 def apply_source_preferences(
