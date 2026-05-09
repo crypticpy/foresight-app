@@ -365,6 +365,71 @@ export function fetchAdminAuditLog(
   return apiRequest<AdminAuditResponse>(`/api/v1/admin/audit${suffix}`, token);
 }
 
+// ---------------------------------------------------------------------------
+// Coverage dashboards (PR C)
+// ---------------------------------------------------------------------------
+
+export interface PillarCoverageBucket {
+  name: string;
+  cards: number;
+  share: number;
+  expected_share: number;
+  drift: number;
+}
+
+export interface PillarCoverageResponse {
+  window_days: number;
+  since: string;
+  total: number;
+  unassigned: number;
+  by_pillar: Record<string, PillarCoverageBucket>;
+}
+
+export type CoverageWindowDays = 7 | 30 | 90;
+
+export function fetchPillarCoverage(token: string, days: CoverageWindowDays) {
+  return apiRequest<PillarCoverageResponse>(
+    `/api/v1/admin/coverage/pillars?days=${days}`,
+    token,
+  );
+}
+
+export interface WorkstreamCoverageItem {
+  id: string;
+  name: string;
+  owner_type: "user" | "org";
+  auto_scan: boolean;
+  last_scanned_at: string | null;
+  scans_30d: number;
+  cards_added_30d: number;
+}
+
+export interface WorkstreamCoverageResponse {
+  items: WorkstreamCoverageItem[];
+  total: number;
+}
+
+export function fetchWorkstreamCoverage(token: string) {
+  return apiRequest<WorkstreamCoverageResponse>(
+    "/api/v1/admin/coverage/workstreams",
+    token,
+  );
+}
+
+export interface AdminForceScanResponse {
+  scan_id: string;
+  workstream_id: string;
+  status: string;
+}
+
+export function adminForceWorkstreamScan(token: string, workstreamId: string) {
+  return apiRequest<AdminForceScanResponse>(
+    `/api/v1/admin/workstreams/${workstreamId}/scan`,
+    token,
+    { method: "POST" },
+  );
+}
+
 export function triggerAdminAction(
   token: string,
   action: "scan" | "velocity" | "quality" | "lens-backfill",
