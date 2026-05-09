@@ -40,6 +40,7 @@ from app.routers.classification import router as classification_router
 from app.routers.ai_helpers import router as ai_helpers_router
 from app.routers.pattern_insights import router as pattern_insights_router
 from app.routers.admin import router as admin_router
+from app.routers.admin_discovery import router as admin_discovery_router
 from app.routers.feeds import router as feeds_router
 from app.routers.usage import router as usage_router
 from app.routers.config import router as config_router
@@ -223,6 +224,7 @@ def create_app() -> FastAPI:
     application.include_router(ai_helpers_router)
     application.include_router(pattern_insights_router)
     application.include_router(admin_router)
+    application.include_router(admin_discovery_router)
     application.include_router(feeds_router)
     application.include_router(usage_router)
     application.include_router(config_router)
