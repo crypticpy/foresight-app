@@ -988,9 +988,10 @@ const SignalCard: React.FC<SignalCardProps> = React.memo(
       <div className="relative bg-white dark:bg-dark-surface rounded-xl shadow-sm hover:-translate-y-1 hover:shadow-lg transition-all duration-200 overflow-hidden group">
         {/* Gradient accent bar */}
         <div className="h-1 bg-gradient-to-r from-brand-blue to-brand-green" />
-        <ArtifactRibbon artifacts={signal.artifacts} className="right-12" />
 
-        {/* Pin button */}
+        {/* Pin button — sole absolutely-positioned icon in the top-right
+            corner. Artifacts + quality score render inline in the title row
+            below, beside the heading. */}
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -1017,15 +1018,23 @@ const SignalCard: React.FC<SignalCardProps> = React.memo(
           className="block"
         >
           <div className="p-5">
-            {/* Title + Quality Score */}
-            <div className="flex items-start justify-between gap-3 mb-3 pr-8">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
+            {/* Title + inline icon cluster (artifacts + quality score). The
+                pr-10 reserves space for the absolutely-positioned pin button
+                so the cluster never overlaps it. */}
+            <div className="flex items-start justify-between gap-3 mb-3 pr-10">
+              <h3 className="min-w-0 flex-1 text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
                 {signal.name}
               </h3>
-              <QualityScoreBadge
-                score={signal.signal_quality_score}
-                size="sm"
-              />
+              <div className="flex shrink-0 items-center gap-1.5">
+                <ArtifactRibbon
+                  artifacts={signal.artifacts}
+                  className="static top-auto right-auto"
+                />
+                <QualityScoreBadge
+                  score={signal.signal_quality_score}
+                  size="sm"
+                />
+              </div>
             </div>
 
             {/* Summary */}
@@ -1086,7 +1095,6 @@ const SignalListItem: React.FC<SignalCardProps> = React.memo(
 
     return (
       <div className="relative flex items-center gap-4 bg-white dark:bg-dark-surface rounded-xl shadow-sm p-4 hover:shadow-lg transition-all duration-200 group">
-        <ArtifactRibbon artifacts={signal.artifacts} />
         {/* Pin */}
         <button
           onClick={(e) => {
