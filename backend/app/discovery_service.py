@@ -51,6 +51,10 @@ from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from .story_clustering_service import cluster_sources
 from . import domain_reputation_service
+from .safety.injection import (
+    record_injection_incident,
+    scan_text as scan_for_injection,
+)
 
 # Import multi-source content fetchers (5 categories)
 from .source_fetchers import (
@@ -2617,8 +2621,46 @@ class DiscoveryService:
             "untiered_source_count": 0,
         }
 
+        injection_block_count = 0
+
         for source in sources:
             try:
+                # Prompt-injection scan (PR 5): patterns are cheap, the LLM
+                # call we'd make next is not. On any HIGH-severity match,
+                # log incidents to safety_incidents and drop the source so
+                # its payload never reaches the triage LLM.
+                if source.content:
+                    matches = scan_for_injection(
+                        f"{source.title or ''}\n\n{source.content}"
+                    )
+                    blocking = [m for m in matches if m.is_blocking]
+                    if blocking:
+                        injection_block_count += 1
+                        logger.warning(
+                            "Discovery: blocking source %s due to injection patterns: %s",
+                            source.url or "(no url)",
+                            [m.pattern_id for m in blocking],
+                        )
+                        record_injection_incident(
+                            self.supabase,
+                            matches=blocking,
+                            source="discovery",
+                            discovered_source_id=source.discovered_source_id,
+                            metadata={
+                                "url": source.url,
+                                "title": source.title,
+                                "run_id": getattr(self, "_current_run_id", None),
+                            },
+                        )
+                        if source.discovered_source_id:
+                            await self._update_source_outcome(
+                                source.discovered_source_id,
+                                "filtered_blocked",
+                                error_message="prompt_injection",
+                                error_stage="triage",
+                            )
+                        continue
+
                 # Skip sources without content for full triage
                 if not source.content:
                     # Auto-pass URL-only sources with lower confidence
@@ -2733,6 +2775,12 @@ class DiscoveryService:
             except Exception as e:
                 logger.warning(f"Triage/analysis failed for {source.url}: {e}")
                 continue
+
+        if injection_block_count:
+            logger.info(
+                "Discovery triage: blocked %d source(s) on prompt-injection patterns",
+                injection_block_count,
+            )
 
         # Log domain reputation stats (Task 2.7)
         if domain_rep_stats["domain_reputation_lookups"] > 0:

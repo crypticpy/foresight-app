@@ -114,19 +114,30 @@ table or new provider wrapper.
 - Tests: replay returns the correct join shape; export endpoint produces a
   valid CSV with redacted columns; auth-gated.
 
-### PR 5 — Source-content injection filter (optional, parallel-able)
+### PR 5 — Prompt-injection filter + abuse monitor (DONE)
 
 **Branch**: `feat/llm-audit-injection-filter`
 
-- New `backend/app/security/injection.py` — port from
-  `foresight-aci/backend/app/security/injection.py` (217 lines).
-- Apply on fetched RSS / web content inside `discovery_service.py` before any
-  LLM call (triage stage). On match → tag in `discovered_sources.metadata`
-  and skip the LLM call for that item.
-- New `safety_incidents` table + a minimal "Safety" mini-tab next to "LLM
-  activity".
-- Skip this PR if PR 1–4's captured logs show no real injection attempts in
-  the wild — don't add infra speculatively.
+- `backend/app/safety/injection.py` — pattern library covering
+  instruction_override / role_hijack / prompt_leak / jailbreak /
+  tool_coercion / exfiltration / hidden_channel / delimiter_spoof.
+  Severity-aware (`is_blocking` for HIGH).
+- `backend/app/safety/abuse.py` — usage-anomaly aggregation over
+  `llm_usage_events` (high_volume / error_storm / cost_spike). Env-tunable
+  thresholds. Dedupe-aware persistence.
+- Wired into `discovery_service._triage_sources_with_metrics` (skip LLM
+  call + write incident on HIGH match) and `chat_service.chat` (refuse
+  request before context retrieval on HIGH match; lower severities pass
+  with audit row).
+- New `safety_incidents` table (migration `20260509000007`) +
+  `routers/safety.py` admin GET / PATCH / abuse-scan endpoints.
+- Frontend "Safety" tab in AdminConsole: filters, expand row, mark
+  true/false positive, "Run abuse scan" button, open-counts header
+  badges.
+- Scheduler runs the abuse monitor every 30 min when
+  `FORESIGHT_ENABLE_SCHEDULER=true`.
+- Tests: 32 passing (pattern unit, abuse aggregation + dedupe,
+  router list/detail/patch + RBAC, chat-path block + clean-path pass).
 
 ## Per-phase workflow (the review cadence the user asked for)
 

@@ -35,6 +35,10 @@ from app.chat_tools import (
     progress_label,
 )
 from app.usage_telemetry import augment_usage_context
+from app.safety.injection import (
+    record_injection_incident,
+    scan_text as scan_for_injection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +573,43 @@ async def chat(
         if not quota_ok:
             yield _sse_error(quota_reason or "Chat quota exceeded.")
             return
+
+        # 1c. Prompt-injection scan on the incoming user message (PR 5).
+        # HIGH-severity matches refuse the request before we spend an LLM
+        # call; lower severities pass through with an audit row so admins
+        # can review patterns. We scan after rate-limiting so a flood of
+        # injection attempts still trips the rate limiter.
+        injection_matches = scan_for_injection(message)
+        if injection_matches:
+            blocking = [m for m in injection_matches if m.is_blocking]
+            try:
+                await asyncio.to_thread(
+                    record_injection_incident,
+                    supabase_client,
+                    matches=injection_matches,
+                    source="chat",
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    metadata={
+                        "scope": scope,
+                        "scope_id": scope_id,
+                        "blocked": bool(blocking),
+                    },
+                )
+            except Exception as exc:
+                logger.warning("chat: failed to log injection incident: %s", exc)
+            if blocking:
+                logger.warning(
+                    "chat: blocking message from user %s due to injection patterns: %s",
+                    user_id,
+                    [m.pattern_id for m in blocking],
+                )
+                yield _sse_error(
+                    "Your message was flagged by our prompt-injection filter "
+                    "and was not sent. If this looks like a false positive, "
+                    "please rephrase or contact an admin."
+                )
+                return
 
         # 2. Conversation management
         try:
