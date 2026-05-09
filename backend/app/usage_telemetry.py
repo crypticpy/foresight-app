@@ -370,15 +370,16 @@ def record_llm_usage_event(
         "workstream_id": context.get("workstream_id"),
         "metadata": {**(metadata or {}), **context.get("metadata", {})},
     }
-    audit_payload = _build_audit_payload(
-        request_kind=request_kind,
-        messages=messages,
-        response_text=response_text,
-        tool_calls=tool_calls,
+    # Defer audit-payload building (and the cached admin_settings lookup it
+    # performs) to the executor so a cold cache never blocks the request path.
+    _executor.submit(
+        _insert_llm_usage_event,
+        event,
+        request_kind,
+        messages,
+        response_text,
+        tool_calls,
     )
-    if audit_payload:
-        event.update(audit_payload)
-    _executor.submit(_insert_event, "llm_usage_events", event)
 
 
 def record_external_api_usage_event(
@@ -422,6 +423,29 @@ def _insert_event(table: str, event: dict[str, Any]) -> None:
         client.table(table).insert(event).execute()
     except Exception as exc:
         logger.debug("Usage telemetry insert failed for %s: %s", table, exc)
+
+
+def _insert_llm_usage_event(
+    event: dict[str, Any],
+    request_kind: str,
+    messages: list[dict[str, Any]] | None,
+    response_text: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+) -> None:
+    """Background-thread helper: build the audit payload (which may hit
+    admin_settings on cache miss) and insert the assembled row."""
+    try:
+        audit_payload = _build_audit_payload(
+            request_kind=request_kind,
+            messages=messages,
+            response_text=response_text,
+            tool_calls=tool_calls,
+        )
+        if audit_payload:
+            event.update(audit_payload)
+    except Exception as exc:  # pragma: no cover — never let audit prep break inserts
+        logger.debug("Audit payload build failed: %s", exc)
+    _insert_event("llm_usage_events", event)
 
 
 def monotonic_ms() -> int:
