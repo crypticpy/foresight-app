@@ -274,10 +274,11 @@ def _sanitize_tool_calls(tool_calls: list[dict[str, Any]] | None) -> tuple[list[
     for call in tool_calls:
         if not isinstance(call, dict):
             continue
-        name = call.get("name") or call.get("function", {}).get("name") if isinstance(call.get("function"), dict) else call.get("name")
+        function_obj = call.get("function") if isinstance(call.get("function"), dict) else None
+        name = call.get("name") or (function_obj.get("name") if function_obj else None)
         raw_args = call.get("arguments")
-        if raw_args is None and isinstance(call.get("function"), dict):
-            raw_args = call["function"].get("arguments")
+        if raw_args is None and function_obj is not None:
+            raw_args = function_obj.get("arguments")
         args_str = raw_args if isinstance(raw_args, str) else json.dumps(raw_args, default=str) if raw_args is not None else ""
         redacted_args, flags = redact_and_truncate(args_str)
         sanitized.append({"name": name, "arguments": redacted_args})
