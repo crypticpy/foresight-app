@@ -3174,6 +3174,8 @@ const AdminConsole: React.FC = () => {
   // this, an in-flight fetch for the previous filter set could land after
   // the user has typed a new filter and clobber the newer state.
   const llmAuditGenRef = useRef(0);
+  const llmAuditDetailGenRef = useRef(0);
+  const llmAuditSelectedRef = useRef<string | null>(null);
 
   const isAdmin = profile?.role === "admin" || profile?.role === "service_role";
 
@@ -3556,19 +3558,38 @@ const AdminConsole: React.FC = () => {
   }, [isAdmin, activeTab, loadLlmAuditEvents]);
 
   const openLlmAuditDetail = useCallback(async (eventId: string) => {
+    // Track which event the user actually wants to see. If they close the
+    // modal or click a different row before this request resolves, we drop
+    // the stale response instead of reopening a dismissed modal.
+    const myGen = ++llmAuditDetailGenRef.current;
+    llmAuditSelectedRef.current = eventId;
     setLlmAuditDetailLoading(true);
     setLlmAuditDetail({ id: eventId } as LlmAuditEventDetail);
     try {
       const token = await getToken();
       const detail = await fetchLlmAuditEvent(token, eventId);
+      if (
+        llmAuditDetailGenRef.current !== myGen ||
+        llmAuditSelectedRef.current !== eventId
+      ) {
+        return;
+      }
       setLlmAuditDetail(detail);
     } catch (err) {
+      if (
+        llmAuditDetailGenRef.current !== myGen ||
+        llmAuditSelectedRef.current !== eventId
+      ) {
+        return;
+      }
       setLlmAuditDetail(null);
       setError(
         err instanceof Error ? err.message : "Failed to load event detail",
       );
     } finally {
-      setLlmAuditDetailLoading(false);
+      if (llmAuditDetailGenRef.current === myGen) {
+        setLlmAuditDetailLoading(false);
+      }
     }
   }, []);
 
@@ -3853,7 +3874,10 @@ const AdminConsole: React.FC = () => {
         <LlmAuditDetailModal
           detail={llmAuditDetail}
           loading={llmAuditDetailLoading}
-          onClose={() => setLlmAuditDetail(null)}
+          onClose={() => {
+            llmAuditSelectedRef.current = null;
+            setLlmAuditDetail(null);
+          }}
         />
       )}
 
