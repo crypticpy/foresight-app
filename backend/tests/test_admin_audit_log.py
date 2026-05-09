@@ -270,6 +270,43 @@ def test_update_admin_setting_writes_audit_log(monkeypatch):
     assert row["after"] == {"value": 10}
 
 
+def test_update_admin_setting_no_prior_override(monkeypatch):
+    """First-time save (no admin_settings row yet) should still write a clean
+    audit entry with before={"value": None}, distinguishing "no override" from
+    a real prior value."""
+    from app.routers import admin as admin_router
+
+    actor_id = _uuid()
+    key = "FORESIGHT_CHAT_DAILY_SESSIONS"
+
+    # Empty admin_settings — this is the upsert-as-insert path.
+    mock_sb = _MockSupabase({"admin_settings": []})
+    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    _disable_rate_limiter(monkeypatch)
+    _bypass_admin_check(monkeypatch)
+
+    body = admin_router.AdminSettingUpdate(value=10)
+    request = _mock_request()
+    actor = {"id": actor_id, "email": "admin@example.com", "role": "admin"}
+
+    asyncio.run(
+        admin_router.update_admin_setting(
+            request=request,
+            key=key,
+            update=body,
+            current_user=actor,
+        )
+    )
+
+    audit_rows = mock_sb.sink.get("admin_audit_log", [])
+    assert len(audit_rows) == 1
+    row = audit_rows[0]
+    assert row["target_id"] == key
+    # No prior override row → before captures None, not the env default.
+    assert row["before"] == {"value": None}
+    assert row["after"] == {"value": 10}
+
+
 def test_update_admin_user_returns_404_when_target_missing(monkeypatch):
     """Concurrent delete must return 404, not 500.
 
