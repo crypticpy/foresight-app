@@ -19,6 +19,7 @@ import {
   Gauge,
   History,
   Loader2,
+  MessageSquareText,
   Play,
   Plus,
   RefreshCw,
@@ -49,6 +50,8 @@ import {
   fetchAdminSettings,
   fetchAdminSources,
   fetchAdminUsers,
+  fetchLlmAuditEvent,
+  fetchLlmAuditEvents,
   fetchPillarCoverage,
   fetchRecentJobs,
   fetchRecentUsage,
@@ -75,6 +78,9 @@ import {
   type AdminUser,
   type CoverageWindowDays,
   type DiscoveryPreset,
+  type LlmAuditEventDetail,
+  type LlmAuditEventListItem,
+  type LlmAuditEventsParams,
   type PillarCoverageResponse,
   type RecentJobsResponse,
   type SchedulePillar,
@@ -93,6 +99,7 @@ type AdminTab =
   | "schedules"
   | "coverage"
   | "usage"
+  | "llm_activity"
   | "audit";
 
 const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
@@ -104,6 +111,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: "schedules", label: "Schedules", icon: CalendarClock },
   { id: "coverage", label: "Coverage", icon: Gauge },
   { id: "usage", label: "Usage", icon: Database },
+  { id: "llm_activity", label: "LLM activity", icon: MessageSquareText },
   { id: "audit", label: "Audit log", icon: History },
 ];
 
@@ -3147,6 +3155,25 @@ const AdminConsole: React.FC = () => {
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [schedulesLoading, setSchedulesLoading] = useState(false);
   const [schedulesLoaded, setSchedulesLoaded] = useState(false);
+  const [llmAuditEvents, setLlmAuditEvents] = useState<LlmAuditEventListItem[]>(
+    [],
+  );
+  const [llmAuditPage, setLlmAuditPage] = useState<{
+    offset: number;
+    nextOffset: number | null;
+  }>({ offset: 0, nextOffset: null });
+  const [llmAuditFilters, setLlmAuditFilters] = useState<LlmAuditEventsParams>({
+    audited_only: true,
+    limit: 50,
+  });
+  const [llmAuditLoading, setLlmAuditLoading] = useState(false);
+  const [llmAuditDetail, setLlmAuditDetail] =
+    useState<LlmAuditEventDetail | null>(null);
+  const [llmAuditDetailLoading, setLlmAuditDetailLoading] = useState(false);
+  // Per-list-fetch generation token. Filter changes are debounced — without
+  // this, an in-flight fetch for the previous filter set could land after
+  // the user has typed a new filter and clobber the newer state.
+  const llmAuditGenRef = useRef(0);
 
   const isAdmin = profile?.role === "admin" || profile?.role === "service_role";
 
@@ -3495,6 +3522,56 @@ const AdminConsole: React.FC = () => {
     }
   }, [isAdmin, activeTab, schedulesLoaded, loadSchedules]);
 
+  const loadLlmAuditEvents = useCallback(
+    async (offset: number) => {
+      const myGen = ++llmAuditGenRef.current;
+      setLlmAuditLoading(true);
+      try {
+        const token = await getToken();
+        const data = await fetchLlmAuditEvents(token, {
+          ...llmAuditFilters,
+          offset,
+        });
+        // Skip stale responses if a newer fetch has already started.
+        if (llmAuditGenRef.current !== myGen) return;
+        setLlmAuditEvents(data.items);
+        setLlmAuditPage({ offset: data.offset, nextOffset: data.next_offset });
+      } catch (err) {
+        if (llmAuditGenRef.current !== myGen) return;
+        setError(
+          err instanceof Error ? err.message : "Failed to load LLM activity",
+        );
+      } finally {
+        if (llmAuditGenRef.current === myGen) setLlmAuditLoading(false);
+      }
+    },
+    [llmAuditFilters],
+  );
+
+  // Lazy-load when the tab opens or filters change. Resets to page 0.
+  useEffect(() => {
+    if (isAdmin && activeTab === "llm_activity") {
+      loadLlmAuditEvents(0);
+    }
+  }, [isAdmin, activeTab, loadLlmAuditEvents]);
+
+  const openLlmAuditDetail = useCallback(async (eventId: string) => {
+    setLlmAuditDetailLoading(true);
+    setLlmAuditDetail({ id: eventId } as LlmAuditEventDetail);
+    try {
+      const token = await getToken();
+      const detail = await fetchLlmAuditEvent(token, eventId);
+      setLlmAuditDetail(detail);
+    } catch (err) {
+      setLlmAuditDetail(null);
+      setError(
+        err instanceof Error ? err.message : "Failed to load event detail",
+      );
+    } finally {
+      setLlmAuditDetailLoading(false);
+    }
+  }, []);
+
   const createSchedule = useCallback(
     async (body: AdminScheduleCreateBody) => {
       const token = await getToken();
@@ -3755,7 +3832,29 @@ const AdminConsole: React.FC = () => {
               onRefresh={loadAudit}
             />
           )}
+          {activeTab === "llm_activity" && (
+            <LlmActivityTab
+              events={llmAuditEvents}
+              loading={llmAuditLoading}
+              filters={llmAuditFilters}
+              page={llmAuditPage}
+              onFilterChange={(next) =>
+                setLlmAuditFilters((prev) => ({ ...prev, ...next }))
+              }
+              onPageChange={(offset) => loadLlmAuditEvents(offset)}
+              onRefresh={() => loadLlmAuditEvents(llmAuditPage.offset)}
+              onSelect={openLlmAuditDetail}
+            />
+          )}
         </>
+      )}
+
+      {llmAuditDetail && (
+        <LlmAuditDetailModal
+          detail={llmAuditDetail}
+          loading={llmAuditDetailLoading}
+          onClose={() => setLlmAuditDetail(null)}
+        />
       )}
 
       {inspectRunId && (
@@ -3768,5 +3867,397 @@ const AdminConsole: React.FC = () => {
     </div>
   );
 };
+
+// ---------------------------------------------------------------------------
+// LLM activity tab — paginated, filterable list of LLM usage events with
+// click-to-detail. The list endpoint omits prompt/response excerpts; the
+// detail endpoint returns the full redacted payload.
+// ---------------------------------------------------------------------------
+
+function LlmActivityTab({
+  events,
+  loading,
+  filters,
+  page,
+  onFilterChange,
+  onPageChange,
+  onRefresh,
+  onSelect,
+}: {
+  events: LlmAuditEventListItem[];
+  loading: boolean;
+  filters: LlmAuditEventsParams;
+  page: { offset: number; nextOffset: number | null };
+  onFilterChange: (next: Partial<LlmAuditEventsParams>) => void;
+  onPageChange: (offset: number) => void;
+  onRefresh: () => void;
+  onSelect: (eventId: string) => void;
+}) {
+  return (
+    <div>
+      <SectionHeader
+        title="LLM activity"
+        description="Audit trail of every LLM call. Prompt / response excerpts are redacted (PII / secrets) and only persisted when the FORESIGHT_AUDIT_LLM_CONTENT setting is enabled."
+        action={
+          <button
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
+        }
+      />
+
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-dark-surface md:grid-cols-4">
+        <input
+          type="text"
+          value={filters.operation ?? ""}
+          onChange={(event) =>
+            onFilterChange({ operation: event.target.value || undefined })
+          }
+          placeholder="Operation (e.g. openai.chat.completions)"
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
+        />
+        <input
+          type="text"
+          value={filters.model ?? ""}
+          onChange={(event) =>
+            onFilterChange({ model: event.target.value || undefined })
+          }
+          placeholder="Model"
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
+        />
+        <select
+          value={filters.status ?? ""}
+          onChange={(event) =>
+            onFilterChange({ status: event.target.value || undefined })
+          }
+          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-dark-surface-elevated dark:text-white"
+        >
+          <option value="">Any status</option>
+          <option value="success">success</option>
+          <option value="error">error</option>
+          <option value="stream_started">stream_started</option>
+        </select>
+        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+          <input
+            type="checkbox"
+            checked={Boolean(filters.audited_only)}
+            onChange={(event) =>
+              onFilterChange({ audited_only: event.target.checked })
+            }
+            className="h-4 w-4"
+          />
+          Audited only (chat / responses)
+        </label>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-dark-surface">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-dark-surface-elevated">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Time
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Operation / model
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-right font-medium text-gray-500">
+                  Tokens
+                </th>
+                <th className="px-4 py-3 text-right font-medium text-gray-500">
+                  Cost
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                  Flags
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {events.map((event) => (
+                <tr
+                  key={event.id}
+                  onClick={() => onSelect(event.id)}
+                  className="cursor-pointer align-top hover:bg-gray-50 dark:hover:bg-dark-surface-hover"
+                >
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-500">
+                    {formatDate(event.created_at)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-mono text-xs text-gray-900 dark:text-white">
+                      {event.operation || "—"}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {event.model || "—"}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusPill status={event.status} />
+                    {event.error_type && (
+                      <div className="mt-1 text-xs text-red-500">
+                        {event.error_type}
+                      </div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right text-gray-700 dark:text-gray-200">
+                    {event.total_tokens ?? "—"}
+                    {event.cached_input_tokens ? (
+                      <div className="text-xs text-gray-500">
+                        {event.cached_input_tokens} cached
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right text-gray-700 dark:text-gray-200">
+                    {event.estimated_cost_usd != null
+                      ? formatMoney(event.estimated_cost_usd)
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {event.redaction_flags &&
+                    event.redaction_flags.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {event.redaction_flags.map((flag) => (
+                          <span
+                            key={flag}
+                            className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+                          >
+                            {flag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {events.length === 0 && !loading && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-6 text-center text-gray-500"
+                  >
+                    No LLM events match these filters.
+                  </td>
+                </tr>
+              )}
+              {loading && events.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-6 text-center text-gray-500"
+                  >
+                    <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                    Loading…
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-4 py-2 dark:border-gray-700 dark:bg-dark-surface-elevated">
+          <span className="text-xs text-gray-500">
+            Offset {page.offset}
+            {page.nextOffset != null ? "" : " · last page"}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={page.offset === 0 || loading}
+              onClick={() =>
+                onPageChange(Math.max(0, page.offset - (filters.limit ?? 50)))
+              }
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={page.nextOffset == null || loading}
+              onClick={() =>
+                page.nextOffset != null && onPageChange(page.nextOffset)
+              }
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:border-gray-600 dark:bg-dark-surface dark:text-gray-200"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LlmAuditDetailModal({
+  detail,
+  loading,
+  onClose,
+}: {
+  detail: LlmAuditEventDetail;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  // detail.created_at is undefined on the placeholder we set while loading.
+  const ready = !loading && Boolean(detail.created_at);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-2xl dark:bg-dark-surface"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              LLM event
+            </h2>
+            <p className="mt-1 font-mono text-xs text-gray-500">{detail.id}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-surface-hover"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {!ready && (
+          <div className="flex items-center gap-2 p-6 text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading event…
+          </div>
+        )}
+
+        {ready && (
+          <div className="space-y-4 p-4">
+            <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
+              <div>
+                <dt className="text-xs uppercase text-gray-400">When</dt>
+                <dd className="text-gray-900 dark:text-white">
+                  {formatDate(detail.created_at)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-gray-400">Operation</dt>
+                <dd className="font-mono text-xs text-gray-900 dark:text-white">
+                  {detail.operation || "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-gray-400">Model</dt>
+                <dd className="font-mono text-xs text-gray-900 dark:text-white">
+                  {detail.model || "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-gray-400">Status</dt>
+                <dd>
+                  <StatusPill status={detail.status} />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-gray-400">Tokens</dt>
+                <dd className="text-gray-900 dark:text-white">
+                  {detail.total_tokens ?? "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-gray-400">Cost</dt>
+                <dd className="text-gray-900 dark:text-white">
+                  {detail.estimated_cost_usd != null
+                    ? formatMoney(detail.estimated_cost_usd)
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
+
+            {detail.redaction_flags && detail.redaction_flags.length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-900/20">
+                <span className="font-medium text-amber-800 dark:text-amber-300">
+                  Redactions:
+                </span>{" "}
+                <span className="text-amber-700 dark:text-amber-200">
+                  {detail.redaction_flags.join(", ")}
+                </span>
+              </div>
+            )}
+
+            {detail.prompt_excerpt != null ? (
+              <div>
+                <h3 className="mb-1 text-xs font-medium uppercase text-gray-400">
+                  Prompt (redacted)
+                </h3>
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800 dark:border-gray-700 dark:bg-dark-surface-elevated dark:text-gray-100">
+                  {detail.prompt_excerpt}
+                </pre>
+              </div>
+            ) : (
+              <p className="text-xs italic text-gray-500">
+                No prompt captured. Enable FORESIGHT_AUDIT_LLM_CONTENT in
+                Settings to start capturing redacted prompt/response excerpts on
+                future calls.
+              </p>
+            )}
+
+            {detail.response_excerpt != null && (
+              <div>
+                <h3 className="mb-1 text-xs font-medium uppercase text-gray-400">
+                  Response (redacted)
+                </h3>
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800 dark:border-gray-700 dark:bg-dark-surface-elevated dark:text-gray-100">
+                  {detail.response_excerpt}
+                </pre>
+              </div>
+            )}
+
+            {detail.tool_calls && detail.tool_calls.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-medium uppercase text-gray-400">
+                  Tool calls
+                </h3>
+                <div className="space-y-2">
+                  {detail.tool_calls.map((call, idx) => {
+                    const name =
+                      typeof call.name === "string" ? call.name : "unknown";
+                    const args =
+                      typeof call.arguments === "string"
+                        ? call.arguments
+                        : null;
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-md border border-gray-200 p-2 dark:border-gray-700"
+                      >
+                        <div className="font-mono text-xs text-gray-900 dark:text-white">
+                          {name}
+                        </div>
+                        {args ? (
+                          <pre className="mt-1 max-h-32 overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-800 dark:bg-dark-surface-elevated dark:text-gray-100">
+                            {args}
+                          </pre>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default AdminConsole;
