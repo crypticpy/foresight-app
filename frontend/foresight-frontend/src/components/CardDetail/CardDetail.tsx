@@ -43,6 +43,7 @@ import {
   FileQuestion,
   ArrowLeft,
   Compass,
+  Microscope,
 } from "lucide-react";
 import { supabase } from "../../App";
 import { useAuthContext } from "../../hooks/useAuthContext";
@@ -56,8 +57,6 @@ import { ResearchStatusBanner } from "./ResearchStatusBanner";
 import {
   CardDescription,
   CardClassification,
-  DeepResearchPanel,
-  ResearchHistoryPanel,
   ImpactMetricsPanel,
   MaturityScorePanel,
   ActivityStatsPanel,
@@ -72,6 +71,7 @@ import type {
 import { SourcesTab } from "./tabs/SourcesTab";
 import { TimelineTab } from "./tabs/TimelineTab";
 import { NotesTab } from "./tabs/NotesTab";
+import { ResearchTab } from "./tabs/ResearchTab";
 import { AssetsTab } from "./AssetsTab";
 const ChatTabContent = React.lazy(() => import("./ChatTabContent"));
 
@@ -501,6 +501,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const tabs = useMemo(
     () => [
       { id: "overview" as const, name: "Overview", icon: Eye },
+      { id: "research" as const, name: "Research", icon: Microscope },
       { id: "sources" as const, name: "Sources", icon: FileText },
       { id: "timeline" as const, name: "Timeline", icon: Calendar },
       ...(!readOnly
@@ -677,21 +678,6 @@ export const CardDetail: React.FC<CardDetailProps> = ({
               stageHistory={stageHistory}
               stageHistoryLoading={stageHistoryLoading}
             />
-            {/* Deep Research Panel - Prominent placement */}
-            <DeepResearchPanel
-              researchTasks={researchHistory}
-              onRequestResearch={handleDeepResearch}
-              canRequestResearch={canDeepResearch}
-            />
-            {/* Only show update history if there are non-deep-research tasks */}
-            {researchHistory.some((t) => t.task_type !== "deep_research") && (
-              <ResearchHistoryPanel
-                researchHistory={researchHistory.filter(
-                  (t) => t.task_type !== "deep_research",
-                )}
-                title="Update History"
-              />
-            )}
           </div>
           <div className="space-y-4 sm:space-y-6">
             <ImpactMetricsPanel
@@ -743,6 +729,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         </div>
       )}
 
+      {activeTab === "research" && (
+        <ResearchTab
+          researchHistory={researchHistory}
+          onRequestDeepResearch={readOnly ? undefined : handleDeepResearch}
+          canRequestDeepResearch={!readOnly && (canDeepResearch ?? false)}
+        />
+      )}
       {activeTab === "sources" && <SourcesTab sources={sources} />}
       {activeTab === "timeline" && <TimelineTab timeline={timeline} />}
       {activeTab === "notes" && (

@@ -242,6 +242,7 @@ export interface Note {
  */
 export type CardDetailTab =
   | "overview"
+  | "research"
   | "sources"
   | "timeline"
   | "notes"
