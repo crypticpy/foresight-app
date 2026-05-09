@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { fetchCostStatus } from "../lib/admin-api";
+import { fetchCostStatus } from "../lib/cost-api";
 import { supabase } from "../App";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -24,9 +24,8 @@ export function CostStatusBanner() {
         const status = await fetchCostStatus(token);
         if (!cancelled) setPaused(Boolean(status.paused));
       } catch {
-        // Silently treat fetch failure as "not paused" — better than blocking
-        // the whole UI behind a flaky network call.
-        if (!cancelled) setPaused(false);
+        // Keep last-known state on transient failures so a brief network
+        // blip doesn't hide an active guardrail pause from the user.
       }
     };
 

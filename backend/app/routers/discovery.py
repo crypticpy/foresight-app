@@ -10,7 +10,11 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.cost_guardrail import check_budget_or_raise
+from app.cost_guardrail import (
+    BudgetExceededError,
+    check_budget_or_raise,
+    check_budget_or_skip,
+)
 from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
 from app.models.discovery_models import (
     DiscoveryConfigRequest,
@@ -150,6 +154,33 @@ async def execute_discovery_run_background(
     Updates run status through lifecycle: running -> completed/failed
     """
     from app.discovery_service import build_discovery_config
+
+    # Re-check the cost guardrail at execution time. The HTTP entry point
+    # also calls ``check_budget_or_raise``, but worker-driven runs (scheduled
+    # discovery, recovered runs) reach this function without going through it.
+    # Use ``check_budget_or_skip`` here because we are not inside a request and
+    # cannot raise HTTPException — fail the run instead.
+    try:
+        await check_budget_or_skip()
+    except BudgetExceededError as exc:
+        logger.warning(
+            "Discovery run %s aborted before start: cost guardrail tripped (%s)",
+            run_id,
+            exc,
+        )
+        try:
+            supabase.table("discovery_runs").update(
+                {
+                    "status": "failed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "error_message": "Cost guardrail tripped — discovery run aborted",
+                }
+            ).eq("id", run_id).execute()
+        except Exception:
+            logger.exception(
+                "Failed to mark discovery run %s as guardrail-aborted", run_id
+            )
+        return
 
     try:
         logger.info(f"Starting discovery run {run_id}")

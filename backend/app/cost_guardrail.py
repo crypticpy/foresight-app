@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -99,10 +100,23 @@ def _coerce_bool(value: Any) -> bool:
 
 
 def _read_setting(rows: list[dict[str, Any]], key: str) -> Any:
+    """Return the effective value for ``key``.
+
+    Mirrors the admin-settings UI: an admin override row with a non-null
+    value wins; otherwise fall back to the matching environment variable
+    so operators who configure ``FORESIGHT_COST_*`` purely via env still
+    see the guardrail apply.
+    """
     for row in rows:
         if row.get("key") == key:
-            return row.get("value")
-    return None
+            value = row.get("value")
+            if value not in (None, ""):
+                return value
+            break
+    env_value = os.getenv(key)
+    if env_value is None or env_value == "":
+        return None
+    return env_value
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -114,20 +128,40 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_SPEND_PAGE_SIZE = 50_000
+
+
 def _sum_spend(start: datetime, end: datetime) -> float:
-    """Sum estimated_cost_usd from llm + external events in [start, end)."""
+    """Sum estimated_cost_usd from llm + external events in [start, end).
+
+    Paginates with ``.range()`` so high-volume windows (>50k events) are
+    summed exhaustively instead of silently truncated. A page is the
+    last one when fewer than ``_SPEND_PAGE_SIZE`` rows come back.
+    """
     total = 0.0
     for table in ("llm_usage_events", "external_api_usage_events"):
-        try:
-            resp = (
-                supabase.table(table)
-                .select("estimated_cost_usd")
-                .gte("created_at", start.isoformat())
-                .lt("created_at", end.isoformat())
-                .limit(50_000)
-                .execute()
-            )
-            for row in resp.data or []:
+        offset = 0
+        while True:
+            try:
+                resp = (
+                    supabase.table(table)
+                    .select("estimated_cost_usd")
+                    .gte("created_at", start.isoformat())
+                    .lt("created_at", end.isoformat())
+                    .range(offset, offset + _SPEND_PAGE_SIZE - 1)
+                    .execute()
+                )
+            except Exception as exc:
+                logger.warning(
+                    "cost_guardrail: %s sum failed at offset %d: %s — partial total %.2f",
+                    table,
+                    offset,
+                    exc,
+                    total,
+                )
+                break
+            rows = resp.data or []
+            for row in rows:
                 cost = row.get("estimated_cost_usd")
                 if cost is None:
                     continue
@@ -135,12 +169,9 @@ def _sum_spend(start: datetime, end: datetime) -> float:
                     total += float(cost)
                 except (TypeError, ValueError):
                     pass
-        except Exception as exc:
-            logger.warning(
-                "cost_guardrail: %s sum failed: %s — treating contribution as 0",
-                table,
-                exc,
-            )
+            if len(rows) < _SPEND_PAGE_SIZE:
+                break
+            offset += _SPEND_PAGE_SIZE
     return total
 
 

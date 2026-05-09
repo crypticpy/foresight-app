@@ -39,6 +39,7 @@ class _Query:
         self._in: dict[str, list[Any]] = {}
         self._is_select = False
         self._update: dict[str, Any] | None = None
+        self._range: tuple[int, int] | None = None
 
     def select(self, *_a, **_kw):
         self._is_select = True
@@ -61,6 +62,11 @@ class _Query:
         return self
 
     def limit(self, _n):
+        return self
+
+    def range(self, start: int, end: int):
+        # PostgREST range is inclusive on both ends.
+        self._range = (start, end)
         return self
 
     def insert(self, row):
@@ -110,6 +116,9 @@ class _Query:
                     break
             if ok:
                 out.append(r)
+        if self._range is not None:
+            start, end = self._range
+            out = out[start : end + 1]
         return _Resp(out)
 
 
@@ -169,6 +178,15 @@ def reset_cache():
 def stub_supabase(monkeypatch):
     sb = _StubSupabase()
     monkeypatch.setattr(cost_guardrail, "supabase", sb)
+    # Strip any FORESIGHT_COST_* env vars from the developer shell so the
+    # env-fallback path doesn't leak between tests.
+    for key in (
+        cost_guardrail.COST_BUDGET_KEY,
+        cost_guardrail.COST_WINDOW_KEY,
+        cost_guardrail.COST_ALERT_KEY,
+        cost_guardrail.COST_ENABLED_KEY,
+    ):
+        monkeypatch.delenv(key, raising=False)
     return sb
 
 
@@ -368,3 +386,55 @@ def test_alerting_writes_single_audit_row_per_window(stub_supabase):
         r for r in stub_supabase.store["admin_audit_log"] if r.get("action") == "cost.alert"
     ]
     assert len(alert_rows) == 1, "should dedupe within the same window"
+
+
+# ---------------------------------------------------------------------------
+# Env-var fallback for settings
+# ---------------------------------------------------------------------------
+
+
+def test_env_var_falls_back_when_admin_settings_row_is_missing(
+    stub_supabase, monkeypatch
+):
+    """Operators who configure the guardrail purely via env should see it apply."""
+    monkeypatch.setenv(cost_guardrail.COST_ENABLED_KEY, "true")
+    monkeypatch.setenv(cost_guardrail.COST_BUDGET_KEY, "10.0")
+    _put_event(stub_supabase, "llm_usage_events", 25.0)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(cost_guardrail.check_budget_or_raise())
+    assert exc.value.status_code == 503
+
+
+def test_admin_setting_overrides_env_var(stub_supabase, monkeypatch):
+    """Admin override wins over env-var value when both are present."""
+    monkeypatch.setenv(cost_guardrail.COST_ENABLED_KEY, "true")
+    monkeypatch.setenv(cost_guardrail.COST_BUDGET_KEY, "1.0")
+    # Admin override raises the cap to 1000, so a $25 event should NOT trip.
+    _put_setting(stub_supabase, cost_guardrail.COST_ENABLED_KEY, True)
+    _put_setting(stub_supabase, cost_guardrail.COST_BUDGET_KEY, 1000.0)
+    _put_event(stub_supabase, "llm_usage_events", 25.0)
+
+    state = asyncio.run(cost_guardrail.check_budget_or_raise())
+    assert state.tripped is False
+    assert state.cap_usd == 1000.0
+
+
+# ---------------------------------------------------------------------------
+# Spend pagination
+# ---------------------------------------------------------------------------
+
+
+def test_sum_spend_paginates_past_page_size(stub_supabase, monkeypatch):
+    """High-volume windows must sum every page, not just the first."""
+    # Force a tiny page so the test is fast but still exercises pagination.
+    monkeypatch.setattr(cost_guardrail, "_SPEND_PAGE_SIZE", 3)
+    _put_setting(stub_supabase, cost_guardrail.COST_ENABLED_KEY, True)
+    _put_setting(stub_supabase, cost_guardrail.COST_BUDGET_KEY, 100.0)
+    # 7 events at $1 each → $7 total. With page=3, three pages are needed
+    # (rows 0–2, 3–5, 6) before the loop terminates.
+    for _ in range(7):
+        _put_event(stub_supabase, "llm_usage_events", 1.0)
+
+    state = asyncio.run(cost_guardrail.get_budget_state(force=True))
+    assert state.spent_usd == pytest.approx(7.0)

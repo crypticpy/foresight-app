@@ -58,10 +58,8 @@ import {
   fetchPillarCoverage,
   fetchRecentJobs,
   fetchRecentUsage,
-  fetchCostBudget,
   fetchUsageSummary,
   fetchWorkstreamCoverage,
-  resetCostGuardrail,
   triggerAdminAction,
   triggerDiscoveryRecover,
   triggerDiscoveryRecoverAnalyzed,
@@ -81,7 +79,6 @@ import {
   type AdminSourceCreateBody,
   type AdminSourceUpdateBody,
   type AdminUser,
-  type CostBudgetState,
   type CoverageWindowDays,
   type DiscoveryPreset,
   type LlmAuditEventDetail,
@@ -98,6 +95,11 @@ import {
   type UsageSummary,
   type WorkstreamCoverageItem,
 } from "../lib/admin-api";
+import {
+  fetchCostBudget,
+  resetCostGuardrail,
+  type CostBudgetState,
+} from "../lib/cost-api";
 import {
   fetchSafetyIncidents,
   runSafetyAbuseScan,
@@ -3473,6 +3475,16 @@ const AdminConsole: React.FC = () => {
         await updateAdminSetting(token, setting.key, value);
         const refreshed = await fetchAdminSettings(token);
         setSettings(refreshed.items);
+        // Cost-guardrail settings change what the Usage tab guardrail panel
+        // shows, so re-pull the budget snapshot rather than waiting for the
+        // operator to refresh the page or change usage windows.
+        if (setting.key.startsWith("FORESIGHT_COST_")) {
+          fetchCostBudget(token)
+            .then(setCostBudget)
+            .catch(() => {
+              /* leave the panel showing the previous snapshot */
+            });
+        }
         setNotice("Setting saved");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save setting");

@@ -12,6 +12,7 @@ Two endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -45,19 +46,22 @@ async def reset_cost_guardrail(
     require_admin(current_user)
     state = await cost_guardrail.reset_guardrail(current_user)
     # Audit the action so it shows up in the audit-log tab next to setting changes.
+    audit_row = {
+        "actor_id": current_user.get("id"),
+        "actor_email": current_user.get("email"),
+        "action": "cost.reset",
+        "target_type": "cost_guardrail",
+        "target_id": "rolling_window",
+        "before": None,
+        "after": {"reset_after": state.reset_after},
+        "request_ip": request.client.host if request.client else None,
+    }
+
+    def _insert_audit() -> None:
+        supabase.table("admin_audit_log").insert(audit_row).execute()
+
     try:
-        supabase.table("admin_audit_log").insert(
-            {
-                "actor_id": current_user.get("id"),
-                "actor_email": current_user.get("email"),
-                "action": "cost.reset",
-                "target_type": "cost_guardrail",
-                "target_id": "rolling_window",
-                "before": None,
-                "after": {"reset_after": state.reset_after},
-                "request_ip": request.client.host if request.client else None,
-            }
-        ).execute()
+        await asyncio.to_thread(_insert_audit)
     except Exception:
         logger.exception("cost: failed to write reset audit row")
     return state.to_dict()
