@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
@@ -249,6 +250,41 @@ def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
     return {item["key"]: item for item in SETTING_DEFINITIONS}
 
 
+# Single source of truth for which user fields the audit log is allowed to
+# capture. Used both to drive the SELECT in update_admin_user and to filter
+# the before/after snapshots, so adding a new updatable field cannot silently
+# log None for its prior value.
+_AUDITABLE_USER_FIELDS: tuple[str, ...] = ("role", "account_type", "display_name")
+
+# Defense-in-depth: even though current SETTING_DEFINITIONS don't include
+# secrets, redact any audit payload key (or setting target_id) that looks
+# sensitive so a future addition can't leak via the audit table.
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(password|secret|api[_-]?key|token|credential)", re.IGNORECASE
+)
+_REDACTED = "***REDACTED***"
+
+
+def _redact_for_audit(target_id: str, payload: Any) -> Any:
+    """Mask sensitive values in an audit payload.
+
+    Two triggers: the target_id itself looks sensitive (e.g. a setting whose
+    key contains "api_key") OR an individual field name does. Non-dict
+    payloads pass through — we only know how to redact key/value maps.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    target_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(target_id or ""))
+    redacted: dict[str, Any] = {}
+    for key, value in payload.items():
+        field_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(str(key)))
+        if (target_is_sensitive or field_is_sensitive) and value is not None:
+            redacted[key] = _REDACTED
+        else:
+            redacted[key] = value
+    return redacted
+
+
 def _log_admin_action(
     *,
     actor: dict,
@@ -273,8 +309,8 @@ def _log_admin_action(
                 "action": action,
                 "target_type": target_type,
                 "target_id": target_id,
-                "before": before,
-                "after": after,
+                "before": _redact_for_audit(target_id, before),
+                "after": _redact_for_audit(target_id, after),
                 "request_ip": request.client.host if request and request.client else None,
             }
         ).execute()
@@ -447,18 +483,27 @@ async def update_admin_user(
             raise HTTPException(status_code=400, detail="No user fields provided")
 
         # Read the previous row so the audit `before` snapshot is meaningful.
-        # Restricted to the fields actually being changed so we don't store a
-        # full user dump on every audit row.
-        previous_row = (
+        # We keep the SELECT and the snapshot bounded to _AUDITABLE_USER_FIELDS
+        # so adding a new field to AdminUserUpdate later can't silently log
+        # None for its prior value. Use limit(1) instead of .single() so a
+        # missing row returns a clean 404 (PostgREST .single() raises on
+        # zero rows, which would 500 on a concurrent delete).
+        select_cols = ", ".join(("id",) + _AUDITABLE_USER_FIELDS)
+        previous_resp = (
             supabase.table("users")
-            .select("id, role, account_type, display_name")
+            .select(select_cols)
             .eq("id", user_id)
-            .single()
+            .limit(1)
             .execute()
         )
-        if not previous_row.data:
+        if not previous_resp.data:
             raise HTTPException(status_code=404, detail="User not found")
-        before_snapshot = {key: previous_row.data.get(key) for key in data}
+        previous_row = previous_resp.data[0]
+        before_snapshot = {
+            key: previous_row.get(key)
+            for key in data
+            if key in _AUDITABLE_USER_FIELDS
+        }
 
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         result = supabase.table("users").update(data).eq("id", user_id).execute()

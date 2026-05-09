@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-08
 **Branch base:** `main` at `6cb5498` (admin console PR 30 just merged)
-**Status:** Plan-only, not started.
+**Status:** Item 1 (audit log) implemented in PR 31. Item 2 (cost guardrails) still plan-only.
 
 ## Context (so future-me doesn't have to dig)
 

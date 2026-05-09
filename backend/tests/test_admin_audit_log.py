@@ -74,6 +74,9 @@ class _MockTable:
         self._filters[key] = value
         return self
 
+    def limit(self, *_a, **_kw):
+        return self
+
     def single(self):
         self._single = True
         return self
@@ -267,11 +270,70 @@ def test_update_admin_setting_writes_audit_log(monkeypatch):
     assert row["after"] == {"value": 10}
 
 
+def test_update_admin_user_returns_404_when_target_missing(monkeypatch):
+    """Concurrent delete must return 404, not 500.
+
+    Earlier the read-before-write used .single(), which PostgREST treats as an
+    error on zero rows. The fix uses .limit(1) so a missing user cleanly
+    surfaces as 404.
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    from app.routers import admin as admin_router
+
+    mock_sb = _MockSupabase({"users": []})
+    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    monkeypatch.setattr(
+        admin_router, "evict_cached_profile", lambda _uid: None
+    )
+    _disable_rate_limiter(monkeypatch)
+    _bypass_admin_check(monkeypatch)
+
+    body = admin_router.AdminUserUpdate(role="admin")
+    request = _mock_request()
+    actor = {"id": _uuid(), "email": "admin@example.com", "role": "admin"}
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_router.update_admin_user(
+                request=request,
+                user_id=_uuid(),
+                update=body,
+                current_user=actor,
+            )
+        )
+    assert exc.value.status_code == 404
+
+
+def test_redact_for_audit_masks_sensitive_keys():
+    from app.routers.admin import _redact_for_audit
+
+    # A field that *itself* names a secret gets masked.
+    assert _redact_for_audit("FORESIGHT_SOMETHING", {"api_key": "abc"}) == {
+        "api_key": "***REDACTED***"
+    }
+    # A non-sensitive field passes through.
+    assert _redact_for_audit("FORESIGHT_X", {"value": 7}) == {"value": 7}
+    # When the *target_id* names a secret, every field's value is masked
+    # (a setting like AZURE_OPENAI_API_KEY would route into here).
+    assert _redact_for_audit("AZURE_OPENAI_API_KEY", {"value": "sk-xyz"}) == {
+        "value": "***REDACTED***"
+    }
+    # None values stay None — distinguishes "no override" from "had a value
+    # but we hid it".
+    assert _redact_for_audit("AZURE_OPENAI_API_KEY", {"value": None}) == {
+        "value": None
+    }
+
+
 def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
     """Audit insert failure must not raise — the underlying mutation already
     succeeded by the time we get here, and a missed audit row is a logging
     concern, not an HTTP error.
     """
+    import logging
+
     from app.routers import admin as admin_router
 
     class _ExplodingSupabase:
@@ -281,12 +343,19 @@ def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
     monkeypatch.setattr(admin_router, "supabase", _ExplodingSupabase())
 
     # Should not raise.
-    admin_router._log_admin_action(
-        actor={"id": _uuid(), "email": "a@b.c"},
-        action="admin.test",
-        target_type="user",
-        target_id=_uuid(),
-        before=None,
-        after=None,
-        request=_mock_request(),
-    )
+    with caplog.at_level(logging.ERROR, logger="app.routers.admin"):
+        admin_router._log_admin_action(
+            actor={"id": _uuid(), "email": "a@b.c"},
+            action="admin.test",
+            target_type="user",
+            target_id=_uuid(),
+            before=None,
+            after=None,
+            request=_mock_request(),
+        )
+
+    # The swallowed error must surface in logs so operators can notice.
+    assert any(
+        "Failed to write admin_audit_log" in record.getMessage()
+        for record in caplog.records
+    ), "expected a logger.exception call when audit insert fails"
