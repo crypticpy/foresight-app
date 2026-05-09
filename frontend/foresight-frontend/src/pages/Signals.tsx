@@ -1022,7 +1022,7 @@ const SignalCard: React.FC<SignalCardProps> = React.memo(
                 pr-10 reserves space for the absolutely-positioned pin button
                 so the cluster never overlaps it. */}
             <div className="flex items-start justify-between gap-3 mb-3 pr-10">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
+              <h3 className="min-w-0 flex-1 text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
                 {signal.name}
               </h3>
               <div className="flex shrink-0 items-center gap-1.5">
