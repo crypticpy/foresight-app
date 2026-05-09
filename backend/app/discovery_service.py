@@ -212,6 +212,112 @@ class DiscoveryConfig:
             self.search_topics = DEFAULT_SEARCH_TOPICS.copy()
 
 
+# ============================================================================
+# Live admin-settings overrides for DiscoveryConfig
+# ============================================================================
+#
+# Each entry: admin_settings.key -> (DiscoveryConfig field, type-coercer,
+# legacy env name). The legacy env name preserves backward compat for the
+# three knobs that already had env-var support before the admin console
+# could write to them.
+
+DISCOVERY_SETTING_MAP: Dict[str, Tuple[str, type, Optional[str]]] = {
+    "FORESIGHT_DISCOVERY_MAX_QUERIES_PER_RUN": (
+        "max_queries_per_run", int, "DISCOVERY_MAX_QUERIES",
+    ),
+    "FORESIGHT_DISCOVERY_MAX_SOURCES_PER_QUERY": (
+        "max_sources_per_query", int, "DISCOVERY_MAX_SOURCES_PER_QUERY",
+    ),
+    "FORESIGHT_DISCOVERY_MAX_SOURCES_TOTAL": (
+        "max_sources_total", int, "DISCOVERY_MAX_SOURCES_TOTAL",
+    ),
+    "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": (
+        "max_new_cards_per_run", int, None,
+    ),
+    "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": (
+        "auto_approve_threshold", float, None,
+    ),
+    "FORESIGHT_DISCOVERY_SIMILARITY_THRESHOLD": (
+        "similarity_threshold", float, None,
+    ),
+    "FORESIGHT_DISCOVERY_WEAK_MATCH_THRESHOLD": (
+        "weak_match_threshold", float, None,
+    ),
+    "FORESIGHT_DISCOVERY_NAME_SIMILARITY_THRESHOLD": (
+        "name_similarity_threshold", float, None,
+    ),
+}
+
+
+def load_discovery_admin_overrides() -> Dict[str, Any]:
+    """Load live discovery overrides from ``admin_settings``.
+
+    Resolution per knob: admin override row > legacy env var > skip
+    (caller falls back to in-code default via ``DiscoveryConfig`` defaults).
+
+    Reads supabase synchronously; async callers should wrap in
+    ``asyncio.to_thread`` to avoid blocking the event loop.
+    """
+    # Local import keeps the module importable in test contexts that don't
+    # want supabase initialized (tests can monkeypatch this function).
+    from app.deps import supabase
+
+    keys = list(DISCOVERY_SETTING_MAP.keys())
+    try:
+        rows = (
+            supabase.table("admin_settings")
+            .select("key,value")
+            .in_("key", keys)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        logger.exception(
+            "Failed to read admin_settings for discovery overrides; "
+            "falling back to env-var defaults"
+        )
+        rows = []
+
+    by_key = {row["key"]: row for row in rows}
+    overrides: Dict[str, Any] = {}
+    for setting_key, (field_name, coerce, legacy_env) in DISCOVERY_SETTING_MAP.items():
+        row = by_key.get(setting_key)
+        raw: Any = row.get("value") if row else None
+        if raw is None and legacy_env:
+            raw = os.getenv(legacy_env)
+        if raw is None or raw == "":
+            continue
+        try:
+            overrides[field_name] = coerce(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid discovery override for %s: %r (expected %s); "
+                "falling back to default",
+                setting_key,
+                raw,
+                coerce.__name__,
+            )
+    return overrides
+
+
+def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
+    """Build a ``DiscoveryConfig`` with admin-settings overrides applied.
+
+    Resolution per field: explicit (non-None kwarg) > admin_settings row >
+    legacy env var > in-code default.
+
+    Reads supabase synchronously; async callers should wrap in
+    ``asyncio.to_thread``.
+    """
+    admin_overrides = load_discovery_admin_overrides()
+    explicit_non_none = {
+        key: value for key, value in explicit.items() if value is not None
+    }
+    merged = {**admin_overrides, **explicit_non_none}
+    return DiscoveryConfig(**merged)
+
+
 def apply_source_preferences(
     config: DiscoveryConfig, source_prefs: dict
 ) -> DiscoveryConfig:
@@ -3951,9 +4057,8 @@ async def run_weekly_discovery(
         DiscoveryResult
     """
     service = DiscoveryService(supabase, openai_client)
-    config = DiscoveryConfig(
-        max_queries_per_run=100,
-        max_sources_total=500,
+    config = await asyncio.to_thread(
+        build_discovery_config,
         pillars_filter=pillars or [],
         include_priorities=True,
     )
@@ -3975,7 +4080,10 @@ async def run_pillar_discovery(
         DiscoveryResult
     """
     service = DiscoveryService(supabase, openai_client)
-    config = DiscoveryConfig(
+    # Per-pillar runs are intentionally narrower than the global default;
+    # explicit caps win over admin overrides.
+    config = await asyncio.to_thread(
+        build_discovery_config,
         max_queries_per_run=25,
         max_sources_total=100,
         pillars_filter=[pillar_code],

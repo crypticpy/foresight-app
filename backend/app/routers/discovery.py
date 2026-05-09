@@ -1,5 +1,6 @@
 """Discovery pipeline router."""
 
+import asyncio
 import logging
 import os
 import uuid
@@ -147,13 +148,18 @@ async def execute_discovery_run_background(
 
     Updates run status through lifecycle: running -> completed/failed
     """
-    from app.discovery_service import DiscoveryConfig
+    from app.discovery_service import build_discovery_config
 
     try:
         logger.info(f"Starting discovery run {run_id}")
 
-        # Convert API config to service config
-        discovery_config = DiscoveryConfig(
+        # Caller-supplied request fields override admin_settings, which
+        # override env, which override in-code defaults. Pydantic's
+        # ``auto_approve_threshold`` always has a value (default 0.95) so
+        # it cannot fall through to admin overrides; that's intentional —
+        # if a caller cares enough to specify the threshold, they win.
+        discovery_config = await asyncio.to_thread(
+            build_discovery_config,
             max_queries_per_run=config.max_queries_per_run,
             max_sources_total=config.max_sources_total,
             auto_approve_threshold=config.auto_approve_threshold,
