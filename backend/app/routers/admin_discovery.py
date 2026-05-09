@@ -516,3 +516,333 @@ async def list_source_categories(
             },
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# Coverage dashboards
+# ---------------------------------------------------------------------------
+
+# Single source-of-truth for the six Austin strategic pillars used in the
+# pillar-balance widget. Mirrors the database `pillars` table (and the
+# existing analytics router definitions) — duplicated here so that we don't
+# import a router-private constant.
+PILLAR_DEFINITIONS: dict[str, str] = {
+    "CH": "Community Health & Sustainability",
+    "EW": "Economic & Workforce Development",
+    "HG": "High-Performing Government",
+    "HH": "Homelessness & Housing",
+    "MC": "Mobility & Critical Infrastructure",
+    "PS": "Public Safety",
+}
+
+# Allowed window sizes (days) for the pillar-balance histogram. We keep the
+# set small so the cache key is tight and so the UI radio buttons map 1:1.
+ALLOWED_COVERAGE_DAYS = (7, 30, 90)
+
+
+@router.get("/admin/coverage/pillars")
+async def get_pillar_coverage(
+    days: int = 7,
+    current_user: dict = Depends(get_current_user),
+):
+    """Cards-created-by-pillar histogram over the requested window.
+
+    Used by the Coverage tab to spot pillar starvation. The expected share
+    in the response is uniform across the six pillars (1/6 each). The UI
+    can compare actual share vs expected share to flag drift.
+    """
+    require_admin(current_user)
+    if days not in ALLOWED_COVERAGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"days must be one of {sorted(ALLOWED_COVERAGE_DAYS)}",
+        )
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    def load() -> dict[str, Any]:
+        rows = (
+            supabase.table("cards")
+            .select("pillar_id,created_at")
+            .gte("created_at", cutoff)
+            .eq("status", "active")
+            .limit(10_000)
+            .execute()
+            .data
+            or []
+        )
+        counts: dict[str, int] = {code: 0 for code in PILLAR_DEFINITIONS}
+        unassigned = 0
+        for row in rows:
+            pillar = row.get("pillar_id")
+            if pillar in counts:
+                counts[pillar] += 1
+            else:
+                unassigned += 1
+        total = len(rows)
+        # Expected share is uniform — six pillars, 1/6 each. Recorded so the
+        # frontend can render a baseline line without re-deriving the
+        # constant on its end.
+        expected_share = round(1.0 / len(PILLAR_DEFINITIONS), 4)
+        by_pillar: dict[str, dict[str, Any]] = {}
+        for code, name in PILLAR_DEFINITIONS.items():
+            cards = counts[code]
+            share = round(cards / total, 4) if total else 0.0
+            by_pillar[code] = {
+                "name": name,
+                "cards": cards,
+                "share": share,
+                "expected_share": expected_share,
+                # Positive drift = over-represented; negative = starved. Lets
+                # the UI sort or color-code without re-doing the math.
+                "drift": round(share - expected_share, 4),
+            }
+        return {
+            "window_days": days,
+            "since": cutoff,
+            "total": total,
+            "unassigned": unassigned,
+            "by_pillar": by_pillar,
+        }
+
+    try:
+        return await asyncio.to_thread(load)
+    except Exception as e:
+        logger.exception("Failed to compute pillar coverage")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _aggregate_workstream_freshness(
+    workstreams: list[dict[str, Any]],
+    completed_scans: list[dict[str, Any]],
+    recent_scans: list[dict[str, Any]],
+    recent_cards: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Join workstream rows with scan + card-add timestamps.
+
+    Pure function so the test suite can hit it without a Supabase mock.
+    """
+    last_scanned: dict[str, Optional[str]] = {}
+    for scan in completed_scans:
+        ws_id = scan.get("workstream_id")
+        if not ws_id:
+            continue
+        # Prefer completed_at; some schemas only set started_at on early
+        # completions, so fall back to created_at to avoid a None gap.
+        seen = (
+            scan.get("completed_at")
+            or scan.get("started_at")
+            or scan.get("created_at")
+        )
+        prev = last_scanned.get(ws_id)
+        if seen and (prev is None or seen > prev):
+            last_scanned[ws_id] = seen
+
+    scans_30d: dict[str, int] = {}
+    for scan in recent_scans:
+        ws_id = scan.get("workstream_id")
+        if not ws_id:
+            continue
+        scans_30d[ws_id] = scans_30d.get(ws_id, 0) + 1
+
+    cards_30d: dict[str, int] = {}
+    for entry in recent_cards:
+        ws_id = entry.get("workstream_id")
+        if not ws_id:
+            continue
+        cards_30d[ws_id] = cards_30d.get(ws_id, 0) + 1
+
+    rows: list[dict[str, Any]] = []
+    for ws in workstreams:
+        rows.append(
+            {
+                "id": ws.get("id"),
+                "name": ws.get("name"),
+                "owner_type": ws.get("owner_type") or "user",
+                "auto_scan": bool(ws.get("auto_scan")),
+                "last_scanned_at": last_scanned.get(ws.get("id")),
+                "scans_30d": scans_30d.get(ws.get("id"), 0),
+                "cards_added_30d": cards_30d.get(ws.get("id"), 0),
+            }
+        )
+
+    # Stale-first ordering: NULL (never scanned) bubbles to the top, then
+    # ascending by last_scanned_at. Within ties, preserve insertion order.
+    rows.sort(
+        key=lambda r: (
+            r["last_scanned_at"] is not None,
+            r["last_scanned_at"] or "",
+        )
+    )
+    return rows
+
+
+@router.get("/admin/coverage/workstreams")
+async def get_workstream_coverage(
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-workstream freshness table sorted stale-first.
+
+    Joins workstreams with their most recent completed scan, the count of
+    scans in the last 30d, and the count of cards added to the workstream
+    in the last 30d.
+    """
+    require_admin(current_user)
+    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    def load() -> dict[str, Any]:
+        workstreams = (
+            supabase.table("workstreams")
+            .select("id,name,owner_type,auto_scan,user_id,created_at")
+            .limit(2000)
+            .execute()
+            .data
+            or []
+        )
+        # All-time most-recent-completed scans, capped at the latest 1000 so
+        # we don't over-fetch on a long-lived deployment. For workstreams
+        # whose last completed scan is older than this window the
+        # last_scanned_at will appear None — which is the correct "very
+        # stale" signal for the freshness widget anyway.
+        completed_scans = (
+            supabase.table("workstream_scans")
+            .select("workstream_id,completed_at,started_at,created_at")
+            .eq("status", "completed")
+            .order("completed_at", desc=True)
+            .limit(1000)
+            .execute()
+            .data
+            or []
+        )
+        recent_scans = (
+            supabase.table("workstream_scans")
+            .select("workstream_id,created_at")
+            .gte("created_at", cutoff_30d)
+            .limit(5000)
+            .execute()
+            .data
+            or []
+        )
+        recent_cards = (
+            supabase.table("workstream_cards")
+            .select("workstream_id,added_at")
+            .gte("added_at", cutoff_30d)
+            .limit(20_000)
+            .execute()
+            .data
+            or []
+        )
+        items = _aggregate_workstream_freshness(
+            workstreams, completed_scans, recent_scans, recent_cards
+        )
+        return {"items": items, "total": len(items)}
+
+    try:
+        return await asyncio.to_thread(load)
+    except Exception as e:
+        logger.exception("Failed to compute workstream coverage")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/admin/workstreams/{workstream_id}/scan", status_code=status.HTTP_201_CREATED
+)
+async def admin_force_workstream_scan(
+    request: Request,
+    workstream_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin-initiated targeted scan of any workstream.
+
+    The user-facing endpoint at ``POST /me/workstreams/{id}/scan`` requires
+    the caller to own the workstream, which makes it useless for an admin
+    triaging org workstreams from the freshness dashboard. This variant
+    skips the ownership check (admin role still required) and writes the
+    same ``workstream_scans`` row the worker already polls. It also writes
+    an audit-log row so admin-initiated scans are distinguishable from
+    user-initiated ones.
+    """
+    require_admin(current_user)
+
+    def fetch_and_queue() -> dict[str, Any]:
+        ws_resp = (
+            supabase.table("workstreams")
+            .select("id,name,user_id,keywords,pillar_ids,horizon,owner_type")
+            .eq("id", workstream_id)
+            .limit(1)
+            .execute()
+        )
+        rows = ws_resp.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Workstream not found")
+        ws = rows[0]
+        keywords = ws.get("keywords") or []
+        pillar_ids = ws.get("pillar_ids") or []
+        if not keywords and not pillar_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Workstream has no keywords or pillars configured; "
+                    "nothing to scan."
+                ),
+            )
+        config: dict[str, Any] = {
+            "workstream_id": workstream_id,
+            # The scan worker keys some logging by user_id; preserve the WS
+            # owner so admin-initiated scans show up under the right user
+            # rather than the admin themselves.
+            "user_id": ws.get("user_id"),
+            "triggered_by": "admin",
+            "admin_user_id": current_user.get("id"),
+            "keywords": keywords,
+            "pillar_ids": pillar_ids,
+            "horizon": ws.get("horizon") or "ALL",
+        }
+        scan_record = {
+            "workstream_id": workstream_id,
+            # The DB has a NOT NULL on user_id — admin force-scan still
+            # records as the workstream owner so the data model stays
+            # consistent. The triggered_by/admin_user_id fields in config
+            # carry the actual admin identity.
+            "user_id": ws.get("user_id") or current_user.get("id"),
+            "status": "queued",
+            "config": config,
+        }
+        result = (
+            supabase.table("workstream_scans").insert(scan_record).execute()
+        )
+        scan_rows = result.data or []
+        if not scan_rows:
+            raise HTTPException(
+                status_code=500, detail="Failed to enqueue scan"
+            )
+        return {"workstream": ws, "scan": scan_rows[0]}
+
+    try:
+        outcome = await asyncio.to_thread(fetch_and_queue)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to force-scan workstream")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    from app.routers.admin import _log_admin_action
+
+    await asyncio.to_thread(
+        _log_admin_action,
+        actor=current_user,
+        action="admin.workstream.force_scan",
+        target_type="workstream",
+        target_id=workstream_id,
+        before=None,
+        after={
+            "scan_id": outcome["scan"].get("id"),
+            "workstream_name": outcome["workstream"].get("name"),
+        },
+        request=request,
+    )
+    return {
+        "scan_id": outcome["scan"].get("id"),
+        "workstream_id": workstream_id,
+        "status": outcome["scan"].get("status", "queued"),
+    }
