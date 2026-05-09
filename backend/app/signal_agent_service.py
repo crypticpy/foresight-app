@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from supabase import Client
 
+from app.cost_guardrail import BudgetExceededError, check_budget_or_skip
 from app.openai_provider import (
     azure_openai_async_client,
     azure_openai_async_embedding_client,
@@ -538,6 +539,20 @@ class SignalAgentService:
 
         if not processed_sources:
             logger.info("Signal agent: no sources to process")
+            return result
+
+        # Rolling-window cost guardrail. When tripped, skip card creation for
+        # this run rather than partially-process — the discovered_sources rows
+        # are already persisted upstream so nothing is lost; admins can rerun
+        # signal_agent after raising the cap or resetting the guardrail.
+        try:
+            await check_budget_or_skip()
+        except BudgetExceededError as exc:
+            logger.warning(
+                "Signal agent: cost guardrail tripped (run=%s, %s) — skipping signal detection",
+                self.run_id,
+                exc,
+            )
             return result
 
         logger.info(

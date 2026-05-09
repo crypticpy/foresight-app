@@ -13,6 +13,7 @@ from app.authz import (
     require_card_research_access,
     require_workstream_access,
 )
+from app.cost_guardrail import check_budget_or_raise
 from app.deps import supabase, get_current_user, openai_client, limiter
 from app.models.research import ResearchTaskCreate, ResearchTask
 from app.research_service import ResearchService
@@ -262,6 +263,9 @@ async def create_research_task(
             status_code=403,
             detail="Deep research is temporarily disabled",
         )
+
+    # Rolling-window cost guardrail. No-op when disabled in admin settings.
+    await check_budget_or_raise()
 
     estimated_cost = _estimated_task_cost(task_data.task_type)
     max_estimated_cost = _env_float("FORESIGHT_MAX_RESEARCH_TASK_ESTIMATED_COST_USD")

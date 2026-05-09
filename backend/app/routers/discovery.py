@@ -10,6 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.cost_guardrail import check_budget_or_raise
 from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
 from app.models.discovery_models import (
     DiscoveryConfigRequest,
@@ -304,6 +305,9 @@ async def trigger_discovery_run(
 
     Returns immediately with run ID. Poll GET /discovery/runs/{run_id} for status.
     """
+    # Rolling-window cost guardrail. No-op when disabled in admin settings.
+    await check_budget_or_raise()
+
     try:
         # Apply env defaults for any unset values
         resolved_config = {

@@ -18,6 +18,7 @@ from app.deps import (
     limiter,
     evict_cached_profile,
 )
+from app import cost_guardrail
 from app.openai_provider import reload_config as reload_openai_config
 from app.models.source_rating import (
     SourceRatingCreate,
@@ -139,6 +140,48 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "group_name": "research",
         "label": "Max research task cost",
         "description": "Optional per-task estimated cost cap in USD.",
+        "value_type": "number",
+        "default": None,
+    },
+    {
+        "key": "FORESIGHT_COST_GUARDRAIL_ENABLED",
+        "group_name": "research",
+        "label": "Cost guardrail enabled",
+        "description": (
+            "Master switch for the rolling-window cost guardrail. When off, "
+            "cost settings below are ignored and runaway spend is not blocked."
+        ),
+        "value_type": "boolean",
+        "default": False,
+    },
+    {
+        "key": "FORESIGHT_COST_BUDGET_USD",
+        "group_name": "research",
+        "label": "Cost budget (USD)",
+        "description": (
+            "Hard cap on total spend over the rolling window. When reached, "
+            "research / discovery / signal-agent paths refuse new work until "
+            "the cap is raised or the guardrail is reset. Null = no cap."
+        ),
+        "value_type": "number",
+        "default": None,
+    },
+    {
+        "key": "FORESIGHT_COST_BUDGET_WINDOW_DAYS",
+        "group_name": "research",
+        "label": "Cost budget window (days)",
+        "description": "Length of the rolling window the cap applies to.",
+        "value_type": "number",
+        "default": 7,
+    },
+    {
+        "key": "FORESIGHT_COST_ALERT_THRESHOLD_USD",
+        "group_name": "research",
+        "label": "Cost alert threshold (USD)",
+        "description": (
+            "Soft threshold. Crossing it logs a cost.alert audit row but does "
+            "not block work. Null = no alert."
+        ),
         "value_type": "number",
         "default": None,
     },
@@ -768,6 +811,13 @@ async def _apply_admin_setting_change(
                     "failed; restart the API to pick up the change."
                 ),
             ) from exc
+    if key in {
+        cost_guardrail.COST_BUDGET_KEY,
+        cost_guardrail.COST_WINDOW_KEY,
+        cost_guardrail.COST_ALERT_KEY,
+        cost_guardrail.COST_ENABLED_KEY,
+    }:
+        cost_guardrail.invalidate_cache()
     return saved
 
 
