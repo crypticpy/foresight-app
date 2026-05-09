@@ -343,6 +343,11 @@ async def check_budget_or_raise() -> BudgetState:
     is crossed. Returns the state otherwise.
     """
     state = await get_budget_state()
+    # Record the alert before the trip so a single refresh that jumps from
+    # below alert_usd to above cap_usd still produces the cost.alert row
+    # for this window.
+    if state.alerting:
+        await _record_alert_once(state)
     if state.tripped:
         await _record_trip(state)
         cap_text = (
@@ -356,19 +361,17 @@ async def check_budget_or_raise() -> BudgetState:
                 "Contact an administrator to raise the cap or reset the guardrail."
             ),
         )
-    if state.alerting:
-        await _record_alert_once(state)
     return state
 
 
 async def check_budget_or_skip() -> BudgetState:
     """For non-HTTP paths (worker, signal_agent). Raises ``BudgetExceededError`` on trip."""
     state = await get_budget_state()
+    if state.alerting:
+        await _record_alert_once(state)
     if state.tripped:
         await _record_trip(state)
         raise BudgetExceededError(state)
-    if state.alerting:
-        await _record_alert_once(state)
     return state
 
 

@@ -168,14 +168,19 @@ async def execute_discovery_run_background(
             run_id,
             exc,
         )
+        update_payload = {
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_message": "Cost guardrail tripped — discovery run aborted",
+        }
+
+        def _mark_aborted() -> None:
+            supabase.table("discovery_runs").update(update_payload).eq(
+                "id", run_id
+            ).execute()
+
         try:
-            supabase.table("discovery_runs").update(
-                {
-                    "status": "failed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": "Cost guardrail tripped — discovery run aborted",
-                }
-            ).eq("id", run_id).execute()
+            await asyncio.to_thread(_mark_aborted)
         except Exception:
             logger.exception(
                 "Failed to mark discovery run %s as guardrail-aborted", run_id
