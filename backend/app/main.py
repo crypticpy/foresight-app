@@ -43,6 +43,7 @@ from app.routers.admin import router as admin_router
 from app.routers.admin_discovery import router as admin_discovery_router
 from app.routers.feeds import router as feeds_router
 from app.routers.usage import router as usage_router
+from app.routers.safety import router as safety_router
 from app.routers.config import router as config_router
 from app.routers.workstream_members import router as workstream_members_router
 from app.routers.workstream_invites import router as workstream_invites_router
@@ -227,6 +228,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_discovery_router)
     application.include_router(feeds_router)
     application.include_router(usage_router)
+    application.include_router(safety_router)
     application.include_router(config_router)
     application.include_router(workstream_members_router)
     application.include_router(workstream_invites_router)

@@ -35,6 +35,10 @@ from app.chat_tools import (
     progress_label,
 )
 from app.usage_telemetry import augment_usage_context
+from app.safety.injection import (
+    record_injection_incident,
+    scan_text as scan_for_injection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -570,6 +574,45 @@ async def chat(
             yield _sse_error(quota_reason or "Chat quota exceeded.")
             return
 
+        # 1c. Prompt-injection scan on the incoming user message (PR 5).
+        # HIGH-severity matches refuse the request before we spend an LLM
+        # call; lower severities pass through with an audit row so admins
+        # can review patterns. We scan after rate-limiting so a flood of
+        # injection attempts still trips the rate limiter. Blocking hits
+        # log immediately (we abort before conversation creation); the
+        # non-blocking ones wait until ``conv_id`` is known so the audit
+        # row links back to the actual thread.
+        injection_matches = scan_for_injection(message)
+        injection_blocking = [m for m in injection_matches if m.is_blocking]
+        if injection_blocking:
+            try:
+                await asyncio.to_thread(
+                    record_injection_incident,
+                    supabase_client,
+                    matches=injection_blocking,
+                    source="chat",
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    metadata={
+                        "scope": scope,
+                        "scope_id": scope_id,
+                        "blocked": True,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("chat: failed to log injection incident: %s", exc)
+            logger.warning(
+                "chat: blocking message from user %s due to injection patterns: %s",
+                user_id,
+                [m.pattern_id for m in injection_blocking],
+            )
+            yield _sse_error(
+                "Your message was flagged by our prompt-injection filter "
+                "and was not sent. If this looks like a false positive, "
+                "please rephrase or contact an admin."
+            )
+            return
+
         # 2. Conversation management
         try:
             conv_id, is_new = await _get_or_create_conversation(
@@ -591,6 +634,27 @@ async def chat(
         # known. Title-generation for brand-new conversations runs *before*
         # this point and is intentionally not associated with a conversation.
         augment_usage_context(conversation_id=conv_id)
+
+        # Log non-blocking injection matches now that conv_id is known so the
+        # audit row links back to the actual thread.
+        injection_nonblocking = [m for m in injection_matches if not m.is_blocking]
+        if injection_nonblocking:
+            try:
+                await asyncio.to_thread(
+                    record_injection_incident,
+                    supabase_client,
+                    matches=injection_nonblocking,
+                    source="chat",
+                    user_id=user_id,
+                    conversation_id=conv_id,
+                    metadata={
+                        "scope": scope,
+                        "scope_id": scope_id,
+                        "blocked": False,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("chat: failed to log injection incident: %s", exc)
 
         # Store the user message
         await _store_message(supabase_client, conv_id, "user", message)

@@ -4,6 +4,7 @@ Contains all nightly / weekly background jobs and the scheduler lifecycle
 helpers ``start_scheduler()`` and ``shutdown_scheduler()``.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from app.helpers.workstream_utils import (
     _build_workstream_scan_config,
     _auto_queue_workstream_scan,
 )
+from app.safety.abuse import detect_user_abuse, record_abuse_findings
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +331,29 @@ async def run_digest_batch():
         logger.error(f"Digest batch processing failed: {e}")
 
 
+async def run_abuse_monitor():
+    """Periodic usage-anomaly aggregation.
+
+    Reads ``llm_usage_events`` for the past hour, groups per user, and
+    writes a ``safety_incidents`` row (kind='abuse') for each finding.
+    Dedupe is handled inside ``record_abuse_findings`` so re-runs over
+    overlapping windows don't create duplicates.
+    """
+    logger.info("Starting scheduled abuse monitor pass...")
+    try:
+        findings = await asyncio.to_thread(detect_user_abuse, supabase)
+        if not findings:
+            return
+        inserted = await asyncio.to_thread(record_abuse_findings, supabase, findings)
+        logger.info(
+            "Abuse monitor: %d finding(s), %d new incident(s) inserted",
+            len(findings),
+            inserted,
+        )
+    except Exception as e:
+        logger.warning(f"Abuse monitor pass failed: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle helpers
 # ---------------------------------------------------------------------------
@@ -421,6 +446,15 @@ def start_scheduler():
         hour=8,
         minute=0,
         id="daily_digest_batch",
+        replace_existing=True,
+    )
+
+    # Abuse monitor every 30 min — cheap aggregation over the last hour
+    scheduler.add_job(
+        run_abuse_monitor,
+        "interval",
+        minutes=30,
+        id="abuse_monitor",
         replace_existing=True,
     )
 
