@@ -14,7 +14,7 @@
  * - Responsive design for mobile and desktop
  */
 
-import React, { memo, useState } from "react";
+import React, { memo, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useDrag } from "@use-gesture/react";
 import {
@@ -326,44 +326,31 @@ function SwipeableCardWrapper({
     },
   );
 
-  // Calculate swipe visual feedback styles
-  const getSwipeStyles = (): React.CSSProperties => {
+  // Single derived object: visual style + per-direction indicator overlays.
+  // Both branches share the same drag state and progress calc, so collapse
+  // them into one memoized computation.
+  const swipeVisual = useMemo<{
+    style: React.CSSProperties;
+    leftIndicator: React.ReactNode;
+    rightIndicator: React.ReactNode;
+  }>(() => {
     if (!isSwiping || Math.abs(swipeOffset) < SWIPE_CONFIG.feedbackThreshold) {
-      return {};
+      return { style: {}, leftIndicator: null, rightIndicator: null };
     }
 
     const progress = Math.min(Math.abs(swipeOffset) / swipeDistance, 1);
     const intensity = progress * 0.4;
+    const opacity = 0.3 + progress * 0.5;
 
     if (swipeOffset < -SWIPE_CONFIG.feedbackThreshold) {
       return {
-        boxShadow: willTrigger
-          ? `inset -6px 0 0 0 rgba(239, 68, 68, 0.5), 0 0 20px rgba(239, 68, 68, 0.2)`
-          : `inset -4px 0 0 0 rgba(239, 68, 68, ${intensity})`,
-        backgroundColor: willTrigger ? "rgba(239, 68, 68, 0.05)" : undefined,
-      };
-    } else if (swipeOffset > SWIPE_CONFIG.feedbackThreshold) {
-      return {
-        boxShadow: willTrigger
-          ? `inset 6px 0 0 0 rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.2)`
-          : `inset 4px 0 0 0 rgba(34, 197, 94, ${intensity})`,
-        backgroundColor: willTrigger ? "rgba(34, 197, 94, 0.05)" : undefined,
-      };
-    }
-    return {};
-  };
-
-  // Render swipe direction indicator overlays
-  const renderSwipeIndicators = () => {
-    if (!isSwiping || !swipeDirection) return null;
-
-    const progress = Math.min(Math.abs(swipeOffset) / swipeDistance, 1);
-    const opacity = 0.3 + progress * 0.5;
-
-    return (
-      <>
-        {/* Left swipe indicator (dismiss) */}
-        {swipeDirection === "left" && (
+        style: {
+          boxShadow: willTrigger
+            ? `inset -6px 0 0 0 rgba(239, 68, 68, 0.5), 0 0 20px rgba(239, 68, 68, 0.2)`
+            : `inset -4px 0 0 0 rgba(239, 68, 68, ${intensity})`,
+          backgroundColor: willTrigger ? "rgba(239, 68, 68, 0.05)" : undefined,
+        },
+        leftIndicator: swipeDirection === "left" && (
           <div
             className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none z-10"
             style={{ opacity }}
@@ -389,10 +376,21 @@ function SwipeableCardWrapper({
               <XCircle className="h-4 w-4" />
             </div>
           </div>
-        )}
+        ),
+        rightIndicator: null,
+      };
+    }
 
-        {/* Right swipe indicator (follow/approve) */}
-        {swipeDirection === "right" && (
+    if (swipeOffset > SWIPE_CONFIG.feedbackThreshold) {
+      return {
+        style: {
+          boxShadow: willTrigger
+            ? `inset 6px 0 0 0 rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.2)`
+            : `inset 4px 0 0 0 rgba(34, 197, 94, ${intensity})`,
+          backgroundColor: willTrigger ? "rgba(34, 197, 94, 0.05)" : undefined,
+        },
+        leftIndicator: null,
+        rightIndicator: swipeDirection === "right" && (
           <div
             className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none z-10"
             style={{ opacity }}
@@ -418,10 +416,12 @@ function SwipeableCardWrapper({
               {willTrigger ? "Release to approve" : "Approve"}
             </span>
           </div>
-        )}
-      </>
-    );
-  };
+        ),
+      };
+    }
+
+    return { style: {}, leftIndicator: null, rightIndicator: null };
+  }, [isSwiping, swipeOffset, swipeDirection, willTrigger, swipeDistance]);
 
   return (
     <div
@@ -439,10 +439,11 @@ function SwipeableCardWrapper({
         transition: isSwiping
           ? "none"
           : "transform 0.2s ease-out, box-shadow 0.2s ease-out",
-        ...getSwipeStyles(),
+        ...swipeVisual.style,
       }}
     >
-      {renderSwipeIndicators()}
+      {swipeVisual.leftIndicator}
+      {swipeVisual.rightIndicator}
       {children}
     </div>
   );
