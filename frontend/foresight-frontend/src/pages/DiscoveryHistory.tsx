@@ -26,9 +26,7 @@ import {
   fetchDiscoveryRuns,
   triggerDiscoveryRun,
   cancelDiscoveryRun,
-  fetchDiscoveryConfig,
   type DiscoveryRun,
-  type DiscoveryConfig,
 } from "../lib/discovery-api";
 
 /**
@@ -516,24 +514,6 @@ const DiscoveryHistory: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [_discoveryConfig, setDiscoveryConfig] =
-    useState<DiscoveryConfig | null>(null);
-
-  // Fetch discovery config on mount
-  useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        const token = await getAuthToken();
-        if (token) {
-          const config = await fetchDiscoveryConfig(token);
-          setDiscoveryConfig(config);
-        }
-      } catch (err) {
-        console.error("Failed to load discovery config:", err);
-      }
-    };
-    loadConfig();
-  }, []);
 
   const loadRuns = useCallback(
     async (isInitial = false) => {
