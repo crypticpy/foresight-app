@@ -218,7 +218,11 @@ export function useDashboardData(
         low: safeCount(qualityLowResult),
       });
     } catch (error) {
+      // Rethrow so refresh()'s Promise.allSettled correctly reports `ok: false`.
+      // Per-result errors logged above are intentional diagnostic-only since
+      // those branches degrade gracefully to empty data.
       console.error("Error loading dashboard data:", error);
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -250,7 +254,10 @@ export function useDashboardData(
   }, []);
 
   useEffect(() => {
-    void loadDashboardData();
+    // Loaders may reject (loadDashboardData rethrows for refresh()'s allSettled).
+    // On mount we have no caller to report to, so swallow rejections here —
+    // the per-loader catch blocks have already logged + degraded the UI.
+    loadDashboardData().catch(() => {});
     void loadPendingCount();
     void loadLensOverview();
   }, [loadDashboardData, loadPendingCount, loadLensOverview]);
