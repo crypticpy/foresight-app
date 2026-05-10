@@ -82,6 +82,9 @@ const TRIAGE_FILTERS = [
 // Helpers
 // ============================================================================
 
+const DEFAULT_CATEGORY_COLOR =
+  "bg-gray-100 text-gray-800 dark:bg-gray-700/50 dark:text-gray-300";
+
 function getCategoryColor(category: string): string {
   const colors: Record<string, string> = {
     gov_tech:
@@ -94,9 +97,9 @@ function getCategoryColor(category: string): string {
     think_tank:
       "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
     tech: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
-    general: "bg-gray-100 text-gray-800 dark:bg-gray-700/50 dark:text-gray-300",
+    general: DEFAULT_CATEGORY_COLOR,
   };
-  return colors[category] || colors.general;
+  return colors[category] ?? DEFAULT_CATEGORY_COLOR;
 }
 
 function getStatusIcon(status: string) {
@@ -572,7 +575,7 @@ const Feeds: React.FC = () => {
       if (expandedFeedId === feedId) setExpandedFeedId(null);
       await loadFeeds();
     } catch (err) {
-      console.error("Delete error:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete feed");
     } finally {
       setDeletingId(null);
     }
@@ -917,10 +920,26 @@ const FeedItemsSectionWrapper: React.FC<{
   getToken: () => Promise<string>;
 }> = ({ feedId, getToken }) => {
   const [token, setToken] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   useEffect(() => {
-    getToken().then(setToken).catch(console.error);
+    getToken()
+      .then(setToken)
+      .catch((err: unknown) => {
+        setTokenError(
+          err instanceof Error ? err.message : "Failed to authenticate",
+        );
+      });
   }, [getToken]);
+
+  if (tokenError) {
+    return (
+      <div className="flex items-center gap-2 py-6 px-4 border-t border-gray-200 dark:border-gray-700 text-sm text-red-600 dark:text-red-400">
+        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+        <span>{tokenError}</span>
+      </div>
+    );
+  }
 
   if (!token) {
     return (
