@@ -11,3 +11,15 @@ export async function getAuthToken(): Promise<string | null> {
   } = await supabase.auth.getSession();
   return session?.access_token ?? null;
 }
+
+/**
+ * Resolve the current Supabase user id, or null if no session exists.
+ * Use when filtering Supabase queries by `user_id` / `created_by` on the
+ * client; for backend-bound API calls prefer {@link getAuthToken}.
+ */
+export async function getCurrentUserId(): Promise<string | null> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.user.id ?? null;
+}

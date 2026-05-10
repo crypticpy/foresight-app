@@ -23,7 +23,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, Sparkles, CheckCircle, X, AlertTriangle } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { getAuthToken } from "../../lib/auth";
+import { getAuthToken, getCurrentUserId } from "../../lib/auth";
 import { cn } from "../../lib/utils";
 import {
   createCardFromTopic,
@@ -85,15 +85,13 @@ export function QuickCreateTab({
   useEffect(() => {
     async function loadWorkstreams() {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) return;
+        const userId = await getCurrentUserId();
+        if (!userId) return;
 
         const { data } = await supabase
           .from("workstreams")
           .select("id, name")
-          .eq("created_by", session.user.id)
+          .eq("created_by", userId)
           .order("name");
 
         if (data) {

@@ -43,7 +43,7 @@ import {
 import { Link } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { supabase } from "../../lib/supabase";
-import { getAuthToken } from "../../lib/auth";
+import { getAuthToken, getCurrentUserId } from "../../lib/auth";
 import {
   createCardFromTopic,
   suggestKeywords,
@@ -317,15 +317,13 @@ export function CreateSignalModal({
 
     async function loadWorkstreams() {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) return;
+        const userId = await getCurrentUserId();
+        if (!userId) return;
 
         const { data } = await supabase
           .from("workstreams")
           .select("id, name")
-          .eq("user_id", session.user.id)
+          .eq("user_id", userId)
           .order("name");
 
         if (data) {
