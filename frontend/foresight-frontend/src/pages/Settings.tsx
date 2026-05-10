@@ -4,10 +4,12 @@ import { supabase } from "../lib/supabase";
 import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { LoadingButton } from "../components/ui/LoadingButton";
+import { useToast } from "../components/ui/Toast";
 import { API_BASE_URL } from "../lib/config";
 
 const Settings: React.FC = () => {
   const { user, signOut } = useAuthContext();
+  const { pushToast } = useToast();
   const [profile, setProfile] = useState({
     display_name: "",
     department: "",
@@ -54,7 +56,11 @@ const Settings: React.FC = () => {
         });
       }
     } catch (error) {
-      console.error("Error loading profile:", error);
+      setMessage(
+        error instanceof Error
+          ? `Could not load profile: ${error.message}`
+          : "Could not load profile.",
+      );
     }
   };
 
@@ -85,7 +91,9 @@ const Settings: React.FC = () => {
     try {
       await signOut();
     } catch (error) {
-      console.error("Error signing out:", error);
+      pushToast(error instanceof Error ? error.message : "Failed to sign out", {
+        variant: "error",
+      });
       setIsSigningOut(false);
     }
   };
@@ -113,7 +121,11 @@ const Settings: React.FC = () => {
         );
       }
     } catch (error) {
-      console.error("Error loading notification preferences:", error);
+      setNotifMessage(
+        error instanceof Error
+          ? `Could not load preferences: ${error.message}`
+          : "Could not load notification preferences.",
+      );
     }
   };
 
