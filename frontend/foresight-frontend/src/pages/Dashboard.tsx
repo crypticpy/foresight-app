@@ -355,7 +355,6 @@ const Dashboard: React.FC = () => {
           <div className="ml-auto h-8 w-16 flex-shrink-0">
             <Sparkline
               data={sparklineByMetric.new_cards?.points ?? flatSpark}
-              stroke="#44499C"
             />
           </div>
         </Link>
