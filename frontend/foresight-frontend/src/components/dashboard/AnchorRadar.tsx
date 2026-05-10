@@ -28,6 +28,11 @@ export interface AnchorRadarProps {
 }
 
 const RING_PCTS = [0.25, 0.5, 0.75, 1];
+
+// Defaults for the polygon's stroke/fill. SVG attributes can't take Tailwind
+// classes, so these reference the brand-blue token's hex values directly.
+const DEFAULT_STROKE = "#44499C"; // brand-blue
+const DEFAULT_FILL = "rgba(68, 73, 156, 0.2)"; // brand-blue @ 20%
 // Viewbox is wider than tall so the side labels (longest is
 // "Sustainability" at 14 chars) have horizontal breathing room without
 // shrinking the chart itself. Width budget: chart radius 86 + label
@@ -117,8 +122,8 @@ export function AnchorRadar({
   data,
   className,
   size = 240,
-  stroke = "#44499C",
-  fill = "rgba(68, 73, 156, 0.2)",
+  stroke = DEFAULT_STROKE,
+  fill = DEFAULT_FILL,
   ariaLabel,
 }: AnchorRadarProps) {
   const axes = useMemo(() => buildAxes(data), [data]);
