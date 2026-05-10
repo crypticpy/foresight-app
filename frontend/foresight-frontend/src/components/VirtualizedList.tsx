@@ -150,7 +150,11 @@ function VirtualizedListInner<T>(
   const getScrollElement = useCallback(() => parentRef.current, []);
   const estimateSizeFn = useCallback(() => estimatedSize, [estimatedSize]);
   const getVirtualizerItemKey = useCallback(
-    (index: number) => getItemKey?.(items[index], index) ?? index,
+    (index: number) => {
+      const item = items[index];
+      if (item === undefined) return index;
+      return getItemKey?.(item, index) ?? index;
+    },
     [getItemKey, items],
   );
 
@@ -226,15 +230,18 @@ function VirtualizedListInner<T>(
           handled = true;
           break;
         case "Enter":
-        case " ":
-          if (internalFocusedIndex.current >= 0 && onItemClick) {
-            onItemClick(
-              items[internalFocusedIndex.current],
-              internalFocusedIndex.current,
-            );
+        case " ": {
+          const focusedItem = items[internalFocusedIndex.current];
+          if (
+            internalFocusedIndex.current >= 0 &&
+            onItemClick &&
+            focusedItem !== undefined
+          ) {
+            onItemClick(focusedItem, internalFocusedIndex.current);
             handled = true;
           }
           break;
+        }
         default:
           // Other keys (Tab, alphanumerics, modifiers) — let the browser handle them.
           break;
@@ -315,6 +322,7 @@ function VirtualizedListInner<T>(
           {/* Render visible items */}
           {virtualItems.map((virtualItem) => {
             const item = items[virtualItem.index];
+            if (item === undefined) return null;
             const isFocused =
               focusedIndex !== undefined
                 ? virtualItem.index === focusedIndex

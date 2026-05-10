@@ -99,9 +99,10 @@ function getTrendDirection(
 ): "up" | "down" | "stable" {
   if (data.length < 2) return "stable";
 
-  const first = data[0].velocity_score;
-  const last = data[data.length - 1].velocity_score;
-  const diff = last - first;
+  const firstEntry = data[0];
+  const lastEntry = data[data.length - 1];
+  if (!firstEntry || !lastEntry) return "stable";
+  const diff = lastEntry.velocity_score - firstEntry.velocity_score;
 
   if (Math.abs(diff) < 5) return "stable";
   return diff > 0 ? "up" : "down";
