@@ -76,9 +76,11 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
  */
 function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const w = window as Record<string, any>;
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+  const w = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
 // ============================================================================
