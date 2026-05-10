@@ -6,7 +6,7 @@
  * Used inline in card detail views and card list items.
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import { cn } from '../../lib/utils';
 import type { ScoreHistory } from '../../lib/discovery-api';

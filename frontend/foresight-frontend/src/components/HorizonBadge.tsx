@@ -6,7 +6,6 @@
  * - Tooltip showing horizon name, timeframe, and description
  */
 
-import React from "react";
 import { Clock, TrendingUp, Sparkles } from "lucide-react";
 import { Tooltip } from "./ui/Tooltip";
 import { cn } from "../lib/utils";

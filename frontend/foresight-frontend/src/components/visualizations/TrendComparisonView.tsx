@@ -14,7 +14,12 @@
  * - Responsive on tablet/desktop
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,

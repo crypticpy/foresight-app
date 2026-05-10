@@ -12,7 +12,12 @@
  * - Keyboard navigation (Escape to close)
  */
 
-import React, { useState, useEffect, useCallback, memo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  memo
+} from "react";
 import {
   X,
   Loader2,

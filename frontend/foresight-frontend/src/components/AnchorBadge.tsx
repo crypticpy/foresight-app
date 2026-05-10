@@ -7,7 +7,6 @@
  * - Tooltip showing full description
  */
 
-import React from 'react';
 import {
   Scale,
   DollarSign,

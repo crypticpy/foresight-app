@@ -7,7 +7,6 @@
  * - Tooltip showing description, typical signals, and horizon alignment
  */
 
-import React from "react";
 import { Tooltip } from "./ui/Tooltip";
 import { cn } from "../lib/utils";
 import {

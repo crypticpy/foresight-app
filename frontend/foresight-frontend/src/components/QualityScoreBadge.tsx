@@ -9,7 +9,6 @@
  * - null/undefined: Gray (No score)
  */
 
-import React from "react";
 import { cn } from "../lib/utils";
 import { getSizeClasses, type BadgeSize } from "../lib/badge-utils";
 
