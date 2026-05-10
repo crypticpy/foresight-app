@@ -5,38 +5,26 @@
  * component and its sub-components for consistent type safety.
  */
 
-import type { BaseCard } from "../../types/card";
+import type { FullCard } from "../../types/card";
 
 /**
  * Card shape used by the CardDetail view.
  *
- * Extends `BaseCard` (the canonical core fields) with detail-view extras
- * (description, goal/anchor IDs, full lens metadata, user-metadata,
- * classifier provenance, etc.) and narrows `updated_at` to required since
- * the detail endpoint always returns it. Narrower trend unions reflect the
- * documented enum values returned by the API.
+ * Extends `FullCard` (canonical core + lens metadata) with detail-view
+ * extras (description, goal IDs, deep-research provenance) and narrows
+ * `updated_at` to required since the detail endpoint always returns it.
+ * Narrower trend unions reflect the documented enum values returned by
+ * the API.
  */
 export interface Card extends Omit<
-  BaseCard,
-  "velocity_trend" | "trend_direction"
+  FullCard,
+  "velocity_trend" | "trend_direction" | "updated_at"
 > {
-  /** Full description of the card */
   description: string;
-  /** Goal within the pillar */
   goal_id: string;
-  /** Optional anchor department/area */
-  anchor_id?: string;
-  /** Risk score (0-100): Potential negative consequences */
-  risk_score: number;
-  /** Opportunity score (0-100): Potential benefits if adopted */
-  opportunity_score: number;
-  /** ISO timestamp when the card was last updated (always present in detail view) */
   updated_at: string;
-  /** ISO timestamp of last deep research execution */
   deep_research_at?: string;
-  /** Number of deep research tasks run today (for rate limiting) */
   deep_research_count_today?: number;
-  /** Velocity trend classification */
   velocity_trend?:
     | "accelerating"
     | "stable"
@@ -44,7 +32,6 @@ export interface Card extends Omit<
     | "emerging"
     | "stale"
     | null;
-  /** Overall trend trajectory based on source publication patterns */
   trend_direction?:
     | "accelerating"
     | "stable"
@@ -52,44 +39,6 @@ export interface Card extends Omit<
     | "declining"
     | "unknown"
     | null;
-  // ──────────────────────────────────────────────────────────────────
-  // Lens architecture fields (see docs/18_FEATURE_Lens_Architecture.md).
-  // All optional — populated by the classifier cascade; older cards
-  // may have null/empty values until backfilled.
-  // ──────────────────────────────────────────────────────────────────
-  signal_type?: "trend" | "driver" | "signal" | null;
-  secondary_pillars?: string[];
-  anchor_scores?: {
-    equity: number;
-    affordability: number;
-    innovation: number;
-    sustainability_resiliency: number;
-    proactive_prevention: number;
-    community_trust: number;
-  } | null;
-  csp_goal_ids?: string[];
-  csp_measure_ids?: string[];
-  issue_tags?: string[];
-  budget_assessment?: {
-    relevance: number;
-    dimensions: string[];
-    magnitude_band: string | null;
-    cycle: string | null;
-    notes: string | null;
-  } | null;
-  climate_assessment?: {
-    relevance: number;
-    drivers: string[];
-    horizon: string | null;
-    notes: string | null;
-  } | null;
-  user_metadata?: {
-    overrides: Record<string, unknown>;
-    added: Record<string, string[]>;
-    removed: Record<string, string[]>;
-  } | null;
-  classifier_version?: string | null;
-  classified_at?: string | null;
 }
 
 /**
