@@ -27,13 +27,18 @@ export function StepDetails({
   onClearNameError,
 }: StepDetailsProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   const handleGenerateDescription = async () => {
     if (!formData.name.trim()) return;
     setIsGenerating(true);
+    setGenerateError(null);
     try {
       const token = await getAuthToken();
-      if (!token) return;
+      if (!token) {
+        setGenerateError("Not signed in");
+        return;
+      }
 
       const response = await fetch(
         `${API_BASE_URL}/api/v1/ai/suggest-description`,
@@ -50,14 +55,18 @@ export function StepDetails({
           }),
         },
       );
-      if (response.ok) {
-        const data = await response.json();
-        if (data.description) {
-          onDescriptionChange(data.description);
-        }
+      if (!response.ok) {
+        setGenerateError(`Generation failed (${response.status})`);
+        return;
+      }
+      const data = await response.json();
+      if (data.description) {
+        onDescriptionChange(data.description);
       }
     } catch (error) {
-      console.error("Failed to generate description:", error);
+      setGenerateError(
+        error instanceof Error ? error.message : "Generation failed",
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -152,6 +161,11 @@ export function StepDetails({
           rows={4}
           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-brand-blue bg-white dark:bg-dark-surface-elevated dark:text-white dark:placeholder-gray-400 resize-none"
         />
+        {generateError && (
+          <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+            {generateError}
+          </p>
+        )}
       </div>
     </div>
   );
