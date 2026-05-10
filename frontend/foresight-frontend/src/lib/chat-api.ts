@@ -74,22 +74,22 @@ export interface Conversation {
 
 /**
  * A server-sent event from the chat streaming endpoint.
+ *
+ * Discriminated by `type`; each variant has only the fields it actually
+ * uses, so consumers narrow `data`/`content` automatically by switching
+ * on `type` without casts.
  */
-export interface SSEEvent {
-  /** The type of event */
-  type:
-    | "token"
-    | "citation"
-    | "suggestions"
-    | "done"
-    | "error"
-    | "progress"
-    | "metadata";
-  /** Text content for token events */
-  content?: string;
-  /** Structured data for citation, suggestions, done, and error events */
-  data?: unknown;
-}
+export type SSEEvent =
+  | { type: "token"; content: string }
+  | { type: "citation"; data: Citation }
+  | { type: "suggestions"; data: string[] }
+  | {
+      type: "done";
+      data: { conversation_id: string; message_id: string };
+    }
+  | { type: "error"; data?: string; content?: string }
+  | { type: "progress"; data: { step: string; detail: string } }
+  | { type: "metadata"; data: Record<string, unknown> };
 
 /**
  * Structured mention data for an @-referenced signal or workstream.
@@ -272,51 +272,33 @@ function processSSELine(
 
     switch (event.type) {
       case "token":
-        if (event.content !== undefined) {
-          callbacks.onToken(event.content);
-        }
+        callbacks.onToken(event.content);
         break;
 
       case "citation":
-        if (event.data) {
-          callbacks.onCitation(event.data as Citation);
-        }
+        callbacks.onCitation(event.data);
         break;
 
       case "suggestions":
-        if (event.data && Array.isArray(event.data)) {
-          callbacks.onSuggestions(event.data as string[]);
-        }
+        callbacks.onSuggestions(event.data);
         break;
 
       case "done":
-        if (event.data) {
-          callbacks.onDone(
-            event.data as { conversation_id: string; message_id: string },
-          );
-        }
+        callbacks.onDone(event.data);
         break;
 
       case "error":
         callbacks.onError(
-          (event.data as string) || event.content || "Unknown streaming error",
+          event.data || event.content || "Unknown streaming error",
         );
         break;
 
       case "progress":
-        if (callbacks.onProgress && event.data) {
-          callbacks.onProgress(event.data as { step: string; detail: string });
-        }
+        callbacks.onProgress?.(event.data);
         break;
 
       case "metadata":
-        if (callbacks.onMetadata && event.data) {
-          callbacks.onMetadata(event.data as Record<string, unknown>);
-        }
-        break;
-
-      default:
-        // Unknown event type - ignore gracefully
+        callbacks.onMetadata?.(event.data);
         break;
     }
   } catch {

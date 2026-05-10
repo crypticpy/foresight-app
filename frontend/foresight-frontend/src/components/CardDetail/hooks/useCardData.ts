@@ -106,10 +106,20 @@ export interface UseCardDataReturn {
  * @param user - The authenticated user object, or null if not authenticated
  * @returns Object containing all card data and management functions
  */
+export interface UseCardDataOptions {
+  /**
+   * When true, drop the `status=active` filter so review-queue / draft cards
+   * are visible. Defaults to false (active-only).
+   */
+  reviewMode?: boolean;
+}
+
 export function useCardData(
   slug: string | undefined,
   user: User | null,
+  options: UseCardDataOptions = {},
 ): UseCardDataReturn {
+  const { reviewMode = false } = options;
   // Core card data state
   const [card, setCard] = useState<Card | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
@@ -142,12 +152,9 @@ export function useCardData(
     if (!slug) return;
 
     try {
-      const { data: cardData } = await supabase
-        .from("cards")
-        .select("*")
-        .eq("slug", slug)
-        .eq("status", "active")
-        .single();
+      let query = supabase.from("cards").select("*").eq("slug", slug);
+      if (!reviewMode) query = query.eq("status", "active");
+      const { data: cardData } = await query.single();
 
       if (cardData) {
         setCard(cardData);
@@ -188,7 +195,7 @@ export function useCardData(
     } finally {
       setLoading(false);
     }
-  }, [slug, user?.id]);
+  }, [slug, user?.id, reviewMode]);
 
   /**
    * Load score history from Discovery API
