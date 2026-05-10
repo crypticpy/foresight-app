@@ -181,6 +181,7 @@ export const ExportProgressModal: React.FC<ExportProgressModalProps> = ({
 
   // Handle escape key - only allow close when completed or error
   useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.key === "Escape" &&
@@ -190,10 +191,8 @@ export const ExportProgressModal: React.FC<ExportProgressModalProps> = ({
       }
     };
 
-    if (isOpen) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose, status]);
 
   // Focus management
