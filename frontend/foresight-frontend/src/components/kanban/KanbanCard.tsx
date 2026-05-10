@@ -1,39 +1,28 @@
 /**
- * KanbanCard Component
+ * Draggable card for the workstream kanban board. Owns drag-sortable
+ * wiring, hover state for the keyboard hot-keys, and click navigation.
+ * Visual sub-pieces (tooltip body, research indicator, inbox quick
+ * actions) live in `./KanbanCard/`.
  *
- * A draggable card component for the workstream kanban board.
- * Uses @dnd-kit/sortable for drag-and-drop functionality.
- *
- * Features:
- * - Draggable with smooth visual feedback
- * - Displays card metadata with badge components
- * - Notes and reminder indicators
- * - Click navigation to card detail view
- * - Dark mode support
+ * @module components/kanban/KanbanCard
  */
 
-import React, { memo, useEffect, useState } from "react";
+import React, { memo, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
 import {
-  StickyNote,
-  Bell,
-  Sparkles,
-  UserPlus,
-  Heart,
-  Check,
-  X,
-  Loader2,
-  CheckCircle2,
   AlertCircle,
-  CheckCircle,
+  Bell,
+  Check,
   Eye,
   EyeOff,
   FileText,
-  Zap,
   FlaskConical,
+  StickyNote,
+  Zap,
 } from "lucide-react";
+
 import { cn } from "../../lib/utils";
 import { PillarBadge } from "../PillarBadge";
 import { HorizonBadge } from "../HorizonBadge";
@@ -45,17 +34,22 @@ import { ExploratoryBadge } from "../badges/ExploratoryBadge";
 import { Tooltip } from "../ui/Tooltip";
 import { ArtifactFolderTab, ArtifactRibbon } from "../ArtifactIndicator";
 import { CardActions } from "./CardActions";
-import { getPillarByCode } from "../../data/taxonomy";
 import { formatRelativeTime } from "../CardDetail/utils";
 import type {
-  WorkstreamCard as WorkstreamCardType,
   CardActionCallbacks,
   KanbanStatus,
+  WorkstreamCard as WorkstreamCardType,
 } from "./types";
 
-// =============================================================================
-// Types
-// =============================================================================
+import { AddedFromTooltipContent } from "./KanbanCard/AddedFromTooltipContent";
+import { InboxQuickActions } from "./KanbanCard/InboxQuickActions";
+import { ResearchStatusIndicator } from "./KanbanCard/ResearchStatusIndicator";
+import {
+  getAccentBorderClass,
+  getBriefChip,
+  parseStageNumber,
+} from "./KanbanCard/helpers";
+import { useQuickTriageKeyboard } from "./KanbanCard/useQuickTriageKeyboard";
 
 export interface KanbanCardProps {
   /** The workstream card data to display */
@@ -78,124 +72,6 @@ export interface KanbanCardProps {
   onToggleSelect?: (cardId: string) => void;
 }
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-/**
- * Get color class for the card's left border accent.
- * Based on the card's horizon for visual grouping.
- */
-function getAccentBorderClass(horizon: "H1" | "H2" | "H3"): string {
-  const accentMap: Record<string, string> = {
-    H1: "border-l-green-500",
-    H2: "border-l-amber-500",
-    H3: "border-l-purple-500",
-  };
-  return accentMap[horizon] || "border-l-gray-400";
-}
-
-/**
- * Parse stage number from stage_id if needed.
- * Handles both number and string formats (e.g., "1_concept" -> 1).
- */
-function parseStageNumber(stageId: number | string): number | null {
-  if (typeof stageId === "number") {
-    return stageId;
-  }
-  const match = String(stageId).match(/^(\d+)/);
-  return match?.[1] ? parseInt(match[1], 10) : null;
-}
-
-/**
- * AddedFromTooltipContent - Explains why the card was added to the workstream
- */
-function AddedFromTooltipContent({
-  addedFrom,
-  card,
-}: {
-  addedFrom: "auto" | "manual" | "follow";
-  card: WorkstreamCardType["card"];
-}) {
-  const pillar = getPillarByCode(card.pillar_id);
-
-  if (addedFrom === "auto") {
-    return (
-      <div className="space-y-2 min-w-[180px] max-w-[240px]">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-blue-500" />
-          <span className="font-medium text-gray-900 dark:text-gray-100">
-            Auto-matched
-          </span>
-        </div>
-        <p className="text-xs text-gray-600 dark:text-gray-400">
-          This signal was automatically added because it matched your workstream
-          filters:
-        </p>
-        <div className="space-y-1 text-xs">
-          {pillar && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-gray-500 dark:text-gray-400">Pillar:</span>
-              <span className="text-gray-700 dark:text-gray-300">
-                {pillar.name}
-              </span>
-            </div>
-          )}
-          {card.horizon && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-gray-500 dark:text-gray-400">Horizon:</span>
-              <span className="text-gray-700 dark:text-gray-300">
-                {card.horizon}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (addedFrom === "manual") {
-    return (
-      <div className="space-y-2 min-w-[140px]">
-        <div className="flex items-center gap-2">
-          <UserPlus className="h-4 w-4 text-gray-500" />
-          <span className="font-medium text-gray-900 dark:text-gray-100">
-            Manually added
-          </span>
-        </div>
-        <p className="text-xs text-gray-600 dark:text-gray-400">
-          You added this signal to your workstream.
-        </p>
-      </div>
-    );
-  }
-
-  // 'follow'
-  return (
-    <div className="space-y-2 min-w-[140px]">
-      <div className="flex items-center gap-2">
-        <Heart className="h-4 w-4 text-pink-500" />
-        <span className="font-medium text-gray-900 dark:text-gray-100">
-          From followed signal
-        </span>
-      </div>
-      <p className="text-xs text-gray-600 dark:text-gray-400">
-        Added because you followed this signal.
-      </p>
-    </div>
-  );
-}
-
-// =============================================================================
-// Component
-// =============================================================================
-
-/**
- * KanbanCard - A draggable card for the kanban board.
- *
- * Renders a compact card with key metadata badges and indicators.
- * Supports drag-and-drop reordering via @dnd-kit.
- */
 export const KanbanCard = memo(function KanbanCard({
   card,
   workstreamId,
@@ -209,8 +85,6 @@ export const KanbanCard = memo(function KanbanCard({
 }: KanbanCardProps) {
   const navigate = useNavigate();
 
-  // Configure sortable behavior — disabled in the drag overlay (already
-  // floating) and on read-only (org-owned) boards.
   const {
     attributes,
     listeners,
@@ -221,25 +95,19 @@ export const KanbanCard = memo(function KanbanCard({
   } = useSortable({
     id: card.id,
     disabled: isDragOverlay || readOnly,
-    data: {
-      type: "card",
-      card,
-    },
+    data: { type: "card", card },
   });
 
-  // Apply transform styles for drag animation
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
   };
 
-  // Extract card data
   const { card: embeddedCard } = card;
   const stageNumber = parseStageNumber(embeddedCard.stage_id);
   const hasNotes = card.notes && card.notes.trim().length > 0;
   const hasReminder = card.reminder_at !== null;
 
-  // Optimistic state for review approval
   const [isApproved, setIsApproved] = useState(false);
   const showNeedsReview =
     card.review_status === "pending_review" && !isApproved;
@@ -259,77 +127,23 @@ export const KanbanCard = memo(function KanbanCard({
     try {
       await cardActions.onToggleWatching(card.id, next);
     } catch {
-      // Revert on failure — let the server state win.
       setOptimisticWatching(null);
     }
   };
 
-  // Quick-triage keyboard shortcuts — only active for inbox cards while
-  // the pointer is over the card. Keys: e/a accept (→ working), x/r dismiss
-  // (→ archived), w toggle watching. Ignored when typing in form fields.
   const [isHovered, setIsHovered] = useState(false);
-  useEffect(() => {
-    if (!isHovered || columnId !== "inbox" || isDragOverlay || !cardActions) {
-      return;
-    }
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      const k = e.key.toLowerCase();
-      if (k === "e" || k === "a") {
-        e.preventDefault();
-        cardActions.onMoveToColumn?.(card.id, "working");
-      } else if (k === "x" || k === "r") {
-        e.preventDefault();
-        cardActions.onMoveToColumn?.(card.id, "archived");
-      } else if (k === "w") {
-        e.preventDefault();
-        const next = !isWatching;
-        setOptimisticWatching(next);
-        Promise.resolve(cardActions.onToggleWatching?.(card.id, next)).catch(
-          () => setOptimisticWatching(null),
-        );
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [isHovered, columnId, isDragOverlay, cardActions, card.id, isWatching]);
+  useQuickTriageKeyboard({
+    cardId: card.id,
+    isHovered,
+    columnId,
+    isDragOverlay,
+    cardActions,
+    isWatching,
+    setOptimisticWatching,
+  });
 
-  // Brief-status chip — hidden when the card has no brief artifact yet.
-  const briefChip = (() => {
-    switch (card.brief_status) {
-      case "draft":
-        return {
-          label: "Draft brief",
-          className:
-            "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800",
-        };
-      case "ready":
-        return {
-          label: "Brief ready",
-          className:
-            "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800",
-        };
-      case "exported":
-        return {
-          label: "Brief exported",
-          className:
-            "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800",
-        };
-      default:
-        return null;
-    }
-  })();
+  const briefChip = getBriefChip(card.brief_status);
 
-  // Freshness chip — shown only when research has been run.
   const freshnessChip =
     card.last_research_depth !== "none" && card.last_research_at
       ? {
@@ -345,17 +159,11 @@ export const KanbanCard = memo(function KanbanCard({
         }
       : null;
 
-  /**
-   * Handle card click navigation.
-   * Prevents navigation during drag operations.
-   */
   const handleClick = (e: React.MouseEvent) => {
-    // Don't navigate if dragging
     if (isDragging) {
       e.preventDefault();
       return;
     }
-
     if (onCardClick) {
       onCardClick(card);
     } else {
@@ -363,9 +171,6 @@ export const KanbanCard = memo(function KanbanCard({
     }
   };
 
-  /**
-   * Handle keyboard navigation for accessibility.
-   */
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -386,23 +191,17 @@ export const KanbanCard = memo(function KanbanCard({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={cn(
-        // Base card styles
         "group relative bg-white dark:bg-dark-surface rounded-lg shadow-sm",
         "border border-gray-200 dark:border-gray-700",
         "border-l-4",
         getAccentBorderClass(embeddedCard.horizon),
-        // Hover and interaction states
         "transition-all duration-200",
         "hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600",
-        // Drag states
         isDragging && "opacity-50 shadow-lg ring-2 ring-brand-blue/50",
         isDragOverlay && "shadow-xl scale-105 rotate-2 cursor-grabbing",
-        // Selection ring — wins over hover-shadow so the user can scan
-        // the selection at a glance.
         isSelected &&
           "ring-2 ring-brand-blue ring-offset-1 dark:ring-offset-dark-surface-deep",
         embeddedCard.artifacts?.has_deep_research && "mt-4",
-        // Touch optimization and cursor
         "touch-none cursor-grab active:cursor-grabbing",
       )}
     >
@@ -412,6 +211,7 @@ export const KanbanCard = memo(function KanbanCard({
         hideDeepResearch={embeddedCard.artifacts?.has_deep_research}
         className="right-9"
       />
+
       {/* Selection checkbox — top-left. Always visible once any card is
           selected, otherwise revealed on hover so cards stay clean. */}
       {onToggleSelect && !isDragOverlay && (
@@ -436,7 +236,6 @@ export const KanbanCard = memo(function KanbanCard({
         </button>
       )}
 
-      {/* Top-right actions: Card Actions Menu */}
       <div
         className={cn(
           "absolute top-2 right-2 flex items-center gap-0.5 z-10",
@@ -444,7 +243,6 @@ export const KanbanCard = memo(function KanbanCard({
           isDragOverlay && "opacity-100",
         )}
       >
-        {/* Card Actions Menu */}
         {cardActions && workstreamId && columnId && !isDragOverlay && (
           <CardActions
             card={card}
@@ -465,7 +263,6 @@ export const KanbanCard = memo(function KanbanCard({
         )}
       </div>
 
-      {/* Card Content - Clickable Area */}
       <div
         data-kanban-card={card.id}
         onClick={handleClick}
@@ -474,12 +271,10 @@ export const KanbanCard = memo(function KanbanCard({
         tabIndex={0}
         className="p-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-inset rounded-lg"
       >
-        {/* Card Title */}
         <h4 className="text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-7 break-words">
           {embeddedCard.name}
         </h4>
 
-        {/* Badge Row */}
         <div className="flex items-center gap-1.5 flex-wrap mb-2">
           <PillarBadge
             pillarId={embeddedCard.pillar_id}
@@ -510,7 +305,6 @@ export const KanbanCard = memo(function KanbanCard({
           />
         </div>
 
-        {/* Needs Review Badge */}
         {showNeedsReview && (
           <div className="mb-2">
             <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:border-amber-700">
@@ -520,7 +314,6 @@ export const KanbanCard = memo(function KanbanCard({
           </div>
         )}
 
-        {/* Top 25 Badge - if applicable */}
         {embeddedCard.top25_relevance &&
           embeddedCard.top25_relevance.length > 0 && (
             <div className="mb-2">
@@ -532,58 +325,13 @@ export const KanbanCard = memo(function KanbanCard({
             </div>
           )}
 
-        {/* Research Status Indicator */}
-        {card.research_status && card.research_status.status && (
-          <div
-            className={cn(
-              "flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700",
-              // Pulse animation for active research
-              (card.research_status.status === "queued" ||
-                card.research_status.status === "processing") &&
-                "animate-pulse",
-            )}
-          >
-            {(card.research_status.status === "queued" ||
-              card.research_status.status === "processing") && (
-              <div className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span className="text-xs font-medium">
-                  {card.research_status.task_type === "deep_research"
-                    ? "Deep Dive"
-                    : "Updating"}
-                  ...
-                </span>
-              </div>
-            )}
-            {card.research_status.status === "completed" && (
-              <Tooltip
-                content="Research complete - click to view results"
-                side="top"
-                disabled={isDragOverlay}
-              >
-                <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400 cursor-pointer hover:text-green-700 dark:hover:text-green-300 transition-colors">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span className="text-xs font-medium">Research Ready</span>
-                </div>
-              </Tooltip>
-            )}
-            {card.research_status.status === "failed" && (
-              <Tooltip
-                content="Research failed - try again"
-                side="top"
-                disabled={isDragOverlay}
-              >
-                <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                  <AlertCircle className="h-3.5 w-3.5" />
-                  <span className="text-xs font-medium">Failed</span>
-                </div>
-              </Tooltip>
-            )}
-          </div>
+        {card.research_status && (
+          <ResearchStatusIndicator
+            status={card.research_status}
+            isDragOverlay={isDragOverlay}
+          />
         )}
 
-        {/* v2 attribute chips: brief status, freshness. Watching lives in
-            the indicators row below so it sits next to the toggle target. */}
         {(briefChip || freshnessChip) && (
           <div className="flex items-center gap-1.5 flex-wrap mb-2">
             {briefChip && (
@@ -609,9 +357,7 @@ export const KanbanCard = memo(function KanbanCard({
           </div>
         )}
 
-        {/* Indicators Row */}
         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-          {/* Watching toggle */}
           {cardActions?.onToggleWatching && !isDragOverlay && (
             <Tooltip
               content={isWatching ? "Stop watching" : "Watch this card"}
@@ -639,7 +385,6 @@ export const KanbanCard = memo(function KanbanCard({
             </Tooltip>
           )}
 
-          {/* Notes Indicator */}
           {hasNotes && (
             <div
               className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
@@ -650,7 +395,6 @@ export const KanbanCard = memo(function KanbanCard({
             </div>
           )}
 
-          {/* Reminder Indicator */}
           {hasReminder && (
             <div
               className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"
@@ -661,7 +405,6 @@ export const KanbanCard = memo(function KanbanCard({
             </div>
           )}
 
-          {/* Added From Badge - with tooltip explaining why */}
           <Tooltip
             content={
               <AddedFromTooltipContent
@@ -690,61 +433,16 @@ export const KanbanCard = memo(function KanbanCard({
           </Tooltip>
         </div>
 
-        {/* Quick Actions for Inbox Cards */}
         {columnId === "inbox" &&
           cardActions?.onMoveToColumn &&
           !isDragOverlay && (
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-              {/* Approve Review button - only for cards pending review */}
-              {showNeedsReview && cardActions.onApproveReview && (
-                <Tooltip
-                  content="Approve content quality"
-                  side="top"
-                  disabled={isDragOverlay}
-                >
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsApproved(true);
-                      cardActions.onApproveReview?.(card.id);
-                    }}
-                    className="inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-md transition-colors"
-                    title="Approve Review"
-                  >
-                    <CheckCircle className="h-3.5 w-3.5" />
-                    Approve
-                  </button>
-                </Tooltip>
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cardActions.onMoveToColumn?.(card.id, "working");
-                }}
-                className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded-md transition-colors"
-                title="Move to Working (E or A)"
-              >
-                <Check className="h-3.5 w-3.5" />
-                Accept
-                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-green-200 dark:border-green-800">
-                  E
-                </kbd>
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cardActions.onMoveToColumn?.(card.id, "archived");
-                }}
-                className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-md transition-colors"
-                title="Move to Archived (X or R)"
-              >
-                <X className="h-3.5 w-3.5" />
-                Dismiss
-                <kbd className="ml-1 px-1 text-[10px] font-mono bg-white/60 dark:bg-black/20 rounded border border-red-200 dark:border-red-800">
-                  X
-                </kbd>
-              </button>
-            </div>
+            <InboxQuickActions
+              cardId={card.id}
+              isDragOverlay={isDragOverlay}
+              showNeedsReview={showNeedsReview}
+              cardActions={cardActions}
+              onApproveLocal={() => setIsApproved(true)}
+            />
           )}
       </div>
     </div>
