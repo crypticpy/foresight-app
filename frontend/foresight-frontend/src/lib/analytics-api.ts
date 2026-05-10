@@ -211,6 +211,10 @@ export function timePeriodToDates(period: "7d" | "30d" | "90d" | "1y"): {
     case "1y":
       startDate.setFullYear(startDate.getFullYear() - 1);
       break;
+    default: {
+      const _exhaustive: never = period;
+      void _exhaustive;
+    }
   }
 
   return {
