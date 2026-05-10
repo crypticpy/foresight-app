@@ -15,7 +15,7 @@ import {
   type CardSnapshot,
 } from "../../../../lib/discovery-api";
 import { MarkdownReport } from "../../MarkdownReport";
-import { supabase } from "../../../../lib/supabase";
+import { getAuthToken } from "../../../../lib/auth";
 
 interface DescriptionHistoryProps {
   cardId: string;
@@ -85,17 +85,10 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
 
-  const getToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || "";
-  }, []);
-
   const loadSnapshots = useCallback(async () => {
     setLoading(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         const result = await fetchCardSnapshots(token, cardId, "description");
         setSnapshots(result.snapshots);
@@ -105,7 +98,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [cardId, getToken]);
+  }, [cardId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -116,7 +109,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
   const handlePreview = async (snapshotId: string) => {
     setPreviewLoading(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         const snapshot = await fetchCardSnapshot(token, cardId, snapshotId);
         setPreviewSnapshot(snapshot);
@@ -138,7 +131,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
     }
     setRestoring(snapshotId);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         await restoreCardSnapshot(token, cardId, snapshotId);
         onRestore?.();

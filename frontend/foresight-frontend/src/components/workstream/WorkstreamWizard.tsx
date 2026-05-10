@@ -15,7 +15,7 @@ import { useState, useCallback, useEffect } from "react";
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useWorkstreamForm } from "../../hooks/useWorkstreamForm";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { WizardProgress } from "./WizardProgress";
 import { StepStart } from "./steps/StepStart";
 import { StepDetails } from "./steps/StepDetails";
@@ -47,8 +47,8 @@ export function WorkstreamWizard({
   const [authToken, setAuthToken] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!cancelled) setAuthToken(session?.access_token ?? null);
+    getAuthToken().then((token) => {
+      if (!cancelled) setAuthToken(token);
     });
     return () => {
       cancelled = true;

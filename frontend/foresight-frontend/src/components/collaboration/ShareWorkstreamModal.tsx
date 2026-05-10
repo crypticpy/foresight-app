@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, X } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { addMember, createInvite } from "../../lib/collaboration-api";
 
 interface ShareWorkstreamModalProps {
@@ -22,13 +22,8 @@ export function ShareWorkstreamModal({
   const [shareUrl, setShareUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const getToken = async () => {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token;
-  };
-
   const inviteExisting = async () => {
-    const token = await getToken();
+    const token = await getAuthToken();
     if (!token) return;
     try {
       await addMember(token, workstreamId, { user_email: email, role });
@@ -41,7 +36,7 @@ export function ShareWorkstreamModal({
   };
 
   const createLink = async () => {
-    const token = await getToken();
+    const token = await getAuthToken();
     if (!token) return;
     try {
       const result = await createInvite(token, workstreamId, {
@@ -75,7 +70,11 @@ export function ShareWorkstreamModal({
           </button>
         </div>
         <div className="space-y-4 p-5">
-          {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {error && (
+            <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </p>
+          )}
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
             Email
             <input
@@ -102,7 +101,9 @@ export function ShareWorkstreamModal({
               Account
               <select
                 value={accountType}
-                onChange={(event) => setAccountType(event.target.value as typeof accountType)}
+                onChange={(event) =>
+                  setAccountType(event.target.value as typeof accountType)
+                }
                 className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
               >
                 <option value="paid">Paid user</option>

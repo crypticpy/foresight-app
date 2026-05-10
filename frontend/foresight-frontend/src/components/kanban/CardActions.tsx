@@ -41,7 +41,7 @@ import {
   type WorkstreamCard,
 } from "./types";
 import { AddToPortfolioModal } from "../portfolios/AddToPortfolioModal";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 
 // =============================================================================
 // Types
@@ -398,10 +398,7 @@ export const CardActions = memo(function CardActions({
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
 
   const getPortfolioToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
+    return await getAuthToken();
   }, []);
 
   // Screen reader announcement for loading states

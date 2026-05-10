@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Briefcase, Loader2, Plus, Trash2 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { cn } from "../lib/utils";
 import {
   deletePortfolio,
@@ -32,19 +32,12 @@ export default function WorkstreamPortfolios() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const getToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  }, []);
-
   const load = useCallback(async () => {
     if (!workstreamId) return;
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
 
       // Workstream name (best-effort — page still renders if this fails)
@@ -66,7 +59,7 @@ export default function WorkstreamPortfolios() {
     } finally {
       setLoading(false);
     }
-  }, [workstreamId, getToken]);
+  }, [workstreamId]);
 
   useEffect(() => {
     load();
@@ -75,7 +68,7 @@ export default function WorkstreamPortfolios() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this portfolio? Cards stay in the workstream."))
       return;
-    const token = await getToken();
+    const token = await getAuthToken();
     if (!token) return;
     setDeletingId(id);
     try {

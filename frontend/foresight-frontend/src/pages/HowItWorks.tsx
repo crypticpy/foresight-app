@@ -30,7 +30,7 @@ import {
   CheckCircle,
   ChevronDown,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { API_BASE_URL } from "../lib/config";
 import { cn } from "../lib/utils";
 
@@ -407,12 +407,10 @@ function StatStrip() {
   useEffect(() => {
     async function load() {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
+        const token = await getAuthToken();
+        if (!token) return;
         const headers = {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         };
         const [statsRes, patternsRes] = await Promise.all([
@@ -1080,14 +1078,12 @@ function HybridSearchDemo() {
     setTextHits([]);
     setVectorHits([]);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const token = await getAuthToken();
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      if (session?.access_token) {
-        headers.Authorization = `Bearer ${session.access_token}`;
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
       }
       const STOPWORDS = new Set([
         "the",

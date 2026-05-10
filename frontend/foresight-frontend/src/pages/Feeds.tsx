@@ -29,7 +29,7 @@ import {
   PauseCircle,
   Filter,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { LoadingButton } from "../components/ui/LoadingButton";
 import type {
@@ -491,7 +491,7 @@ const FeedItemsSection: React.FC<{
 // ============================================================================
 
 const Feeds: React.FC = () => {
-  // Verify auth context is available (token retrieved via supabase.auth.getSession)
+  // Verify auth context is available (token retrieved via getAuthToken)
   useAuthContext();
 
   // Feed data state
@@ -514,11 +514,9 @@ const Feeds: React.FC = () => {
 
   // Get auth token
   const getToken = useCallback(async (): Promise<string> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) throw new Error("Not authenticated");
-    return session.access_token;
+    const token = await getAuthToken();
+    if (!token) throw new Error("Not authenticated");
+    return token;
   }, []);
 
   // Load feeds

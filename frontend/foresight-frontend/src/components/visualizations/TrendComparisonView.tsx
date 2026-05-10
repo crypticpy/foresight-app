@@ -41,7 +41,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { parseStageNumber } from "../../lib/stage-utils";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { useAuthContext } from "../../hooks/useAuthContext";
 
 // Badge components for card metadata
@@ -693,10 +693,7 @@ export function TrendComparisonView({
     setError(null);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = await getAuthToken();
 
       if (!token) {
         throw new Error("Not authenticated");

@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { supabase } from "../../../lib/supabase";
+import { getAuthToken } from "../../../lib/auth";
 import { API_BASE_URL } from "../../../lib/config";
 import type { FormData, FormErrors } from "../../../types/workstream";
 
@@ -32,10 +32,8 @@ export function StepDetails({
     if (!formData.name.trim()) return;
     setIsGenerating(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      const token = await getAuthToken();
+      if (!token) return;
 
       const response = await fetch(
         `${API_BASE_URL}/api/v1/ai/suggest-description`,
@@ -43,7 +41,7 @@ export function StepDetails({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             name: formData.name,

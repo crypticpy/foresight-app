@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User, Bell, Shield, Database, Mail } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { LoadingButton } from "../components/ui/LoadingButton";
 import { API_BASE_URL } from "../lib/config";
@@ -91,15 +92,13 @@ const Settings: React.FC = () => {
 
   const loadNotificationPreferences = async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      const token = await getAuthToken();
+      if (!token) return;
       const response = await fetch(
         `${API_BASE_URL}/api/v1/me/notification-preferences`,
         {
           headers: {
-            Authorization: `Bearer ${session?.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
         },
       );
@@ -122,10 +121,8 @@ const Settings: React.FC = () => {
     setNotifLoading(true);
     setNotifMessage("");
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("Not authenticated");
+      const token = await getAuthToken();
+      if (!token) throw new Error("Not authenticated");
       const payload = {
         ...notifPrefs,
         notification_email: useAccountEmail
@@ -138,7 +135,7 @@ const Settings: React.FC = () => {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(payload),
         },

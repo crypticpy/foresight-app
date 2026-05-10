@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { PillarBadge } from "./PillarBadge";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../lib/config";
 
@@ -65,10 +65,8 @@ export function PatternInsightsSection({ className }: PatternInsightsProps) {
 
     async function fetchInsights() {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) {
+        const token = await getAuthToken();
+        if (!token) {
           setError(true);
           return;
         }
@@ -77,7 +75,7 @@ export function PatternInsightsSection({ className }: PatternInsightsProps) {
           `${API_BASE_URL}/api/v1/pattern-insights?status=active&limit=3`,
           {
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
           },

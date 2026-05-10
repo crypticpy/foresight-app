@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { listActivity, type ActivityEvent } from "../../lib/activity-api";
 
 interface ActivityRailProps {
@@ -9,15 +9,20 @@ interface ActivityRailProps {
   onClose: () => void;
 }
 
-export function ActivityRail({ workstreamId, open, onClose }: ActivityRailProps) {
+export function ActivityRail({
+  workstreamId,
+  open,
+  onClose,
+}: ActivityRailProps) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
 
   useEffect(() => {
     if (!open) return;
-    supabase.auth.getSession().then(({ data }) => {
-      const token = data.session?.access_token;
+    getAuthToken().then((token) => {
       if (!token) return;
-      listActivity(token, workstreamId).then(setEvents).catch(() => setEvents([]));
+      listActivity(token, workstreamId)
+        .then(setEvents)
+        .catch(() => setEvents([]));
     });
   }, [open, workstreamId]);
 

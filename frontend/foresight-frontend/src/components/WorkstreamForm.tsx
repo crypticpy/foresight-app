@@ -31,7 +31,7 @@ import { ToggleSwitch } from "./workstream/ToggleSwitch";
 import { TemplateCard } from "./workstream/TemplateCard";
 import { WORKSTREAM_TEMPLATES } from "./workstream/steps/StepStart";
 import { WorkstreamFrameworkPicker } from "./WorkstreamFrameworkPicker";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 
 // Re-export types for backward compatibility
 export type { Workstream, WorkstreamFormProps } from "../types/workstream";
@@ -58,8 +58,8 @@ export function WorkstreamForm({
   const [frameworkToken, setFrameworkToken] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!cancelled) setFrameworkToken(session?.access_token ?? null);
+    getAuthToken().then((token) => {
+      if (!cancelled) setFrameworkToken(token);
     });
     return () => {
       cancelled = true;

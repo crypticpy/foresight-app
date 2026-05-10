@@ -27,6 +27,7 @@ import {
   Lock,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { API_BASE_URL } from "../lib/config";
 import { cn } from "../lib/utils";
@@ -500,10 +501,8 @@ const WorkstreamFeed: React.FC = () => {
       setShowExportMenu(false);
 
       // Get the session token
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const token = await getAuthToken();
+      if (!token) {
         throw new Error("Authentication required");
       }
 
@@ -514,7 +513,7 @@ const WorkstreamFeed: React.FC = () => {
       const response = await fetch(exportUrl, {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${token}`,
         },
       });
 

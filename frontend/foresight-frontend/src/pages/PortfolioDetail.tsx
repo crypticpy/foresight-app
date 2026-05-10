@@ -21,7 +21,7 @@ import {
   Presentation,
   Trash2,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { cn } from "../lib/utils";
 import {
   exportPortfolio,
@@ -54,19 +54,12 @@ export default function PortfolioDetail() {
   const [reordering, setReordering] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "pptx" | null>(null);
 
-  const getToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  }, []);
-
   const load = useCallback(async () => {
     if (!portfolioId) return;
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       const fresh = await getPortfolio(token, portfolioId);
       setPortfolio(fresh);
@@ -77,7 +70,7 @@ export default function PortfolioDetail() {
     } finally {
       setLoading(false);
     }
-  }, [portfolioId, getToken]);
+  }, [portfolioId]);
 
   useEffect(() => {
     load();
@@ -91,7 +84,7 @@ export default function PortfolioDetail() {
     if (!portfolio) return;
     setSavingMeta(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       const updated = await updatePortfolio(token, portfolio.id, {
         name: draftName.trim() || portfolio.name,
@@ -110,7 +103,7 @@ export default function PortfolioDetail() {
     if (!portfolio) return;
     setRemovingId(item.card_id);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       await removeItemFromPortfolio(token, portfolio.id, item.card_id);
       setPortfolio({
@@ -140,7 +133,7 @@ export default function PortfolioDetail() {
     setPortfolio({ ...portfolio, items: reordered });
     setReordering(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       const fresh = await reorderPortfolioItems(
         token,
@@ -160,7 +153,7 @@ export default function PortfolioDetail() {
     if (!portfolio) return;
     setExporting(format);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       await exportPortfolio(token, portfolio.id, format);
     } catch (err) {

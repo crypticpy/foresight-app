@@ -51,6 +51,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useDebouncedValue } from "../../hooks/useDebounce";
 import { useScrollRestoration } from "../../hooks/useScrollRestoration";
@@ -407,26 +408,28 @@ const Discover: React.FC = () => {
     }
   };
 
-  const hydrateCardCollab = useCallback(async (rawCards: Card[]): Promise<Card[]> => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token || rawCards.length === 0) return rawCards;
-    try {
-      const cardIds = rawCards.map((card) => card.id);
-      const [artifacts, followerStatus] = await Promise.all([
-        getCardsArtifacts(cardIds, token),
-        getCardsFollowerStatus(cardIds, token),
-      ]);
-      return rawCards.map((card) => ({
-        ...card,
-        artifacts: artifacts[card.id],
-        follower_count: followerStatus[card.id]?.follower_count ?? 0,
-        is_following: followerStatus[card.id]?.is_following ?? false,
-      }));
-    } catch {
-      return rawCards;
-    }
-  }, []);
+  const hydrateCardCollab = useCallback(
+    async (rawCards: Card[]): Promise<Card[]> => {
+      const token = await getAuthToken();
+      if (!token || rawCards.length === 0) return rawCards;
+      try {
+        const cardIds = rawCards.map((card) => card.id);
+        const [artifacts, followerStatus] = await Promise.all([
+          getCardsArtifacts(cardIds, token),
+          getCardsFollowerStatus(cardIds, token),
+        ]);
+        return rawCards.map((card) => ({
+          ...card,
+          artifacts: artifacts[card.id],
+          follower_count: followerStatus[card.id]?.follower_count ?? 0,
+          is_following: followerStatus[card.id]?.is_following ?? false,
+        }));
+      } catch {
+        return rawCards;
+      }
+    },
+    [],
+  );
 
   const loadCards = async () => {
     setLoading(true);
@@ -484,8 +487,7 @@ const Discover: React.FC = () => {
 
       // Semantic search
       if (useSemanticSearch && debouncedFilters.searchTerm.trim()) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
+        const token = await getAuthToken();
 
         if (token) {
           const searchRequest: AdvancedSearchRequest = {

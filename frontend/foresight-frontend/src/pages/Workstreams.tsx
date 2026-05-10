@@ -25,6 +25,7 @@ import {
   Users,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { WorkstreamForm, type Workstream } from "../components/WorkstreamForm";
 import { WorkstreamWizard } from "../components/workstream/WorkstreamWizard";
@@ -804,10 +805,7 @@ const Workstreams: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
         if (!token) return;
         const summaries = await listFrameworks(token);
         const frameworks = await Promise.all(
@@ -837,10 +835,7 @@ const Workstreams: React.FC = () => {
     const wsList = workstreamsRef.current.filter(isUserOwnedWorkstream);
     if (wsList.length === 0) return;
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const token = session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
 
     const statuses: Record<string, WorkstreamScanStatusResponse> = {};
@@ -886,10 +881,7 @@ const Workstreams: React.FC = () => {
 
   const loadWorkstreams = useCallback(async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = await getAuthToken();
       if (!token) {
         setWorkstreams([]);
         workstreamsRef.current = [];

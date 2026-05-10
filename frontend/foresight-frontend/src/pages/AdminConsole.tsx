@@ -34,7 +34,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { cn } from "../lib/utils";
 import {
@@ -138,13 +138,11 @@ const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
 ];
 
 async function getToken(): Promise<string> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session?.access_token) {
+  const token = await getAuthToken();
+  if (!token) {
     throw new Error("Not authenticated");
   }
-  return session.access_token;
+  return token;
 }
 
 function formatDate(value?: unknown): string {

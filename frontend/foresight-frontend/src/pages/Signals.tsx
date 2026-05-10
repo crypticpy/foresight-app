@@ -21,7 +21,7 @@ import {
   Compass,
   BookOpen,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { useDebouncedValue } from "../hooks/useDebounce";
 import { PillarBadge } from "../components/PillarBadge";
@@ -94,10 +94,7 @@ type GroupBy = "none" | "pillar" | "horizon" | "workstream";
 async function fetchMySignals(
   params: Record<string, string>,
 ): Promise<MySignalsResponse> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token;
+  const token = await getAuthToken();
   if (!token) {
     throw new Error("You must be signed in to view your signals.");
   }
@@ -113,10 +110,7 @@ async function fetchMySignals(
 }
 
 async function togglePin(cardId: string, pin: boolean): Promise<void> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token;
+  const token = await getAuthToken();
   if (!token) throw new Error("Not authenticated");
   const headers = {
     Authorization: `Bearer ${token}`,

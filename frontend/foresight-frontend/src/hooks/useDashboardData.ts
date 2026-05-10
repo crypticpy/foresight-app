@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { fetchPendingCount } from "../lib/discovery-api";
 import { fetchLensOverview } from "../lib/dashboard-api";
 import { logger } from "../lib/logger";
@@ -225,11 +226,9 @@ export function useDashboardData(
 
   const loadPendingCount = useCallback(async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        const count = await fetchPendingCount(session.access_token);
+      const token = await getAuthToken();
+      if (token) {
+        const count = await fetchPendingCount(token);
         setPendingReviewCount(count);
       }
     } catch (err) {
@@ -240,11 +239,9 @@ export function useDashboardData(
 
   const loadLensOverview = useCallback(async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const overview = await fetchLensOverview(session.access_token, 14);
+      const token = await getAuthToken();
+      if (!token) return;
+      const overview = await fetchLensOverview(token, 14);
       setLensOverview(overview);
     } catch (err) {
       // Lens overview is supplementary — render the dashboard regardless.

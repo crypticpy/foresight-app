@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { useIsMobile } from "../hooks/use-mobile";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
@@ -769,10 +770,7 @@ const DiscoveryQueue: React.FC = () => {
       setError(null);
 
       // Get auth token
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const token = await getAuthToken();
 
       if (!token) {
         throw new Error("Not authenticated");
@@ -967,10 +965,7 @@ const DiscoveryQueue: React.FC = () => {
         setActionLoading(cardId);
         setOpenDropdown(null);
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
 
         if (!token) throw new Error("Not authenticated");
 
@@ -1026,10 +1021,7 @@ const DiscoveryQueue: React.FC = () => {
         setActionLoading(cardId);
         setOpenDropdown(null);
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
 
         if (!token) throw new Error("Not authenticated");
 
@@ -1136,10 +1128,7 @@ const DiscoveryQueue: React.FC = () => {
       try {
         setActionLoading("bulk");
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
 
         if (!token) throw new Error("Not authenticated");
 
