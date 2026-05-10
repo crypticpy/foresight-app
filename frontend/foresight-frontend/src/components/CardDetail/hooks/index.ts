@@ -34,9 +34,9 @@
  * Handles card details, sources, timeline, notes, research history,
  * score/stage history, and related cards.
  */
-export { useCardData } from './useCardData';
-export { default as useCardDataDefault } from './useCardData';
-export type { UseCardDataReturn } from './useCardData';
+export { useCardData } from "./useCardData";
+export { default as useCardDataDefault } from "./useCardData";
+export type { UseCardDataReturn } from "./useCardData";
 
 // =============================================================================
 // useResearch Hook
@@ -47,9 +47,9 @@ export type { UseCardDataReturn } from './useCardData';
  * Handles triggering research tasks, polling for status,
  * and managing research UI state.
  */
-export { useResearch } from './useResearch';
-export { default as useResearchDefault } from './useResearch';
-export type { UseResearchReturn, ResearchTaskType } from './useResearch';
+export { useResearch } from "./useResearch";
+export { default as useResearchDefault } from "./useResearch";
+export type { UseResearchReturn, ResearchTaskType } from "./useResearch";
 
 // =============================================================================
 // useCardExport Hook
@@ -60,10 +60,20 @@ export type { UseResearchReturn, ResearchTaskType } from './useResearch';
  * Handles exporting cards in various formats (PDF, PPTX, CSV)
  * with loading states and error handling.
  */
-export { useCardExport } from './useCardExport';
-export { default as useCardExportDefault } from './useCardExport';
+export { useCardExport } from "./useCardExport";
+export { default as useCardExportDefault } from "./useCardExport";
 export type {
   UseCardExportReturn,
   ExportFormat,
   ExportOptions,
-} from './useCardExport';
+} from "./useCardExport";
+
+// =============================================================================
+// useCardAssets Hook
+// =============================================================================
+
+/**
+ * Hook for loading a card's asset list (briefs, research reports, exports).
+ */
+export { useCardAssets } from "./useCardAssets";
+export type { UseCardAssetsReturn } from "./useCardAssets";
