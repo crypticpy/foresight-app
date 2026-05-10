@@ -7,7 +7,7 @@ import {
 
 export function useFollowCard(
   cardId: string | undefined,
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
   initialState?: { is_following?: boolean; follower_count?: number },
 ) {
   const [isFollowing, setIsFollowing] = useState(

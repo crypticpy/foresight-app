@@ -28,6 +28,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../../lib/supabase";
+import { getAuthToken } from "../../../lib/auth";
 import {
   getScoreHistory,
   getStageHistory,
@@ -86,7 +87,7 @@ export interface UseCardDataReturn {
   /** Refetch related cards data */
   refetchRelatedCards: () => Promise<void>;
   /** Get authentication token for API requests */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 /**
@@ -133,16 +134,6 @@ export function useCardData(
   const [relatedCardsError, setRelatedCardsError] = useState<string | null>(
     null,
   );
-
-  /**
-   * Get the current authentication token for API requests
-   */
-  const getAuthToken = useCallback(async (): Promise<string | undefined> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
 
   /**
    * Load card detail and related data from Supabase
@@ -221,7 +212,7 @@ export function useCardData(
     } finally {
       setScoreHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Load stage history from Discovery API
@@ -240,7 +231,7 @@ export function useCardData(
     } finally {
       setStageHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Load related cards from Discovery API
@@ -266,7 +257,7 @@ export function useCardData(
     } finally {
       setRelatedCardsLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Check if the current user is following this card

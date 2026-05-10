@@ -44,6 +44,7 @@ import {
   ListChecks,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { API_BASE_URL } from "../lib/config";
 import { cn } from "../lib/utils";
@@ -542,20 +543,6 @@ const WorkstreamKanban: React.FC = () => {
   }, []);
 
   // ============================================================================
-  // Auth Token Helper
-  // ============================================================================
-
-  /**
-   * Get the authentication token from Supabase session.
-   */
-  const getAuthToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || null;
-  }, []);
-
-  // ============================================================================
   // Column-Specific Action Hooks
   // ============================================================================
 
@@ -676,7 +663,7 @@ const WorkstreamKanban: React.FC = () => {
     } finally {
       setCardsLoading(false);
     }
-  }, [id, getAuthToken, showToast]);
+  }, [id, showToast]);
 
   /**
    * Initial data load on mount.
@@ -721,7 +708,7 @@ const WorkstreamKanban: React.FC = () => {
     };
 
     loadAndAutoPopulate();
-  }, [workstream, id, loadCards, getAuthToken, showToast]);
+  }, [workstream, id, loadCards, showToast]);
 
   /**
    * Fetch and update research status for cards in this workstream.
@@ -754,7 +741,7 @@ const WorkstreamKanban: React.FC = () => {
       console.error("Error fetching research status:", err);
       return false;
     }
-  }, [id, getAuthToken]);
+  }, [id]);
 
   /**
    * Start polling for research status updates.
@@ -905,7 +892,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Failed to move signal. Changes reverted.");
       }
     },
-    [id, cards, getAuthToken, showToast],
+    [id, cards, showToast],
   );
 
   /**
@@ -948,7 +935,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Failed to save notes");
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -982,7 +969,7 @@ const WorkstreamKanban: React.FC = () => {
         throw err;
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -1008,7 +995,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Failed to start deep dive analysis");
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -1046,7 +1033,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Failed to remove signal");
       }
     },
-    [id, cards, getAuthToken, showToast],
+    [id, cards, showToast],
   );
 
   /**
@@ -1108,7 +1095,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Failed to move signal");
       }
     },
-    [id, cards, getAuthToken, showToast],
+    [id, cards, showToast],
   );
 
   /**
@@ -1252,7 +1239,7 @@ const WorkstreamKanban: React.FC = () => {
         setIsBulkExporting(false);
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -1281,7 +1268,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Could not prepare share email");
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -1308,7 +1295,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", "Could not copy share link");
       }
     },
-    [id, getAuthToken, showToast],
+    [id, showToast],
   );
 
   /**
@@ -1338,12 +1325,8 @@ const WorkstreamKanban: React.FC = () => {
     onDeepDive: handleDeepDive,
     onRemove: handleRemoveCard,
     onMoveToColumn: handleMoveToColumn,
-    onQuickUpdate: async (cardId) => {
-      await triggerQuickUpdate(cardId);
-    },
-    onExport: async (cardId, format) => {
-      await exportCard(cardId, format);
-    },
+    onQuickUpdate: triggerQuickUpdate,
+    onExport: exportCard,
     onExportBrief: handleBriefExportFromCard,
     onCheckUpdates: handleCheckUpdates,
     onGenerateBrief: handleGenerateBrief,
@@ -1467,7 +1450,7 @@ const WorkstreamKanban: React.FC = () => {
     } finally {
       setAutoPopulating(false);
     }
-  }, [id, getAuthToken, loadCards, showToast]);
+  }, [id, loadCards, showToast]);
 
   // ============================================================================
   // Scan Polling (shared hook)
@@ -1552,7 +1535,7 @@ const WorkstreamKanban: React.FC = () => {
         showToast("error", message);
       }
     }
-  }, [id, getAuthToken, showToast, startPollingExistingScan]);
+  }, [id, showToast, startPollingExistingScan]);
 
   // Auto-start polling when arriving from wizard with scanJustStarted
   useEffect(() => {
@@ -1563,15 +1546,7 @@ const WorkstreamKanban: React.FC = () => {
       "Scan started! We're looking for signals matching your workstream...",
     );
     startPollingExistingScan();
-  }, [
-    scanJustStarted,
-    id,
-    workstream,
-    navigate,
-    location.pathname,
-    startPollingExistingScan,
-    showToast,
-  ]);
+  }, [scanJustStarted, id, workstream, navigate, location.pathname, startPollingExistingScan, showToast]);
 
   /**
    * Handle form modal success.
@@ -1654,7 +1629,7 @@ const WorkstreamKanban: React.FC = () => {
         setExportLoading(null);
       }
     },
-    [workstream, id, getAuthToken, showToast],
+    [workstream, id, showToast],
   );
 
   // ============================================================================

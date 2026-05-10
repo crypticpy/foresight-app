@@ -46,6 +46,7 @@ import {
   Microscope,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useFollowCard } from "../../hooks/useFollowCard";
 import { cn } from "../../lib/utils";
@@ -193,14 +194,6 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetsError, setAssetsError] = useState<string | null>(null);
 
-  // Get auth token for API requests
-  const getAuthToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
-
   // Load card detail from database
   const loadCardDetail = useCallback(async () => {
     if (!slug) return;
@@ -273,7 +266,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     } finally {
       setScoreHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   const loadStageHistory = useCallback(async () => {
     if (!card?.id) return;
@@ -287,7 +280,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     } finally {
       setStageHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   const loadRelatedCards = useCallback(async () => {
     if (!card?.id) return;
@@ -306,7 +299,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     } finally {
       setRelatedCardsLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   // Load card assets (briefs, research reports, exports)
   const loadAssets = useCallback(async () => {
@@ -326,7 +319,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     } finally {
       setAssetsLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   const {
     isFollowing,
@@ -390,7 +383,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
       };
       poll();
     },
-    [getAuthToken, loadCardDetail],
+    [loadCardDetail],
   );
 
   // Trigger research
@@ -429,7 +422,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         setIsResearching(false);
       }
     },
-    [card, isResearching, getAuthToken, pollTaskStatus],
+    [card, isResearching, pollTaskStatus],
   );
 
   // Handle deep research request from DeepResearchPanel
@@ -478,7 +471,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
   useEffect(() => {
     if (card?.id) {
       loadScoreHistory();
@@ -486,13 +479,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
       loadRelatedCards();
       loadAssets();
     }
-  }, [
-    card?.id,
-    loadScoreHistory,
-    loadStageHistory,
-    loadRelatedCards,
-    loadAssets,
-  ]);
+  }, [card?.id, loadScoreHistory, loadStageHistory, loadRelatedCards, loadAssets]);
 
   // Computed values
   const canDeepResearch = card && (card.deep_research_count_today ?? 0) < 2;

@@ -10,18 +10,11 @@
  *   • User  = added or overridden by a human
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Tag, Landmark, Cloud } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import { useCapabilities } from "../../hooks/useCapabilities";
-
-async function getSessionToken(): Promise<string | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
 import {
   type AnchorCode,
   type AnchorScores,
@@ -106,7 +99,7 @@ export function LensMetadataPanel({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const token = await getSessionToken();
+      const token = await getAuthToken();
       if (!token) return;
       try {
         const rows = await getStrategicAnchors(token);
@@ -119,8 +112,6 @@ export function LensMetadataPanel({
       cancelled = true;
     };
   }, []);
-
-  const getAuthToken = useCallback(getSessionToken, []);
 
   const handleSaved = (next: UserMetadata) => {
     setLocalMetadata(next);

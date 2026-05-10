@@ -8,8 +8,7 @@
  * @module lib/chat-api
  */
 
-import { supabase } from "../lib/supabase";
-
+import { getAuthToken } from "./auth";
 import { API_BASE_URL } from "./config";
 
 // ============================================================================
@@ -106,21 +105,6 @@ export interface ChatMention {
 }
 
 // ============================================================================
-// Auth Helper
-// ============================================================================
-
-/**
- * Retrieves the current auth token from Supabase session.
- *
- * @returns The access token string, or null if not authenticated
- */
-async function getAuthToken(): Promise<string | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
-
 // ============================================================================
 // Streaming API
 // ============================================================================

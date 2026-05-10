@@ -126,11 +126,11 @@ export type OnMoveToColumnCallback = (
   cardId: string,
   status: KanbanStatus,
 ) => void;
-export type OnQuickUpdateCallback = (cardId: string) => Promise<void>;
+export type OnQuickUpdateCallback = (cardId: string) => Promise<unknown>;
 export type OnExportCallback = (
   cardId: string,
   format: "pdf" | "pptx",
-) => Promise<void>;
+) => Promise<unknown>;
 export type OnCheckUpdatesCallback = (cardId: string) => Promise<void>;
 export type OnGenerateBriefCallback = (
   workstreamCardId: string,

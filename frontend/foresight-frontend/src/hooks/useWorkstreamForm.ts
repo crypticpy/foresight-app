@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useCallback, KeyboardEvent } from "react";
 import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "./useAuthContext";
 import { useWorkstreamPreview } from "./useWorkstreamPreview";
 import { useKeywordSuggestions } from "./useKeywordSuggestions";
@@ -83,14 +84,6 @@ export function useWorkstreamForm({
   // ============================================================================
   // Sub-hooks
   // ============================================================================
-
-  // Helper to get auth token
-  const getAuthToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
 
   // Preview sub-hook
   const { preview, previewLoading, triggerPreviewFetch } = useWorkstreamPreview(

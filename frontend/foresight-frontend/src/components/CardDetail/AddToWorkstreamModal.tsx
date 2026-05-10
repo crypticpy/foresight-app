@@ -53,7 +53,7 @@ export interface AddToWorkstreamModalProps {
   /** Callback when card is successfully added */
   onSuccess?: (workstreamName: string) => void;
   /** Function to get auth token */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 // =============================================================================

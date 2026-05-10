@@ -14,7 +14,7 @@ interface ShareSignalModalProps {
     summary?: string;
     artifacts?: CardArtifacts;
   };
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 export function ShareSignalModal({

@@ -42,7 +42,7 @@ export interface ExportDropdownProps {
   /** The slug of the card (used for filename) */
   cardSlug: string;
   /** Function to get the current auth token */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
   /** Callback when an export error occurs */
   onError?: (error: string) => void;
   /** Optional callback when export starts */

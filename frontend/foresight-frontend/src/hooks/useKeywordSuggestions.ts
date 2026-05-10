@@ -15,7 +15,7 @@ export function useKeywordSuggestions(
     description: string;
     keywords: string[];
   },
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
 ) {
   const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([]);
   const [isSuggestingKeywords, setIsSuggestingKeywords] = useState(false);
