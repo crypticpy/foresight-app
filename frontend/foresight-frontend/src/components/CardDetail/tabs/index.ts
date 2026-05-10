@@ -8,20 +8,16 @@
  */
 
 // Overview tab components
-export * from './OverviewTab';
+export * from "./OverviewTab";
 
 // Notes tab
-export { NotesTab } from './NotesTab';
-export type { NotesTabProps } from './NotesTab';
+export { NotesTab } from "./NotesTab";
+export type { NotesTabProps } from "./NotesTab";
 
 // Sources tab
-export { SourcesTab } from './SourcesTab';
-export type { SourcesTabProps } from './SourcesTab';
+export { SourcesTab } from "./SourcesTab";
+export type { SourcesTabProps } from "./SourcesTab";
 
 // Timeline tab
-export { TimelineTab } from './TimelineTab';
-export type { TimelineTabProps } from './TimelineTab';
-
-// Related tab
-export { RelatedTab } from './RelatedTab';
-export type { RelatedTabProps } from './RelatedTab';
+export { TimelineTab } from "./TimelineTab";
+export type { TimelineTabProps } from "./TimelineTab";
