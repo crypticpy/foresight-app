@@ -69,8 +69,8 @@ async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {
   try {
     const cardIds = rawCards.map((card) => card.id);
     const [artifacts, followerStatus] = await Promise.all([
-      getCardsArtifacts(cardIds, token),
-      getCardsFollowerStatus(cardIds, token),
+      getCardsArtifacts(token, cardIds),
+      getCardsFollowerStatus(token, cardIds),
     ]);
     return rawCards.map((card) => ({
       ...card,

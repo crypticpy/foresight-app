@@ -212,7 +212,7 @@ export const InformationQualityPanel: React.FC<
         setLoading(false);
         return;
       }
-      const data = await getCardQuality(cardId, token);
+      const data = await getCardQuality(token, cardId);
       setQuality(data);
     } catch (err) {
       setError(
@@ -240,7 +240,7 @@ export const InformationQualityPanel: React.FC<
         setError("Not authenticated");
         return;
       }
-      const data = await recalculateCardQuality(cardId, token);
+      const data = await recalculateCardQuality(token, cardId);
       setQuality(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to recalculate");

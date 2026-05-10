@@ -27,14 +27,14 @@ async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
-export function getCardFollowers(cardId: string, token: string) {
+export function getCardFollowers(token: string, cardId: string) {
   return apiRequest<CardFollowerState>(
     `/api/v1/cards/${cardId}/followers`,
     token,
   );
 }
 
-export function followCard(cardId: string, token: string) {
+export function followCard(token: string, cardId: string) {
   return apiRequest<CardFollowerState>(
     `/api/v1/cards/${cardId}/follow`,
     token,
@@ -42,7 +42,7 @@ export function followCard(cardId: string, token: string) {
   );
 }
 
-export function unfollowCard(cardId: string, token: string) {
+export function unfollowCard(token: string, cardId: string) {
   return apiRequest<CardFollowerState>(
     `/api/v1/cards/${cardId}/follow`,
     token,
@@ -51,8 +51,8 @@ export function unfollowCard(cardId: string, token: string) {
 }
 
 export function getCardsFollowerStatus(
-  cardIds: string[],
   token: string,
+  cardIds: string[],
 ): Promise<Record<string, CardFollowerState>> {
   if (cardIds.length === 0) return Promise.resolve({});
   return apiRequest<Record<string, CardFollowerState>>(

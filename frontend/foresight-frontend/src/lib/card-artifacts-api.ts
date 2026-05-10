@@ -23,13 +23,13 @@ async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
-export function getCardArtifacts(cardId: string, token: string) {
+export function getCardArtifacts(token: string, cardId: string) {
   return apiRequest<CardArtifacts>(`/api/v1/cards/${cardId}/artifacts`, token);
 }
 
 export function getCardsArtifacts(
-  cardIds: string[],
   token: string,
+  cardIds: string[],
 ): Promise<Record<string, CardArtifacts>> {
   if (cardIds.length === 0) return Promise.resolve({});
   return apiRequest<Record<string, CardArtifacts>>(

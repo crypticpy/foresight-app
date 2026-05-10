@@ -141,7 +141,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     if (!rawCard?.id) return;
     let cancelled = false;
     getAuthToken()
-      .then((token) => (token ? getCardArtifacts(rawCard.id, token) : null))
+      .then((token) => (token ? getCardArtifacts(token, rawCard.id) : null))
       .then((next) => {
         if (next && !cancelled) setArtifacts(next);
       })
