@@ -606,6 +606,10 @@ function getActionDescription(action: UndoAction): {
         verb: "deferred",
         icon: <Clock className="h-4 w-4 text-amber-500" />,
       };
+    default: {
+      const _exhaustive: never = action.type;
+      return _exhaustive;
+    }
   }
 }
 
@@ -857,13 +861,14 @@ const DiscoveryQueue: React.FC = () => {
 
     // If we found a valid action to undo, restore the card to the list
     if (undoneAction) {
+      const restoredCard = undoneAction.card;
       setCards((prevCards) => {
         // Check if card already exists (prevent duplicates)
-        if (prevCards.some((c) => c.id === undoneAction!.card.id)) {
+        if (prevCards.some((c) => c.id === restoredCard.id)) {
           return prevCards;
         }
         // Add the card back to the list
-        return [...prevCards, undoneAction!.card];
+        return [...prevCards, restoredCard];
       });
     }
 
