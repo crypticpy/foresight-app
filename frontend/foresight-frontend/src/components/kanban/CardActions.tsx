@@ -465,6 +465,9 @@ export const CardActions = memo(function CardActions({
           menuItems[menuItems.length - 1]?.focus();
           break;
         }
+        default:
+          // Other keys pass through — no menu-specific handling needed.
+          break;
       }
     };
 
