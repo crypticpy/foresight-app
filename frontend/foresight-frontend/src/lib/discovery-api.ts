@@ -9,53 +9,21 @@
  */
 
 import { API_BASE_URL } from "./config";
+import type { FullCard } from "../types/card";
 
 /**
- * Base intelligence card interface.
+ * Intelligence card payload returned by the discovery/cards endpoints.
  *
- * Represents the core data model for a strategic intelligence card
- * with all scoring dimensions and classification metadata.
+ * Aliases the canonical `FullCard` (see `types/card.ts`) and adds the
+ * lifecycle `status` field that the discovery endpoints return on top.
+ * Prefer importing from this module when working with create/update API
+ * payloads; use `FullCard` directly for read-only views that don't need
+ * `status`.
  */
-export interface Card {
-  /** Unique card identifier (UUID) */
-  id: string;
-  /** Display name of the intelligence card */
-  name: string;
-  /** URL-friendly slug for routing */
-  slug: string;
-  /** Brief text summary of the card topic */
-  summary: string;
-  /** Associated strategic pillar code (e.g., 'CH', 'MC', 'HS') */
-  pillar_id: string;
-  /** Maturity stage identifier (1-8) */
-  stage_id: string;
-  /** Technology horizon classification */
-  horizon: "H1" | "H2" | "H3";
-  /** Novelty score (0-100) */
-  novelty_score: number;
-  /** Maturity score (0-100) */
-  maturity_score: number;
-  /** Impact score (0-100) */
-  impact_score: number;
-  /** Relevance score (0-100) */
-  relevance_score: number;
-  /** Velocity score (0-100) */
-  velocity_score: number;
-  /** Risk score (0-100) */
-  risk_score: number;
-  /** Opportunity score (0-100) */
-  opportunity_score: number;
-  /** ISO 8601 timestamp when the card was created */
-  created_at: string;
-  /** ISO 8601 timestamp when the card was last updated */
-  updated_at?: string;
-  /** Reference to an anchor card for derived cards */
-  anchor_id?: string;
-  /** CMO Top 25 priority alignment codes */
-  top25_relevance?: string[];
+export type Card = FullCard & {
   /** Card lifecycle status (e.g., 'active', 'pending_review', 'archived') */
   status: string;
-}
+};
 
 /**
  * Configuration for a discovery run.
@@ -685,9 +653,7 @@ export interface DiscoveryConfig {
 /**
  * Fetch current discovery configuration from server
  */
-export function fetchDiscoveryConfig(
-  token: string,
-): Promise<DiscoveryConfig> {
+export function fetchDiscoveryConfig(token: string): Promise<DiscoveryConfig> {
   return apiRequest<DiscoveryConfig>("/api/v1/discovery/config", token);
 }
 

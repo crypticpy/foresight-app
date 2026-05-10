@@ -37,46 +37,29 @@ import { Top25Badge } from "../components/Top25Badge";
 import { WorkstreamForm } from "../components/WorkstreamForm";
 import { WorkstreamChatPanel } from "../components/WorkstreamChatPanel";
 import { FrameworkBadge } from "../components/FrameworkBadge";
+import type { BaseCard } from "../types/card";
+import type { Workstream as CanonicalWorkstream } from "../types/workstream";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface Workstream {
-  id: string;
-  name: string;
-  description: string;
-  pillar_ids: string[];
-  goal_ids: string[];
-  stage_ids: string[];
-  horizon: string;
-  keywords: string[];
-  is_active: boolean;
-  auto_add: boolean;
-  created_at: string;
-  user_id: string;
-  framework_code?: string | null;
-  owner_type?: "user" | "org";
-}
+// `user_id` is the authoritative-owner field this view needs in addition
+// to the canonical Workstream shape. Keep the extension type local rather
+// than promoting `user_id` to the canonical interface — most callers don't
+// need it.
+type Workstream = CanonicalWorkstream & { user_id: string };
 
-interface Card {
-  id: string;
-  name: string;
-  slug: string;
-  summary: string;
-  pillar_id: string;
+// stage_id is stored as a number here because the existing query does
+// `parseInt` on workstream.stage_ids and compares against the column;
+// the wider canonical schema is `stage_id: string` (e.g. "1_concept").
+// Keep the override scoped to this file rather than redeclaring base fields.
+type Card = Omit<BaseCard, "stage_id"> & {
   stage_id: number;
-  horizon: "H1" | "H2" | "H3";
-  novelty_score: number;
-  maturity_score: number;
-  impact_score: number;
-  relevance_score: number;
-  velocity_score: number;
   risk_score: number;
   opportunity_score: number;
   top25_priorities?: string[];
-  created_at: string;
-}
+};
 
 // CardFollow interface moved to shared types or removed if unused
 

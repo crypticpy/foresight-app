@@ -30,13 +30,16 @@ import { addCardToWorkstream } from "../../lib/workstream-api";
 // Types
 // =============================================================================
 
-interface Workstream {
-  id: string;
-  name: string;
+import type { Workstream as CanonicalWorkstream } from "../../types/workstream";
+
+// API may return description as null; the canonical Workstream uses
+// `description: string`. Override that one field here.
+type Workstream = Pick<
+  CanonicalWorkstream,
+  "id" | "name" | "is_active" | "created_at"
+> & {
   description: string | null;
-  is_active: boolean;
-  created_at: string;
-}
+};
 
 export interface AddToWorkstreamModalProps {
   /** Whether the modal is open */

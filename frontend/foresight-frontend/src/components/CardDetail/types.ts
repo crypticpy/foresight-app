@@ -5,50 +5,32 @@
  * component and its sub-components for consistent type safety.
  */
 
+import type { BaseCard } from "../../types/card";
+
 /**
- * Represents a card/trend in the foresight system
- * Contains all metadata, classification, and scoring information
+ * Card shape used by the CardDetail view.
+ *
+ * Extends `BaseCard` (the canonical core fields) with detail-view extras
+ * (description, goal/anchor IDs, full lens metadata, user-metadata,
+ * classifier provenance, etc.) and narrows `updated_at` to required since
+ * the detail endpoint always returns it. Narrower trend unions reflect the
+ * documented enum values returned by the API.
  */
-export interface Card {
-  /** Unique identifier for the card */
-  id: string;
-  /** Display name of the card/trend */
-  name: string;
-  /** URL-friendly slug for routing */
-  slug: string;
-  /** Brief summary of the card */
-  summary: string;
+export interface Card extends Omit<
+  BaseCard,
+  "velocity_trend" | "trend_direction"
+> {
   /** Full description of the card */
   description: string;
-  /** Strategic pillar category (e.g., 'technology', 'policy') */
-  pillar_id: string;
   /** Goal within the pillar */
   goal_id: string;
   /** Optional anchor department/area */
   anchor_id?: string;
-  /** Development stage identifier (e.g., '1_concept', '3_prototype') */
-  stage_id: string;
-  /** Time horizon for relevance: H1 (1-2 years), H2 (3-5 years), H3 (5+ years) */
-  horizon: "H1" | "H2" | "H3";
-  /** Novelty score (0-100): How new or unprecedented this signal is */
-  novelty_score: number;
-  /** Maturity score (0-100): How developed and established this is */
-  maturity_score: number;
-  /** Impact score (0-100): Potential magnitude of effect */
-  impact_score: number;
-  /** Relevance score (0-100): Alignment with current priorities */
-  relevance_score: number;
-  /** Velocity score (0-100): Speed of development and adoption */
-  velocity_score: number;
   /** Risk score (0-100): Potential negative consequences */
   risk_score: number;
   /** Opportunity score (0-100): Potential benefits if adopted */
   opportunity_score: number;
-  /** Array of Top 25 priority IDs this card relates to */
-  top25_relevance?: string[];
-  /** ISO timestamp when the card was created */
-  created_at: string;
-  /** ISO timestamp when the card was last updated */
+  /** ISO timestamp when the card was last updated (always present in detail view) */
   updated_at: string;
   /** ISO timestamp of last deep research execution */
   deep_research_at?: string;
@@ -108,9 +90,6 @@ export interface Card {
   } | null;
   classifier_version?: string | null;
   classified_at?: string | null;
-  follower_count?: number;
-  is_following?: boolean;
-  artifacts?: import("../../types/card").CardArtifacts;
 }
 
 /**

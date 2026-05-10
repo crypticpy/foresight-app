@@ -593,18 +593,7 @@ const WorkstreamKanban: React.FC = () => {
     getCardError,
   } = useBriefGeneration(getAuthToken, id || "", {
     onGenerating: () => showToast("info", "Generating executive brief..."),
-    onSuccess: (cardId, _brief) => {
-      showToast("success", "Executive brief generated");
-      // Find the card to show the modal
-      for (const columnCards of Object.values(cards)) {
-        const card = columnCards.find((c) => c.card.id === cardId);
-        if (card) {
-          setBriefModalCard(card);
-          setShowBriefModal(true);
-          break;
-        }
-      }
-    },
+    onSuccess: () => showToast("success", "Executive brief generated"),
     onError: (_, error) =>
       showToast("error", `Brief generation failed: ${error.message}`),
   });
@@ -1123,26 +1112,6 @@ const WorkstreamKanban: React.FC = () => {
   );
 
   /**
-   * Handle quick update action (screening column).
-   */
-  const handleQuickUpdate = useCallback(
-    async (cardId: string) => {
-      await triggerQuickUpdate(cardId);
-    },
-    [triggerQuickUpdate],
-  );
-
-  /**
-   * Handle export action (brief column).
-   */
-  const handleExport = useCallback(
-    async (cardId: string, format: "pdf" | "pptx") => {
-      await exportCard(cardId, format);
-    },
-    [exportCard],
-  );
-
-  /**
    * Handle check updates action (watching column).
    */
   const handleCheckUpdates = useCallback(
@@ -1369,8 +1338,12 @@ const WorkstreamKanban: React.FC = () => {
     onDeepDive: handleDeepDive,
     onRemove: handleRemoveCard,
     onMoveToColumn: handleMoveToColumn,
-    onQuickUpdate: handleQuickUpdate,
-    onExport: handleExport,
+    onQuickUpdate: async (cardId) => {
+      await triggerQuickUpdate(cardId);
+    },
+    onExport: async (cardId, format) => {
+      await exportCard(cardId, format);
+    },
     onExportBrief: handleBriefExportFromCard,
     onCheckUpdates: handleCheckUpdates,
     onGenerateBrief: handleGenerateBrief,

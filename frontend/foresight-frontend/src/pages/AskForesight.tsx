@@ -37,10 +37,9 @@ import type { Conversation } from "../lib/chat-api";
 // Types
 // ============================================================================
 
-interface Workstream {
-  id: string;
-  name: string;
-}
+import type { Workstream as CanonicalWorkstream } from "../types/workstream";
+
+type Workstream = Pick<CanonicalWorkstream, "id" | "name">;
 
 interface ScopeOption {
   label: string;
