@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
+import { useToast } from "./ui/Toast";
 
 /** Describes a single navigation entry used throughout the header. */
 type NavItem = {
@@ -93,6 +94,7 @@ const NavLinkItem: React.FC<{
 
 const Header: React.FC = () => {
   const { user, profile, signOut } = useAuthContext();
+  const { pushToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -210,7 +212,9 @@ const Header: React.FC = () => {
     try {
       await signOut();
     } catch (error) {
-      console.error("Error signing out:", error);
+      pushToast(error instanceof Error ? error.message : "Failed to sign out", {
+        variant: "error",
+      });
     }
   };
 
@@ -274,9 +278,11 @@ const Header: React.FC = () => {
                 aria-haspopup="menu"
                 aria-expanded={isMoreDropdownOpen}
                 className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
-                  [...moreNavigation, ...guideNavigation, ...adminNavigation].some(
-                    (item) => location.pathname === item.href,
-                  )
+                  [
+                    ...moreNavigation,
+                    ...guideNavigation,
+                    ...adminNavigation,
+                  ].some((item) => location.pathname === item.href)
                     ? "text-brand-blue bg-brand-blue/10"
                     : "text-gray-600 hover:text-brand-dark-blue hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10"
                 }`}
