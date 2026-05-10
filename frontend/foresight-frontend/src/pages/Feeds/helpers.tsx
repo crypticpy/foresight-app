@@ -8,6 +8,8 @@
 import { AlertCircle, CheckCircle2, Clock, PauseCircle } from "lucide-react";
 import { FEED_CATEGORIES } from "./constants";
 
+export { formatRelativeTime } from "../../lib/utils";
+
 const DEFAULT_CATEGORY_COLOR =
   "bg-gray-100 text-gray-800 dark:bg-gray-700/50 dark:text-gray-300";
 
@@ -57,20 +59,4 @@ export function getTriageColor(result: string | null): string {
     default:
       return "text-gray-500 dark:text-gray-400";
   }
-}
-
-export function formatRelativeTime(dateStr: string | null): string {
-  if (!dateStr) return "Never";
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
 }
