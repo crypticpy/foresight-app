@@ -32,7 +32,6 @@ const isProduction = import.meta.env.PROD;
 /**
  * No-operation function for silencing logs in production.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const noop = (..._args: unknown[]): void => {
   // Intentionally empty - silences logs in production
 };

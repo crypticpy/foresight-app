@@ -406,7 +406,6 @@ export function PersonalizedQueue({
         await supabase.from("card_follows").insert({
           user_id: user.id,
           card_id: cardId,
-          priority: "medium",
         });
       }
     } catch (_err) {

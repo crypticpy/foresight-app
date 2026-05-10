@@ -32,7 +32,6 @@ export function useRestoreConversation(deps: RestoreConversationDeps): void {
   // Intentionally runs once on mount. Restoration semantics are anchored
   // to the initial scope/id; remounting on a new scope is the consumer's
   // responsibility (via key prop on ChatPanel).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     let cancelled = false;
     const isStillMounted = () =>
@@ -77,5 +76,6 @@ export function useRestoreConversation(deps: RestoreConversationDeps): void {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
