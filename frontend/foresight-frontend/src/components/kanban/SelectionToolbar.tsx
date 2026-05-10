@@ -146,8 +146,7 @@ export function SelectionToolbar({
     try {
       await navigator.clipboard.writeText(urls.join("\n"));
       showToast("success", `Copied ${urls.length} link(s) to clipboard`);
-    } catch (err) {
-      console.error("clipboard write failed:", err);
+    } catch {
       showToast("error", "Could not write to clipboard");
     }
   }, [runBulk, showToast]);
