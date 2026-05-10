@@ -235,6 +235,9 @@ function VirtualizedListInner<T>(
             handled = true;
           }
           break;
+        default:
+          // Other keys (Tab, alphanumerics, modifiers) — let the browser handle them.
+          break;
       }
 
       if (handled) {
