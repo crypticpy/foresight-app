@@ -10,6 +10,11 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.cost_guardrail import (
+    BudgetExceededError,
+    check_budget_or_raise,
+    check_budget_or_skip,
+)
 from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
 from app.models.discovery_models import (
     DiscoveryConfigRequest,
@@ -150,6 +155,38 @@ async def execute_discovery_run_background(
     """
     from app.discovery_service import build_discovery_config
 
+    # Re-check the cost guardrail at execution time. The HTTP entry point
+    # also calls ``check_budget_or_raise``, but worker-driven runs (scheduled
+    # discovery, recovered runs) reach this function without going through it.
+    # Use ``check_budget_or_skip`` here because we are not inside a request and
+    # cannot raise HTTPException — fail the run instead.
+    try:
+        await check_budget_or_skip()
+    except BudgetExceededError as exc:
+        logger.warning(
+            "Discovery run %s aborted before start: cost guardrail tripped (%s)",
+            run_id,
+            exc,
+        )
+        update_payload = {
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_message": "Cost guardrail tripped — discovery run aborted",
+        }
+
+        def _mark_aborted() -> None:
+            supabase.table("discovery_runs").update(update_payload).eq(
+                "id", run_id
+            ).execute()
+
+        try:
+            await asyncio.to_thread(_mark_aborted)
+        except Exception:
+            logger.exception(
+                "Failed to mark discovery run %s as guardrail-aborted", run_id
+            )
+        return
+
     try:
         logger.info(f"Starting discovery run {run_id}")
 
@@ -179,19 +216,24 @@ async def execute_discovery_run_background(
 
         # Update the run record with results (service already updates its own record,
         # but we update the one we created in the endpoint)
-        supabase.table("discovery_runs").update(
-            {
-                "status": result.status.value,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "queries_generated": result.queries_generated,
-                "sources_found": result.sources_discovered,
-                "sources_relevant": result.sources_triaged,
-                "cards_created": len(result.cards_created),
-                "cards_enriched": len(result.cards_enriched),
-                "cards_deduplicated": result.sources_duplicate,
-                "estimated_cost": result.estimated_cost,
-            }
-        ).eq("id", run_id).execute()
+        success_payload = {
+            "status": result.status.value,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "queries_generated": result.queries_generated,
+            "sources_found": result.sources_discovered,
+            "sources_relevant": result.sources_triaged,
+            "cards_created": len(result.cards_created),
+            "cards_enriched": len(result.cards_enriched),
+            "cards_deduplicated": result.sources_duplicate,
+            "estimated_cost": result.estimated_cost,
+        }
+
+        def _update_success() -> None:
+            supabase.table("discovery_runs").update(success_payload).eq(
+                "id", run_id
+            ).execute()
+
+        await asyncio.to_thread(_update_success)
 
         logger.info(
             f"Discovery run {run_id} completed: {len(result.cards_created)} cards created, {len(result.cards_enriched)} enriched"
@@ -208,14 +250,23 @@ async def execute_discovery_run_background(
 
     except Exception as e:
         logger.error(f"Discovery run {run_id} failed: {str(e)}", exc_info=True)
-        # Update as failed
-        supabase.table("discovery_runs").update(
-            {
-                "status": "failed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error_message": str(e),
-            }
-        ).eq("id", run_id).execute()
+        failure_payload = {
+            "status": "failed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_message": str(e),
+        }
+
+        def _update_failure() -> None:
+            supabase.table("discovery_runs").update(failure_payload).eq(
+                "id", run_id
+            ).execute()
+
+        try:
+            await asyncio.to_thread(_update_failure)
+        except Exception:
+            logger.exception(
+                "Failed to mark discovery run %s as failed after error", run_id
+            )
 
 
 # ============================================================================
@@ -304,6 +355,9 @@ async def trigger_discovery_run(
 
     Returns immediately with run ID. Poll GET /discovery/runs/{run_id} for status.
     """
+    # Rolling-window cost guardrail. No-op when disabled in admin settings.
+    await check_budget_or_raise()
+
     try:
         # Apply env defaults for any unset values
         resolved_config = {

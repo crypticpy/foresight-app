@@ -11,6 +11,7 @@ import { createClient, User } from "@supabase/supabase-js";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ToastProvider } from "./components/ui/Toast";
 import Header from "./components/Header";
+import { CostStatusBanner } from "./components/CostStatusBanner";
 import { AuthContextProvider } from "./hooks/useAuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -208,6 +209,7 @@ function App() {
               </a>
               {user && <Header />}
               <main id="main-content" className={user ? "pt-16" : ""}>
+                {user && <CostStatusBanner />}
                 <Routes>
                   {/* Login route - public, redirects to home if already authenticated */}
                   <Route path="/login" element={<LoginRoute user={user} />} />

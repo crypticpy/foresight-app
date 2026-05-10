@@ -96,6 +96,11 @@ import {
   type WorkstreamCoverageItem,
 } from "../lib/admin-api";
 import {
+  fetchCostBudget,
+  resetCostGuardrail,
+  type CostBudgetState,
+} from "../lib/cost-api";
+import {
   fetchSafetyIncidents,
   runSafetyAbuseScan,
   updateSafetyIncident,
@@ -1360,16 +1365,122 @@ function SettingRow({
   );
 }
 
+function CostGuardrailsPanel({
+  budget,
+  onReset,
+  resetting,
+}: {
+  budget: CostBudgetState;
+  onReset: () => Promise<void> | void;
+  resetting: boolean;
+}) {
+  const cap = budget.cap_usd;
+  const alert = budget.alert_usd;
+  const pct =
+    cap && cap > 0 ? Math.min(100, (budget.spent_usd / cap) * 100) : 0;
+  const tone = budget.tripped
+    ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+    : budget.alerting
+      ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30"
+      : "border-gray-200 bg-white dark:border-gray-700 dark:bg-dark-surface";
+  const barTone = budget.tripped
+    ? "bg-red-500"
+    : budget.alerting
+      ? "bg-amber-500"
+      : "bg-brand-blue";
+  return (
+    <div className={cn("mb-6 rounded-xl border p-5", tone)}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-gray-900 dark:text-white">
+            Cost guardrails
+          </h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {budget.enabled
+              ? `Rolling ${budget.window_days}-day window. Edit thresholds in the Models & Chat → research group.`
+              : "Disabled. Enable FORESIGHT_COST_GUARDRAIL_ENABLED in settings to start blocking runaway spend."}
+          </p>
+        </div>
+        {budget.tripped && (
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={resetting}
+            className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+          >
+            {resetting ? "Resetting…" : "Reset guardrail"}
+          </button>
+        )}
+      </div>
+      {budget.tripped && (
+        <p className="mt-3 text-sm font-medium text-red-700 dark:text-red-300">
+          Guardrail tripped — research, discovery, and signal-agent paths are
+          refusing new work until the cap is raised or the guardrail is reset.
+        </p>
+      )}
+      {!budget.tripped && budget.alerting && (
+        <p className="mt-3 text-sm font-medium text-amber-700 dark:text-amber-300">
+          Spend has crossed the soft alert threshold. A cost.alert audit row was
+          recorded; new work is still allowed.
+        </p>
+      )}
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div>
+          <div className="text-xs uppercase text-gray-500">Spent (window)</div>
+          <div className="text-lg font-semibold text-gray-900 dark:text-white">
+            {formatMoney(budget.spent_usd)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-gray-500">Hard cap</div>
+          <div className="text-lg font-semibold text-gray-900 dark:text-white">
+            {cap != null ? formatMoney(cap) : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-gray-500">Alert threshold</div>
+          <div className="text-lg font-semibold text-gray-900 dark:text-white">
+            {alert != null ? formatMoney(alert) : "—"}
+          </div>
+        </div>
+      </div>
+      {cap != null && cap > 0 && (
+        <div className="mt-4">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div
+              className={cn("h-full transition-all duration-200", barTone)}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="mt-1 text-xs text-gray-500">
+            {pct.toFixed(1)}% of cap · window starts{" "}
+            {formatDate(budget.window_start)}
+            {budget.reset_after && (
+              <> · last reset {formatDate(budget.reset_after)}</>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsageTab({
   usage,
   recentUsage,
   days,
   onDaysChange,
+  budget,
+  onResetGuardrail,
+  resetting,
 }: {
   usage: UsageSummary | null;
   recentUsage: UsageEvent[];
   days: number;
   onDaysChange: (days: number) => void;
+  budget: CostBudgetState | null;
+  onResetGuardrail: () => Promise<void> | void;
+  resetting: boolean;
 }) {
   return (
     <div>
@@ -1389,6 +1500,13 @@ function UsageTab({
           </select>
         }
       />
+      {budget && (
+        <CostGuardrailsPanel
+          budget={budget}
+          onReset={onResetGuardrail}
+          resetting={resetting}
+        />
+      )}
       {usage && (
         <>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -3144,6 +3262,8 @@ const AdminConsole: React.FC = () => {
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [recentUsage, setRecentUsage] = useState<UsageEvent[]>([]);
   const [usageDays, setUsageDays] = useState(7);
+  const [costBudget, setCostBudget] = useState<CostBudgetState | null>(null);
+  const [costResetting, setCostResetting] = useState(false);
   const [auditEntries, setAuditEntries] = useState<AdminAuditEntry[]>([]);
   const [auditFilters, setAuditFilters] = useState<{
     target_type: "user" | "setting" | "";
@@ -3247,16 +3367,34 @@ const AdminConsole: React.FC = () => {
   const loadUsage = useCallback(async () => {
     try {
       const token = await getToken();
-      const [usageData, recentData] = await Promise.all([
+      const [usageData, recentData, budgetData] = await Promise.all([
         fetchUsageSummary(token, usageDays),
         fetchRecentUsage(token, 50),
+        fetchCostBudget(token).catch(() => null),
       ]);
       setUsage(usageData);
       setRecentUsage(recentData);
+      setCostBudget(budgetData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load usage");
     }
   }, [usageDays]);
+
+  const handleResetCostGuardrail = useCallback(async () => {
+    setCostResetting(true);
+    try {
+      const token = await getToken();
+      const updated = await resetCostGuardrail(token);
+      setCostBudget(updated);
+      setNotice("Cost guardrail reset.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to reset guardrail",
+      );
+    } finally {
+      setCostResetting(false);
+    }
+  }, []);
 
   const loadAudit = useCallback(async () => {
     try {
@@ -3337,6 +3475,16 @@ const AdminConsole: React.FC = () => {
         await updateAdminSetting(token, setting.key, value);
         const refreshed = await fetchAdminSettings(token);
         setSettings(refreshed.items);
+        // Cost-guardrail settings change what the Usage tab guardrail panel
+        // shows, so re-pull the budget snapshot rather than waiting for the
+        // operator to refresh the page or change usage windows.
+        if (setting.key.startsWith("FORESIGHT_COST_")) {
+          fetchCostBudget(token)
+            .then(setCostBudget)
+            .catch(() => {
+              /* leave the panel showing the previous snapshot */
+            });
+        }
         setNotice("Setting saved");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save setting");
@@ -3980,6 +4128,9 @@ const AdminConsole: React.FC = () => {
               recentUsage={recentUsage}
               days={usageDays}
               onDaysChange={updateUsageWindow}
+              budget={costBudget}
+              onResetGuardrail={handleResetCostGuardrail}
+              resetting={costResetting}
             />
           )}
           {activeTab === "audit" && (
