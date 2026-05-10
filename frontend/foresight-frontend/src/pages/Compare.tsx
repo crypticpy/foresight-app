@@ -5,16 +5,10 @@
  * Card IDs are read from URL query params: /compare?card_ids=id1,id2
  */
 
-import React from 'react';
-import { TrendComparisonView } from '../components/visualizations/TrendComparisonView';
+import { TrendComparisonView } from "../components/visualizations/TrendComparisonView";
 
-const Compare: React.FC = () => {
-  const handleCardClick = (_cardId: string) => {
-    // Could navigate to card detail, but for now just log
-    // The TrendComparisonView already has links to card detail pages
-  };
-
-  return <TrendComparisonView onCardClick={handleCardClick} />;
-};
+// Card-name links inside TrendComparisonView already navigate to the
+// signal detail page, so we don't need an additional onCardClick handler.
+const Compare = () => <TrendComparisonView />;
 
 export default Compare;
