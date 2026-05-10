@@ -12,6 +12,7 @@ import {
   Briefcase,
   Compass,
   FolderOpen,
+  Heart,
   HelpCircle,
   Home,
   type LucideIcon,
@@ -30,6 +31,7 @@ export type NavItem = {
 
 export const MAIN_NAVIGATION: NavItem[] = [
   { name: "Dashboard", href: "/", icon: Home },
+  { name: "For You", href: "/for-you", icon: Heart },
   { name: "Ask", href: "/ask", icon: Sparkles },
   { name: "Discover", href: "/discover", icon: Compass },
   { name: "Signals", href: "/signals", icon: Radio },

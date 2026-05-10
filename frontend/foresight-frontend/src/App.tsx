@@ -26,6 +26,7 @@ import Login from "./pages/Login";
 const Discover = lazy(() => import("./pages/Discover"));
 const DiscoveryQueue = lazy(() => import("./pages/DiscoveryQueue"));
 const DiscoveryHistory = lazy(() => import("./pages/DiscoveryHistory"));
+const ForYou = lazy(() => import("./pages/ForYou"));
 
 // Card visualization pages - share React Flow and related viz libraries
 const CardDetail = lazy(() => import("./pages/CardDetail"));
@@ -224,6 +225,15 @@ function App() {
                       <ProtectedRoute
                         element={<DiscoveryQueue />}
                         loadingMessage="Loading queue..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/for-you"
+                    element={
+                      <ProtectedRoute
+                        element={<ForYou />}
+                        loadingMessage="Loading recommendations..."
                       />
                     }
                   />
