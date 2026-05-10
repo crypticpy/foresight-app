@@ -41,11 +41,11 @@ export interface CardActionsProps {
   /** Callback when card is moved to a different column */
   onMoveToColumn: (cardId: string, status: KanbanStatus) => void;
   /** Callback for quick update action (screening column) */
-  onQuickUpdate?: (cardId: string) => Promise<void>;
+  onQuickUpdate?: (cardId: string) => Promise<unknown>;
   /** Callback for export action (card export) */
-  onExport?: (cardId: string, format: "pdf" | "pptx") => Promise<void>;
+  onExport?: (cardId: string, format: "pdf" | "pptx") => Promise<unknown>;
   /** Callback for exporting executive brief (brief column) */
-  onExportBrief?: (cardId: string, format: "pdf" | "pptx") => Promise<void>;
+  onExportBrief?: (cardId: string, format: "pdf" | "pptx") => Promise<unknown>;
   /** Callback for check updates action (watching column) */
   onCheckUpdates?: (cardId: string) => Promise<void>;
   /** Callback for generating an executive brief (brief column) */

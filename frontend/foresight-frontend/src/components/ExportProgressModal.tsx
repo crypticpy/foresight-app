@@ -91,7 +91,10 @@ const COA_COLORS = {
 const STATUS_CONFIG: Record<
   ExportStatus,
   {
-    icon: React.ComponentType<{ className?: string }>;
+    icon: React.ComponentType<{
+      className?: string;
+      style?: React.CSSProperties;
+    }>;
     title: string;
     description: string;
     color: string;

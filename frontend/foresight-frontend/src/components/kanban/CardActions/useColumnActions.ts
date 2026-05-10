@@ -12,12 +12,12 @@ import type { WorkstreamCard } from "../types";
 
 export interface UseColumnActionsInput {
   card: WorkstreamCard;
-  onQuickUpdate: ((cardId: string) => Promise<void>) | undefined;
+  onQuickUpdate: ((cardId: string) => Promise<unknown>) | undefined;
   onExport:
-    | ((cardId: string, format: "pdf" | "pptx") => Promise<void>)
+    | ((cardId: string, format: "pdf" | "pptx") => Promise<unknown>)
     | undefined;
   onExportBrief:
-    | ((cardId: string, format: "pdf" | "pptx") => Promise<void>)
+    | ((cardId: string, format: "pdf" | "pptx") => Promise<unknown>)
     | undefined;
   onCheckUpdates: ((cardId: string) => Promise<void>) | undefined;
   closeDropdown: () => void;

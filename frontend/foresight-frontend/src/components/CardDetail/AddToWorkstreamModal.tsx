@@ -12,12 +12,7 @@
  * - Keyboard navigation (Escape to close)
  */
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  memo
-} from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import {
   X,
   Loader2,
@@ -139,8 +134,8 @@ export const AddToWorkstreamModal = memo(function AddToWorkstreamModal({
           throw new Error("Authentication required");
         }
 
-        // Add to screening column by default
-        await addCardToWorkstream(token, workstream.id, cardId, "screening");
+        // Add to inbox column by default
+        await addCardToWorkstream(token, workstream.id, cardId, "inbox");
 
         onSuccess?.(workstream.name);
         onClose();
