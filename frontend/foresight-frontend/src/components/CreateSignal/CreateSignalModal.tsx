@@ -43,6 +43,7 @@ import {
 import { Link } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { supabase } from "../../lib/supabase";
+import { getAuthToken } from "../../lib/auth";
 import {
   createCardFromTopic,
   suggestKeywords,
@@ -450,18 +451,13 @@ export function CreateSignalModal({
     setError(null);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const token = await getAuthToken();
+      if (!token) {
         setError("Please sign in to use this feature.");
         return;
       }
 
-      const result = await suggestKeywords(
-        state.topic.trim(),
-        session.access_token,
-      );
+      const result = await suggestKeywords(state.topic.trim(), token);
       updateState({ keywords: result.suggestions || [] });
     } catch (err) {
       setError(
@@ -506,10 +502,8 @@ export function CreateSignalModal({
     setError(null);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const token = await getAuthToken();
+      if (!token) {
         setError("Please sign in to create signals.");
         return;
       }
@@ -526,7 +520,7 @@ export function CreateSignalModal({
             topic: string;
             workstream_id?: string;
           },
-          session.access_token,
+          token,
         );
         setCreatedCard(result);
         onSuccess?.();
@@ -550,7 +544,7 @@ export function CreateSignalModal({
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
