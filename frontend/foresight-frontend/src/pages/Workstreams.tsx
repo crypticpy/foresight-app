@@ -899,6 +899,11 @@ const Workstreams: React.FC = () => {
       }
     } catch (error) {
       console.error("Error loading workstreams:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? `Could not load workstreams: ${error.message}`
+          : "Could not load workstreams. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
