@@ -38,6 +38,7 @@ import { Top25Badge } from "../components/Top25Badge";
 import { WorkstreamForm } from "../components/WorkstreamForm";
 import { WorkstreamChatPanel } from "../components/WorkstreamChatPanel";
 import { FrameworkBadge } from "../components/FrameworkBadge";
+import { useToast } from "../components/ui/Toast";
 import type { BaseCard } from "../types/card";
 import type { Workstream as CanonicalWorkstream } from "../types/workstream";
 
@@ -279,6 +280,7 @@ function CardItem({
 const WorkstreamFeed: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuthContext();
+  const { pushToast } = useToast();
 
   // State
   const [workstream, setWorkstream] = useState<Workstream | null>(null);
@@ -396,7 +398,9 @@ const WorkstreamFeed: React.FC = () => {
       });
 
       if (fetchError) {
-        console.error("Error loading feed:", fetchError);
+        pushToast(fetchError.message || "Failed to load feed", {
+          variant: "error",
+        });
         return;
       }
 
@@ -417,7 +421,9 @@ const WorkstreamFeed: React.FC = () => {
 
       setCards(filteredCards);
     } catch (err) {
-      console.error("Error loading feed:", err);
+      pushToast(err instanceof Error ? err.message : "Failed to load feed", {
+        variant: "error",
+      });
     } finally {
       setCardsLoading(false);
     }
@@ -477,7 +483,10 @@ const WorkstreamFeed: React.FC = () => {
         setFollowedCardIds((prev) => new Set([...prev, cardId]));
       }
     } catch (err) {
-      console.error("Error toggling follow:", err);
+      pushToast(
+        err instanceof Error ? err.message : "Could not update follow state",
+        { variant: "error" },
+      );
     }
   };
 
@@ -545,8 +554,9 @@ const WorkstreamFeed: React.FC = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("Export failed:", err);
-      // Could add toast notification here
+      pushToast(err instanceof Error ? err.message : "Export failed", {
+        variant: "error",
+      });
     } finally {
       setExportLoading(null);
     }
