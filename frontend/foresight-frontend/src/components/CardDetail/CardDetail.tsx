@@ -49,6 +49,7 @@ import { supabase } from "../../lib/supabase";
 import { getAuthToken } from "../../lib/auth";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useFollowCard } from "../../hooks/useFollowCard";
+import { useToast } from "../ui/Toast";
 import { cn } from "../../lib/utils";
 
 // CardDetail sub-components
@@ -139,6 +140,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const { slug: routeSlug } = useParams<{ slug: string }>();
   const slug = slugOverride ?? routeSlug;
   const { user } = useAuthContext();
+  const { pushToast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const location = useLocation();
@@ -347,9 +349,11 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         setNewNote("");
       }
     } catch (error) {
-      console.error("Error adding note:", error);
+      pushToast(error instanceof Error ? error.message : "Failed to add note", {
+        variant: "error",
+      });
     }
-  }, [user, card, newNote, notes]);
+  }, [user, card, newNote, notes, pushToast]);
 
   // Poll for research task status
   const pollTaskStatus = useCallback(
@@ -432,7 +436,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
 
   // Handle related card click
   const handleRelatedCardClick = useCallback(
-    (cardId: string, cardSlug: string) => {
+    (_cardId: string, cardSlug: string) => {
       if (!cardSlug) return;
       if (onRelatedCardClick) {
         onRelatedCardClick(cardSlug);
@@ -479,7 +483,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({
       loadRelatedCards();
       loadAssets();
     }
-  }, [card?.id, loadScoreHistory, loadStageHistory, loadRelatedCards, loadAssets]);
+  }, [
+    card?.id,
+    loadScoreHistory,
+    loadStageHistory,
+    loadRelatedCards,
+    loadAssets,
+  ]);
 
   // Computed values
   const canDeepResearch = card && (card.deep_research_count_today ?? 0) < 2;
