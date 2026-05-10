@@ -72,6 +72,7 @@ import {
 } from "../../lib/discovery-api";
 import { getCardsArtifacts } from "../../lib/card-artifacts-api";
 import { getCardsFollowerStatus } from "../../lib/card-followers-api";
+import { useToast } from "../../components/ui/Toast";
 
 // Local imports from modular structure
 import type { Card, Pillar, Stage, SortOption, FilterState } from "./types";
@@ -129,6 +130,7 @@ function getHistoryDescription(config: SavedSearchQueryConfig): string {
  */
 const Discover: React.FC = () => {
   const { user } = useAuthContext();
+  const { pushToast } = useToast();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [cards, setCards] = useState<Card[]>([]);
@@ -703,7 +705,6 @@ const Discover: React.FC = () => {
             .insert({ user_id: user.id, card_id: cardId, priority: "medium" });
         }
       } catch (error) {
-        console.error("Error toggling card follow:", error);
         // Revert optimistic update
         setFollowedCardIds((prev) => {
           const newSet = new Set(prev);
@@ -714,9 +715,15 @@ const Discover: React.FC = () => {
           }
           return newSet;
         });
+        pushToast(
+          error instanceof Error
+            ? error.message
+            : "Could not update follow state",
+          { variant: "error" },
+        );
       }
     },
-    [user?.id, followedCardIds],
+    [user?.id, followedCardIds, pushToast],
   );
 
   // Apply saved search configuration
