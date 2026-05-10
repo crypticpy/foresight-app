@@ -20,6 +20,12 @@ export interface UseSpeechToTextReturn {
   isSupported: boolean;
   /** The latest transcribed text (final result only) */
   transcript: string;
+  /**
+   * Last unexpected error from the Web Speech API (e.g. mic permission denied,
+   * audio capture failure). Cleared when a new session starts. Null when no
+   * error has occurred or the most recent run ended cleanly.
+   */
+  error: string | null;
   /** Begin a new speech recognition session */
   startListening: () => void;
   /** Stop the current speech recognition session */
@@ -82,6 +88,7 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
 export function useSpeechToText(): UseSpeechToTextReturn {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const isSupported = getSpeechRecognition() !== null;
 
@@ -129,9 +136,9 @@ export function useSpeechToText(): UseSpeechToTextReturn {
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      // "aborted" and "no-speech" are expected — don't log them as errors
+      // "aborted" and "no-speech" are expected — don't surface them
       if (event.error !== "aborted" && event.error !== "no-speech") {
-        console.warn("[useSpeechToText] Recognition error:", event.error);
+        setError(`Speech recognition failed (${event.error}).`);
       }
       setIsListening(false);
       recognitionRef.current = null;
@@ -139,12 +146,17 @@ export function useSpeechToText(): UseSpeechToTextReturn {
 
     recognitionRef.current = recognition;
     setTranscript("");
+    setError(null);
     setIsListening(true);
 
     try {
       recognition.start();
     } catch (err) {
-      console.warn("[useSpeechToText] Failed to start recognition:", err);
+      setError(
+        err instanceof Error
+          ? `Could not start microphone: ${err.message}`
+          : "Could not start microphone.",
+      );
       setIsListening(false);
       recognitionRef.current = null;
     }
@@ -182,6 +194,7 @@ export function useSpeechToText(): UseSpeechToTextReturn {
     isListening,
     isSupported,
     transcript,
+    error,
     startListening,
     stopListening,
   };

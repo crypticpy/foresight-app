@@ -22,6 +22,7 @@ import { cn, formatRelativeTime } from "../../lib/utils";
 import { useChat } from "../../hooks/useChat";
 import { useChatKeyboard } from "../../hooks/useChatKeyboard";
 import { useSpeechToText } from "../../hooks/useSpeechToText";
+import { useToast } from "../ui/Toast";
 import { ChatMessage as ChatMessageComponent } from "./ChatMessage";
 import { ChatSuggestionChips } from "./ChatSuggestionChips";
 import { ChatHistoryPopover } from "./ChatHistoryPopover";
@@ -486,9 +487,19 @@ export function ChatPanel({
     isListening,
     isSupported: isSpeechSupported,
     transcript,
+    error: speechError,
     startListening,
     stopListening,
   } = useSpeechToText();
+  const { pushToast } = useToast();
+
+  // Surface speech-to-text errors as a toast — the hook used to swallow these
+  // silently, leaving users wondering why the mic button did nothing.
+  useEffect(() => {
+    if (speechError) {
+      pushToast(speechError, { variant: "error" });
+    }
+  }, [speechError, pushToast]);
 
   // Append transcript to input when speech recognition produces a result
   useEffect(() => {
