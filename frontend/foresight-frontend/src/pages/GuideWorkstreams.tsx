@@ -15,7 +15,6 @@ import {
   Zap,
   Brain,
   ArrowRight,
-  Lightbulb,
   CheckCircle,
   BookOpen,
   RefreshCw,
@@ -38,6 +37,7 @@ import {
   Target,
   MousePointerClick,
 } from "lucide-react";
+import { ProTip } from "@/components/ProTip";
 
 // ---------------------------------------------------------------------------
 // Sub-components: Accordion
@@ -95,44 +95,6 @@ const AccordionContent = React.forwardRef<
   </Accordion.Content>
 ));
 AccordionContent.displayName = "AccordionContent";
-
-// ---------------------------------------------------------------------------
-// Sub-components: Pro Tip Callout
-// ---------------------------------------------------------------------------
-
-function ProTip({
-  children,
-  title = "Pro Tip",
-}: {
-  children: React.ReactNode;
-  title?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="my-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl p-4">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 text-left text-sm font-semibold text-amber-600 dark:text-amber-400 transition-colors hover:text-amber-700 dark:hover:text-amber-300"
-      >
-        <Lightbulb className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-        <span className="flex-1">{title}</span>
-        <ChevronDown
-          className={cn(
-            "h-4 w-4 transition-transform duration-200",
-            expanded && "rotate-180",
-          )}
-        />
-      </button>
-      {expanded && (
-        <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Sub-components: Quick Start Step Card

@@ -130,14 +130,14 @@ export interface UsageEvent {
   [key: string]: unknown;
 }
 
-export function fetchAdminOverview(token: string) {
+export function fetchAdminOverview(token: string): Promise<AdminOverview> {
   return apiRequest<AdminOverview>("/api/v1/admin/overview", token);
 }
 
 export function fetchAdminUsers(
   token: string,
   params: { search?: string; account_type?: string; role?: string } = {},
-) {
+): Promise<AdminUsersResponse> {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
   if (params.account_type) query.set("account_type", params.account_type);
@@ -150,18 +150,24 @@ export function updateAdminUser(
   token: string,
   userId: string,
   body: Partial<Pick<AdminUser, "role" | "account_type" | "display_name">>,
-) {
+): Promise<AdminUser> {
   return apiRequest<AdminUser>(`/api/v1/admin/users/${userId}`, token, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 }
 
-export function fetchAdminSettings(token: string) {
+export function fetchAdminSettings(
+  token: string,
+): Promise<AdminSettingsResponse> {
   return apiRequest<AdminSettingsResponse>("/api/v1/admin/settings", token);
 }
 
-export function updateAdminSetting(token: string, key: string, value: unknown) {
+export function updateAdminSetting(
+  token: string,
+  key: string,
+  value: unknown,
+): Promise<AdminSetting> {
   return apiRequest<AdminSetting>(`/api/v1/admin/settings/${key}`, token, {
     method: "PATCH",
     body: JSON.stringify({ value }),
@@ -175,7 +181,10 @@ export interface DiscoveryPresetResponse {
   items: AdminSetting[];
 }
 
-export function applyDiscoveryPreset(token: string, preset: DiscoveryPreset) {
+export function applyDiscoveryPreset(
+  token: string,
+  preset: DiscoveryPreset,
+): Promise<DiscoveryPresetResponse> {
   return apiRequest<DiscoveryPresetResponse>(
     "/api/v1/admin/discovery/preset",
     token,
@@ -235,7 +244,7 @@ export interface AdminSourceCategoryResponse {
 export function fetchAdminSources(
   token: string,
   params: { category?: SourceCategory; enabledOnly?: boolean } = {},
-) {
+): Promise<AdminSourcesResponse> {
   const query = new URLSearchParams();
   if (params.category) query.set("category", params.category);
   if (params.enabledOnly) query.set("enabled_only", "true");
@@ -246,7 +255,9 @@ export function fetchAdminSources(
   );
 }
 
-export function fetchAdminSourceCategories(token: string) {
+export function fetchAdminSourceCategories(
+  token: string,
+): Promise<AdminSourceCategoryResponse> {
   return apiRequest<AdminSourceCategoryResponse>(
     "/api/v1/admin/sources/categories",
     token,
@@ -271,7 +282,10 @@ export interface AdminSourceUpdateBody {
   config?: Record<string, unknown>;
 }
 
-export function createAdminSource(token: string, body: AdminSourceCreateBody) {
+export function createAdminSource(
+  token: string,
+  body: AdminSourceCreateBody,
+): Promise<AdminSource> {
   return apiRequest<AdminSource>("/api/v1/admin/sources", token, {
     method: "POST",
     body: JSON.stringify(body),
@@ -282,14 +296,17 @@ export function updateAdminSource(
   token: string,
   sourceId: string,
   body: AdminSourceUpdateBody,
-) {
+): Promise<AdminSource> {
   return apiRequest<AdminSource>(`/api/v1/admin/sources/${sourceId}`, token, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 }
 
-export async function deleteAdminSource(token: string, sourceId: string) {
+export async function deleteAdminSource(
+  token: string,
+  sourceId: string,
+): Promise<void> {
   const response = await fetch(
     `${API_BASE_URL}/api/v1/admin/sources/${sourceId}`,
     {
@@ -309,18 +326,24 @@ export async function deleteAdminSource(token: string, sourceId: string) {
   }
 }
 
-export function fetchRecentJobs(token: string) {
+export function fetchRecentJobs(token: string): Promise<RecentJobsResponse> {
   return apiRequest<RecentJobsResponse>("/api/v1/admin/jobs/recent", token);
 }
 
-export function fetchUsageSummary(token: string, days: number) {
+export function fetchUsageSummary(
+  token: string,
+  days: number,
+): Promise<UsageSummary> {
   return apiRequest<UsageSummary>(
     `/api/v1/admin/usage/summary?days=${days}`,
     token,
   );
 }
 
-export function fetchRecentUsage(token: string, limit = 50) {
+export function fetchRecentUsage(
+  token: string,
+  limit = 50,
+): Promise<UsageEvent[]> {
   return apiRequest<UsageEvent[]>(
     `/api/v1/admin/usage/recent?limit=${limit}`,
     token,
@@ -354,7 +377,7 @@ export function fetchAdminAuditLog(
     actor_id?: string;
     since?: string;
   } = {},
-) {
+): Promise<AdminAuditResponse> {
   const query = new URLSearchParams();
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   if (params.offset !== undefined) query.set("offset", String(params.offset));
@@ -387,7 +410,10 @@ export interface PillarCoverageResponse {
 
 export type CoverageWindowDays = 7 | 30 | 90;
 
-export function fetchPillarCoverage(token: string, days: CoverageWindowDays) {
+export function fetchPillarCoverage(
+  token: string,
+  days: CoverageWindowDays,
+): Promise<PillarCoverageResponse> {
   return apiRequest<PillarCoverageResponse>(
     `/api/v1/admin/coverage/pillars?days=${days}`,
     token,
@@ -409,7 +435,9 @@ export interface WorkstreamCoverageResponse {
   total: number;
 }
 
-export function fetchWorkstreamCoverage(token: string) {
+export function fetchWorkstreamCoverage(
+  token: string,
+): Promise<WorkstreamCoverageResponse> {
   return apiRequest<WorkstreamCoverageResponse>(
     "/api/v1/admin/coverage/workstreams",
     token,
@@ -422,7 +450,10 @@ export interface AdminForceScanResponse {
   status: string;
 }
 
-export function adminForceWorkstreamScan(token: string, workstreamId: string) {
+export function adminForceWorkstreamScan(
+  token: string,
+  workstreamId: string,
+): Promise<AdminForceScanResponse> {
   return apiRequest<AdminForceScanResponse>(
     `/api/v1/admin/workstreams/${workstreamId}/scan`,
     token,
@@ -518,7 +549,7 @@ export function fetchAdminRunDetail(
   token: string,
   runId: string,
   params: { limit?: number; offset?: number } = {},
-) {
+): Promise<AdminRunDetailResponse> {
   const query = new URLSearchParams();
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   if (params.offset !== undefined) query.set("offset", String(params.offset));
@@ -547,7 +578,7 @@ function buildDiscoveryQuery(params: DiscoveryRecoverParams): string {
 export function triggerDiscoveryRecover(
   token: string,
   params: DiscoveryRecoverParams = {},
-) {
+): Promise<Record<string, unknown>> {
   return apiRequest<Record<string, unknown>>(
     `/api/v1/discovery/recover${buildDiscoveryQuery(params)}`,
     token,
@@ -558,7 +589,7 @@ export function triggerDiscoveryRecover(
 export function triggerDiscoveryReprocess(
   token: string,
   params: DiscoveryRecoverParams = {},
-) {
+): Promise<Record<string, unknown>> {
   return apiRequest<Record<string, unknown>>(
     `/api/v1/discovery/reprocess${buildDiscoveryQuery(params)}`,
     token,
@@ -569,7 +600,7 @@ export function triggerDiscoveryReprocess(
 export function triggerDiscoveryRecoverAnalyzed(
   token: string,
   params: DiscoveryRecoverParams = {},
-) {
+): Promise<Record<string, unknown>> {
   return apiRequest<Record<string, unknown>>(
     `/api/v1/discovery/recover-analyzed${buildDiscoveryQuery(params)}`,
     token,
@@ -626,7 +657,9 @@ export interface AdminScheduleCreateBody {
 
 export type AdminScheduleUpdateBody = Partial<AdminScheduleCreateBody>;
 
-export function fetchAdminSchedules(token: string) {
+export function fetchAdminSchedules(
+  token: string,
+): Promise<AdminSchedulesResponse> {
   return apiRequest<AdminSchedulesResponse>(
     "/api/v1/admin/discovery/schedules",
     token,
@@ -636,7 +669,7 @@ export function fetchAdminSchedules(token: string) {
 export function createAdminSchedule(
   token: string,
   body: AdminScheduleCreateBody,
-) {
+): Promise<AdminSchedule> {
   return apiRequest<AdminSchedule>("/api/v1/admin/discovery/schedules", token, {
     method: "POST",
     body: JSON.stringify(body),
@@ -647,7 +680,7 @@ export function updateAdminSchedule(
   token: string,
   scheduleId: string,
   body: AdminScheduleUpdateBody,
-) {
+): Promise<AdminSchedule> {
   return apiRequest<AdminSchedule>(
     `/api/v1/admin/discovery/schedules/${scheduleId}`,
     token,
@@ -682,7 +715,7 @@ export async function deleteAdminSchedule(
 export function triggerAdminAction(
   token: string,
   action: "scan" | "velocity" | "quality" | "lens-backfill",
-) {
+): Promise<Record<string, unknown>> {
   const endpoints = {
     scan: { endpoint: "/api/v1/admin/scan", body: undefined },
     velocity: { endpoint: "/api/v1/admin/velocity/calculate", body: undefined },
@@ -758,7 +791,7 @@ export interface LlmAuditEventsParams {
 export function fetchLlmAuditEvents(
   token: string,
   params: LlmAuditEventsParams = {},
-) {
+): Promise<LlmAuditEventsResponse> {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue;
@@ -769,7 +802,10 @@ export function fetchLlmAuditEvents(
   return apiRequest<LlmAuditEventsResponse>(endpoint, token);
 }
 
-export function fetchLlmAuditEvent(token: string, eventId: string) {
+export function fetchLlmAuditEvent(
+  token: string,
+  eventId: string,
+): Promise<LlmAuditEventDetail> {
   return apiRequest<LlmAuditEventDetail>(
     `/api/v1/admin/usage/events/${encodeURIComponent(eventId)}`,
     token,
@@ -810,7 +846,10 @@ export interface LlmAuditReplayResponse {
   llm_event_count: number;
 }
 
-export function fetchLlmAuditReplay(token: string, conversationId: string) {
+export function fetchLlmAuditReplay(
+  token: string,
+  conversationId: string,
+): Promise<LlmAuditReplayResponse> {
   return apiRequest<LlmAuditReplayResponse>(
     `/api/v1/admin/usage/conversations/${encodeURIComponent(
       conversationId,

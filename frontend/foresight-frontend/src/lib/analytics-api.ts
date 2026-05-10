@@ -229,7 +229,7 @@ export function timePeriodToDates(period: "7d" | "30d" | "90d" | "1y"): {
  * Returns velocity metrics aggregated by date for charting
  * trend momentum over the selected time period.
  */
-export async function fetchVelocityData(
+export function fetchVelocityData(
   token: string,
   filters?: VelocityFilters,
 ): Promise<VelocityResponse> {
@@ -249,7 +249,7 @@ export async function fetchVelocityData(
 /**
  * Fetch velocity data with time period convenience wrapper
  */
-export async function fetchVelocityDataForPeriod(
+export function fetchVelocityDataForPeriod(
   token: string,
   period: "7d" | "30d" | "90d" | "1y",
   filters?: Omit<VelocityFilters, "start_date" | "end_date">,
@@ -273,7 +273,7 @@ export async function fetchVelocityDataForPeriod(
  * Returns activity distribution across all 6 strategic pillars
  * for heatmap visualization.
  */
-export async function fetchPillarCoverage(
+export function fetchPillarCoverage(
   token: string,
   filters?: PillarCoverageFilters,
 ): Promise<PillarCoverageResponse> {
@@ -292,7 +292,7 @@ export async function fetchPillarCoverage(
 /**
  * Fetch pillar coverage with time period convenience wrapper
  */
-export async function fetchPillarCoverageForPeriod(
+export function fetchPillarCoverageForPeriod(
   token: string,
   period: "7d" | "30d" | "90d" | "1y",
   filters?: Omit<PillarCoverageFilters, "start_date" | "end_date">,
@@ -317,7 +317,7 @@ export async function fetchPillarCoverageForPeriod(
  * for executive decision-making. Includes fallback handling
  * when AI service is unavailable.
  */
-export async function fetchInsights(
+export function fetchInsights(
   token: string,
   filters?: InsightsFilters,
 ): Promise<InsightsResponse> {
@@ -335,7 +335,7 @@ export async function fetchInsights(
 /**
  * Fetch insights for a specific pillar
  */
-export async function fetchPillarInsights(
+export function fetchPillarInsights(
   token: string,
   pillarId: string,
   limit: number = 5,

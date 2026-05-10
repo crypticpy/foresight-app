@@ -97,3 +97,8 @@ test-users.txt
 
 # Claude Code local state
 .claude/scheduled_tasks.lock
+
+# Desloppify state
+.desloppify/
+scorecard.png
+frontend/foresight-frontend/scorecard.png

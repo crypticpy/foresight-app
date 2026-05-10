@@ -521,7 +521,7 @@ async function apiRequest<T>(
 /**
  * Fetch all pending review cards
  */
-export async function fetchPendingReviewCards(
+export function fetchPendingReviewCards(
   token: string,
   options?: { limit?: number; offset?: number; sort?: "date" | "confidence" },
 ): Promise<PendingCard[]> {
@@ -539,7 +539,7 @@ export async function fetchPendingReviewCards(
 /**
  * Fetch pending cards with filters
  */
-export async function fetchPendingReviewCardsFiltered(
+export function fetchPendingReviewCardsFiltered(
   token: string,
   filters?: {
     pillar_id?: string;
@@ -565,7 +565,7 @@ export async function fetchPendingReviewCardsFiltered(
 /**
  * Review a single card
  */
-export async function reviewCard(
+export function reviewCard(
   token: string,
   cardId: string,
   action: ReviewAction,
@@ -580,7 +580,7 @@ export async function reviewCard(
 /**
  * Bulk review multiple cards with the same action
  */
-export async function bulkReviewCards(
+export function bulkReviewCards(
   token: string,
   cardIds: string[],
   action: ReviewAction,
@@ -598,7 +598,7 @@ export async function bulkReviewCards(
 /**
  * Dismiss a card with optional reason
  */
-export async function dismissCard(
+export function dismissCard(
   token: string,
   cardId: string,
   reason?: DismissReason,
@@ -613,7 +613,7 @@ export async function dismissCard(
 /**
  * Fetch cards similar to a given card (for duplicate detection)
  */
-export async function fetchSimilarCards(
+export function fetchSimilarCards(
   token: string,
   cardId: string,
   threshold?: number,
@@ -625,7 +625,7 @@ export async function fetchSimilarCards(
 /**
  * Fetch discovery run history
  */
-export async function fetchDiscoveryRuns(
+export function fetchDiscoveryRuns(
   token: string,
   limit: number = 10,
 ): Promise<DiscoveryRun[]> {
@@ -638,7 +638,7 @@ export async function fetchDiscoveryRuns(
 /**
  * Fetch a specific discovery run
  */
-export async function fetchDiscoveryRun(
+export function fetchDiscoveryRun(
   token: string,
   runId: string,
 ): Promise<DiscoveryRun> {
@@ -685,7 +685,7 @@ export interface DiscoveryConfig {
 /**
  * Fetch current discovery configuration from server
  */
-export async function fetchDiscoveryConfig(
+export function fetchDiscoveryConfig(
   token: string,
 ): Promise<DiscoveryConfig> {
   return apiRequest<DiscoveryConfig>("/api/v1/discovery/config", token);
@@ -694,7 +694,7 @@ export async function fetchDiscoveryConfig(
 /**
  * Trigger a new discovery run
  */
-export async function triggerDiscoveryRun(
+export function triggerDiscoveryRun(
   token: string,
   config?: DiscoveryConfigRequest,
 ): Promise<{ run_id: string }> {
@@ -707,7 +707,7 @@ export async function triggerDiscoveryRun(
 /**
  * Cancel an in-progress discovery run
  */
-export async function cancelDiscoveryRun(
+export function cancelDiscoveryRun(
   token: string,
   runId: string,
 ): Promise<void> {
@@ -734,7 +734,7 @@ export async function fetchPendingCount(token: string): Promise<number> {
 /**
  * Execute an advanced search with filters and optional vector search
  */
-export async function advancedSearch(
+export function advancedSearch(
   token: string,
   request: AdvancedSearchRequest,
 ): Promise<AdvancedSearchResponse> {
@@ -751,7 +751,7 @@ export async function advancedSearch(
 /**
  * List all saved searches for the current user
  */
-export async function listSavedSearches(
+export function listSavedSearches(
   token: string,
   limit?: number,
 ): Promise<SavedSearchList> {
@@ -765,7 +765,7 @@ export async function listSavedSearches(
 /**
  * Create a new saved search
  */
-export async function createSavedSearch(
+export function createSavedSearch(
   token: string,
   savedSearch: SavedSearchCreate,
 ): Promise<SavedSearch> {
@@ -778,7 +778,7 @@ export async function createSavedSearch(
 /**
  * Get a specific saved search by ID (also updates last_used_at)
  */
-export async function getSavedSearch(
+export function getSavedSearch(
   token: string,
   searchId: string,
 ): Promise<SavedSearch> {
@@ -788,7 +788,7 @@ export async function getSavedSearch(
 /**
  * Update a saved search
  */
-export async function updateSavedSearch(
+export function updateSavedSearch(
   token: string,
   searchId: string,
   updates: SavedSearchUpdate,
@@ -802,7 +802,7 @@ export async function updateSavedSearch(
 /**
  * Delete a saved search
  */
-export async function deleteSavedSearch(
+export function deleteSavedSearch(
   token: string,
   searchId: string,
 ): Promise<void> {
@@ -818,7 +818,7 @@ export async function deleteSavedSearch(
 /**
  * Get the current user's search history
  */
-export async function getSearchHistory(
+export function getSearchHistory(
   token: string,
   limit?: number,
 ): Promise<SearchHistoryList> {
@@ -832,7 +832,7 @@ export async function getSearchHistory(
 /**
  * Record a search in the user's history
  */
-export async function recordSearchHistory(
+export function recordSearchHistory(
   token: string,
   entry: SearchHistoryCreate,
 ): Promise<SearchHistoryEntry> {
@@ -845,7 +845,7 @@ export async function recordSearchHistory(
 /**
  * Delete a specific search history entry
  */
-export async function deleteSearchHistoryEntry(
+export function deleteSearchHistoryEntry(
   token: string,
   entryId: string,
 ): Promise<void> {
@@ -863,7 +863,7 @@ export async function deleteSearchHistoryEntry(
  * - Pillar alignment (cards in user's active pillars)
  * - Followed context (similar to user's followed cards)
  */
-export async function fetchPersonalizedDiscoveryQueue(
+export function fetchPersonalizedDiscoveryQueue(
   token: string,
   limit: number = 20,
   offset: number = 0,
@@ -881,7 +881,7 @@ export async function fetchPersonalizedDiscoveryQueue(
 /**
  * Clear all search history for the current user
  */
-export async function clearSearchHistory(token: string): Promise<void> {
+export function clearSearchHistory(token: string): Promise<void> {
   return apiRequest<void>("/api/v1/search-history", token, {
     method: "DELETE",
   });
@@ -1067,7 +1067,7 @@ export interface CardComparisonResponse {
  * @param endDate - Optional end date filter (ISO format YYYY-MM-DD)
  * @returns ScoreHistoryResponse with historical score data
  */
-export async function getScoreHistory(
+export function getScoreHistory(
   token: string,
   cardId: string,
   startDate?: string,
@@ -1091,7 +1091,7 @@ export async function getScoreHistory(
  * @param cardId - UUID of the card
  * @returns StageHistoryList with stage transition records
  */
-export async function getStageHistory(
+export function getStageHistory(
   token: string,
   cardId: string,
 ): Promise<StageHistoryList> {
@@ -1110,7 +1110,7 @@ export async function getStageHistory(
  * @param limit - Maximum number of related cards to return (default: 20)
  * @returns RelatedCardsList with related cards and relationship context
  */
-export async function getRelatedCards(
+export function getRelatedCards(
   token: string,
   cardId: string,
   limit: number = 20,
@@ -1135,7 +1135,7 @@ export async function getRelatedCards(
  * @param endDate - Optional end date filter for score history (ISO format YYYY-MM-DD)
  * @returns CardComparisonResponse with synchronized data for both cards
  */
-export async function compareCards(
+export function compareCards(
   token: string,
   cardId1: string,
   cardId2: string,
@@ -1197,7 +1197,7 @@ export interface CardAssetsResponse {
  * @param cardId - Card UUID
  * @returns CardAssetsResponse with list of assets
  */
-export async function fetchCardAssets(
+export function fetchCardAssets(
   token: string,
   cardId: string,
 ): Promise<CardAssetsResponse> {
@@ -1229,7 +1229,7 @@ export interface CreateCardFromTopicResponse {
   message: string;
 }
 
-export async function createCardFromTopic(
+export function createCardFromTopic(
   data: { topic: string; workstream_id?: string },
   token: string,
 ): Promise<CreateCardFromTopicResponse> {
@@ -1253,7 +1253,7 @@ export async function createCardFromTopic(
  * @param token - Authentication token
  * @returns Object containing an array of suggested keyword strings
  */
-export async function suggestKeywords(
+export function suggestKeywords(
   topic: string,
   token: string,
 ): Promise<{ topic: string; suggestions: string[] }> {
@@ -1308,7 +1308,7 @@ export interface MySignalsResponse {
   workstreams: Array<{ id: string; name: string }>;
 }
 
-export async function fetchMySignals(
+export function fetchMySignals(
   token: string,
   options?: {
     sort_by?: string;
@@ -1331,7 +1331,7 @@ export async function fetchMySignals(
   return apiRequest<MySignalsResponse>(endpoint, token);
 }
 
-export async function pinSignal(
+export function pinSignal(
   token: string,
   cardId: string,
 ): Promise<{ is_pinned: boolean }> {
@@ -1356,7 +1356,7 @@ export interface CardSnapshot {
   created_by: string;
 }
 
-export async function fetchCardSnapshots(
+export function fetchCardSnapshots(
   token: string,
   cardId: string,
   fieldName: string = "description",
@@ -1367,7 +1367,7 @@ export async function fetchCardSnapshots(
   );
 }
 
-export async function fetchCardSnapshot(
+export function fetchCardSnapshot(
   token: string,
   cardId: string,
   snapshotId: string,
@@ -1378,7 +1378,7 @@ export async function fetchCardSnapshot(
   );
 }
 
-export async function restoreCardSnapshot(
+export function restoreCardSnapshot(
   token: string,
   cardId: string,
   snapshotId: string,

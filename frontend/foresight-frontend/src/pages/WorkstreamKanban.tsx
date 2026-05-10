@@ -364,16 +364,12 @@ function FormModal({
 function SignalDetailModal({
   slug,
   onClose,
+  onSlugChange,
 }: {
   slug: string | null;
   onClose: () => void;
+  onSlugChange: (slug: string) => void;
 }) {
-  const [detailSlug, setDetailSlug] = useState(slug);
-
-  useEffect(() => {
-    setDetailSlug(slug);
-  }, [slug]);
-
   useEffect(() => {
     if (!slug) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -385,7 +381,7 @@ function SignalDetailModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [slug, onClose]);
 
-  if (!slug || !detailSlug) return null;
+  if (!slug) return null;
 
   return (
     <div
@@ -401,7 +397,7 @@ function SignalDetailModal({
       >
         <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-dark-surface">
           <Link
-            to={`/signals/${detailSlug}`}
+            to={`/signals/${slug}`}
             className="inline-flex items-center gap-2 text-sm font-medium text-brand-blue hover:text-brand-dark-blue dark:hover:text-brand-green"
           >
             <FileText className="h-4 w-4" />
@@ -418,10 +414,10 @@ function SignalDetailModal({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
           <CardDetail
-            key={detailSlug}
-            slugOverride={detailSlug}
+            key={slug}
+            slugOverride={slug}
             embedded
-            onRelatedCardClick={setDetailSlug}
+            onRelatedCardClick={onSlugChange}
           />
         </div>
       </div>
@@ -2272,6 +2268,7 @@ const WorkstreamKanban: React.FC = () => {
         <SignalDetailModal
           slug={selectedSignalSlug}
           onClose={() => setSelectedSignalSlug(null)}
+          onSlugChange={setSelectedSignalSlug}
         />
 
         {/* Workstream Chat Panel */}

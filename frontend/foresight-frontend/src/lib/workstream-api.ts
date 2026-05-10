@@ -488,9 +488,9 @@ export async function addCardToWorkstream(
  *
  * @example
  * ```typescript
- * // Move card to research column at position 0
+ * // Move card to working column at position 0
  * const updated = await updateWorkstreamCard(token, wsId, cardId, {
- *   status: 'research',
+ *   status: 'working',
  *   position: 0
  * });
  *

@@ -30,6 +30,7 @@ import { StageBadge } from "./StageBadge";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import { Tooltip } from "./ui/Tooltip";
 import { cn } from "../lib/utils";
+import { parseStageNumber } from "../lib/stage-utils";
 import { type PendingCard, type DismissReason } from "../lib/discovery-api";
 import { Zap } from "lucide-react";
 
@@ -53,14 +54,6 @@ const SWIPE_CONFIG = {
   /** Damping factor for card movement (0-1, lower = more resistance) */
   damping: 0.4,
 } as const;
-
-/**
- * Parse stage number from stage_id string
- */
-const parseStageNumber = (stageId: string): number | null => {
-  const match = stageId.match(/^(\d+)/);
-  return match ? parseInt(match[1], 10) : null;
-};
 
 /**
  * Format date for display
