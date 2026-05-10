@@ -250,7 +250,6 @@ export function useExportWithProgress(
 
         // Check if still current after async token fetch
         if (!isCurrentExport()) {
-          console.log("[Export] Aborted: export superseded during token fetch");
           return;
         }
 
@@ -316,7 +315,6 @@ export function useExportWithProgress(
 
         // Check if still current after fetch
         if (!isCurrentExport()) {
-          console.log("[Export] Aborted: export superseded during fetch");
           return;
         }
 
@@ -342,9 +340,6 @@ export function useExportWithProgress(
 
         // Final check before completing
         if (!isCurrentExport()) {
-          console.log(
-            "[Export] Aborted: export superseded during blob processing",
-          );
           return;
         }
 
@@ -375,7 +370,6 @@ export function useExportWithProgress(
       } catch (error) {
         // Don't show error if it was an intentional abort
         if (error instanceof Error && error.name === "AbortError") {
-          console.log("[Export] Request aborted");
           return;
         }
 
@@ -443,9 +437,6 @@ export function useExportWithProgress(
 
         // Check if still current after async token fetch
         if (!isCurrentExport()) {
-          console.log(
-            "[Export] Aborted: card export superseded during token fetch",
-          );
           return;
         }
 
@@ -472,7 +463,6 @@ export function useExportWithProgress(
 
         // Check if still current after fetch
         if (!isCurrentExport()) {
-          console.log("[Export] Aborted: card export superseded during fetch");
           return;
         }
 
@@ -496,9 +486,6 @@ export function useExportWithProgress(
 
         // Final check before completing
         if (!isCurrentExport()) {
-          console.log(
-            "[Export] Aborted: card export superseded during blob processing",
-          );
           return;
         }
 
@@ -526,7 +513,6 @@ export function useExportWithProgress(
       } catch (error) {
         // Don't show error if it was an intentional abort
         if (error instanceof Error && error.name === "AbortError") {
-          console.log("[Export] Card request aborted");
           return;
         }
 
