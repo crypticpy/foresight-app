@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { fetchCostStatus } from "../lib/cost-api";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 
 const POLL_INTERVAL_MS = 60_000;
 

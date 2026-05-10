@@ -27,7 +27,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "../../../App";
+import { supabase } from "../../../lib/supabase";
 import {
   getScoreHistory,
   getStageHistory,

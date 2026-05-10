@@ -15,7 +15,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Cpu, Building2, User, MapPin, Lightbulb, Loader2 } from "lucide-react";
 import { cn } from "../../../../lib/utils";
-import { supabase } from "../../../../App";
+import { supabase } from "../../../../lib/supabase";
 import { API_BASE_URL } from "../../utils";
 
 // =============================================================================

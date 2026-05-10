@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { MessageSquare } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import {
   createComment,
   listComments,

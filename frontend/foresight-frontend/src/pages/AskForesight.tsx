@@ -24,7 +24,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { ChatPanel } from "../components/Chat/ChatPanel";
 import {
   fetchConversations,

@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { cn } from "../../../lib/utils";
-import { supabase } from "../../../App";
+import { supabase } from "../../../lib/supabase";
 import { API_BASE_URL } from "../../../lib/config";
 import type { FormData, FormErrors } from "../../../types/workstream";
 

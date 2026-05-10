@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import {
   acceptInvite,
   previewInvite,

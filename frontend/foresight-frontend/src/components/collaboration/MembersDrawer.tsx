@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { X, Trash2 } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import {
   listMembers,
   removeMember,

@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Briefcase, Loader2, Trash2 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { cn } from "../lib/utils";
 import {
   deletePortfolio,

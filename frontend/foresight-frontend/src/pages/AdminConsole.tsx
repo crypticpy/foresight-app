@@ -34,7 +34,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { cn } from "../lib/utils";
 import {

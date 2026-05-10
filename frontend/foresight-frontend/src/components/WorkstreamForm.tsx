@@ -31,7 +31,7 @@ import { ToggleSwitch } from "./workstream/ToggleSwitch";
 import { TemplateCard } from "./workstream/TemplateCard";
 import { WORKSTREAM_TEMPLATES } from "./workstream/steps/StepStart";
 import { WorkstreamFrameworkPicker } from "./WorkstreamFrameworkPicker";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 
 // Re-export types for backward compatibility
 export type { Workstream, WorkstreamFormProps } from "../types/workstream";

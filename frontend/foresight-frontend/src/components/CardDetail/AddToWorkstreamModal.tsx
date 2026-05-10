@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/utils";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { addCardToWorkstream } from "../../lib/workstream-api";
 
 // =============================================================================

@@ -41,7 +41,7 @@ import {
   type WorkstreamCard,
 } from "./types";
 import { AddToPortfolioModal } from "../portfolios/AddToPortfolioModal";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 
 // =============================================================================
 // Types

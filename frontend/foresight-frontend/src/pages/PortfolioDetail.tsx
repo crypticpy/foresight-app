@@ -21,7 +21,7 @@ import {
   Presentation,
   Trash2,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { cn } from "../lib/utils";
 import {
   exportPortfolio,

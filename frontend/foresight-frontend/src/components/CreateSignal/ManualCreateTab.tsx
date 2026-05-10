@@ -25,7 +25,7 @@
 import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, CheckCircle, AlertTriangle } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { cn } from "../../lib/utils";
 import { type Card } from "../../lib/discovery-api";
 import { SeedUrlInput } from "./SeedUrlInput";

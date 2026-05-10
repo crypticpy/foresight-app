@@ -29,7 +29,7 @@ import {
   PauseCircle,
   Filter,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { LoadingButton } from "../components/ui/LoadingButton";
 import type {

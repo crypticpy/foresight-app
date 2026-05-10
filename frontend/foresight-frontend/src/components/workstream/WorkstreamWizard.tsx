@@ -15,7 +15,7 @@ import { useState, useCallback, useEffect } from "react";
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useWorkstreamForm } from "../../hooks/useWorkstreamForm";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { WizardProgress } from "./WizardProgress";
 import { StepStart } from "./steps/StepStart";
 import { StepDetails } from "./steps/StepDetails";

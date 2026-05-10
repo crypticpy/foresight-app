@@ -21,7 +21,7 @@ import {
   Compass,
   BookOpen,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { useDebouncedValue } from "../hooks/useDebounce";
 import { PillarBadge } from "../components/PillarBadge";

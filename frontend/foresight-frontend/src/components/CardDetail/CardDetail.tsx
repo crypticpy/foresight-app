@@ -45,7 +45,7 @@ import {
   Compass,
   Microscope,
 } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useFollowCard } from "../../hooks/useFollowCard";
 import { cn } from "../../lib/utils";

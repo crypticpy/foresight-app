@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { PillarBadge } from "./PillarBadge";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../lib/config";
 

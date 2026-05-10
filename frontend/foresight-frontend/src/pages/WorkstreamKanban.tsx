@@ -43,7 +43,7 @@ import {
   Users,
   ListChecks,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { API_BASE_URL } from "../lib/config";
 import { cn } from "../lib/utils";

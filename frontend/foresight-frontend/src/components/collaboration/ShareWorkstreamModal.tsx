@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, X } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { addMember, createInvite } from "../../lib/collaboration-api";
 
 interface ShareWorkstreamModalProps {

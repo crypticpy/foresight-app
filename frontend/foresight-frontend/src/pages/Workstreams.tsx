@@ -24,7 +24,7 @@ import {
   Share2,
   Users,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { WorkstreamForm, type Workstream } from "../components/WorkstreamForm";
 import { WorkstreamWizard } from "../components/workstream/WorkstreamWizard";

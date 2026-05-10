@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { listActivity, type ActivityEvent } from "../../lib/activity-api";
 
 interface ActivityRailProps {

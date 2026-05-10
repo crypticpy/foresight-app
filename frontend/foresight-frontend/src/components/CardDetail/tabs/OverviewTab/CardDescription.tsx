@@ -15,7 +15,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { MarkdownReport } from "../../MarkdownReport";
 import { DescriptionHistory } from "./DescriptionHistory";
 import { fetchCardSnapshots } from "../../../../lib/discovery-api";
-import { supabase } from "../../../../App";
+import { supabase } from "../../../../lib/supabase";
 
 /**
  * Props for the CardDescription component

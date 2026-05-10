@@ -31,7 +31,7 @@ import {
   Heart,
   FolderOpen,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "../hooks/useAuthContext";
 import { PillarBadge } from "../components/PillarBadge";
 import { HorizonBadge } from "../components/HorizonBadge";

@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Pencil, Tag, Landmark, Cloud } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { useCapabilities } from "../../hooks/useCapabilities";
 
 async function getSessionToken(): Promise<string | null> {

@@ -15,7 +15,7 @@ import {
   type CardSnapshot,
 } from "../../../../lib/discovery-api";
 import { MarkdownReport } from "../../MarkdownReport";
-import { supabase } from "../../../../App";
+import { supabase } from "../../../../lib/supabase";
 
 interface DescriptionHistoryProps {
   cardId: string;

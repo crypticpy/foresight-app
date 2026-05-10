@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { fetchPendingCount } from "../lib/discovery-api";
 import { fetchLensOverview } from "../lib/dashboard-api";
 import { logger } from "../lib/logger";

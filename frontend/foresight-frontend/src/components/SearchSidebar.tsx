@@ -25,7 +25,7 @@ import {
   SavedSearch,
   SavedSearchQueryConfig,
 } from "../lib/discovery-api";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 
 // ============================================================================
 // Types

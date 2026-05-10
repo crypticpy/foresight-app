@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { fetchFilterPreview } from "../types/workstream";
 import type { FilterPreviewResult, FormData } from "../types/workstream";
 

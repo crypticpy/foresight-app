@@ -7,8 +7,10 @@ import {
   useParams,
   useLocation,
 } from "react-router-dom";
-import { createClient, User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
+import { supabase } from "./lib/supabase";
+import type { AuthContextType, UserProfile } from "./hooks/useAuthContext";
 import { ToastProvider } from "./components/ui/Toast";
 import Header from "./components/Header";
 import { CostStatusBanner } from "./components/CostStatusBanner";
@@ -56,39 +58,6 @@ const AdminConsole = lazy(() => import("./pages/AdminConsole"));
 const GuideSignals = lazy(() => import("./pages/GuideSignals"));
 const GuideDiscover = lazy(() => import("./pages/GuideDiscover"));
 const GuideWorkstreams = lazy(() => import("./pages/GuideWorkstreams"));
-
-// Supabase configuration
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error(
-    "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
-  );
-}
-
-export const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey)
-    : (null as unknown as ReturnType<typeof createClient>);
-
-export interface AuthContextType {
-  user: User | null;
-  profile: UserProfile | null;
-  loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signOut: () => Promise<void>;
-}
-
-export interface UserProfile {
-  id: string;
-  email: string;
-  display_name?: string | null;
-  role?: string | null;
-  account_type?: "paid" | "guest";
-}
-
-// AuthContext is provided by AuthContextProvider from hooks/useAuthContext
 
 function CardRedirect() {
   const { slug } = useParams<{ slug: string }>();

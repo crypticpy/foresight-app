@@ -9,7 +9,7 @@ import {
   MessageSquare,
   AlertCircle,
 } from "lucide-react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../lib/config";
 import { PillarBadge } from "../components/PillarBadge";

@@ -31,7 +31,7 @@ import {
 import { Tooltip } from "../../ui/Tooltip";
 import { QualityBadge } from "../../QualityBadge";
 import { cn } from "../../../lib/utils";
-import { supabase } from "../../../App";
+import { supabase } from "../../../lib/supabase";
 import {
   getCardQuality,
   recalculateCardQuality,

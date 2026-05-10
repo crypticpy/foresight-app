@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "../../lib/utils";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import {
   createCardFromTopic,
   suggestKeywords,

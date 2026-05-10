@@ -27,7 +27,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { PillarBadge } from "./PillarBadge";
 import { HorizonBadge } from "./HorizonBadge";
 import { StageBadge } from "./StageBadge";

@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, KeyboardEvent } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import { useAuthContext } from "./useAuthContext";
 import { useWorkstreamPreview } from "./useWorkstreamPreview";
 import { useKeywordSuggestions } from "./useKeywordSuggestions";

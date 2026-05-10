@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
 import {
   listNotifications,
   markNotificationsRead,

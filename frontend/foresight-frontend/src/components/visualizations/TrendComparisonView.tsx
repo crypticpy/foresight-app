@@ -41,7 +41,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { parseStageNumber } from "../../lib/stage-utils";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { useAuthContext } from "../../hooks/useAuthContext";
 
 // Badge components for card metadata

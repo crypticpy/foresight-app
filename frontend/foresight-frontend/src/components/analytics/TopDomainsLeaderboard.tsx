@@ -17,7 +17,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Globe, Search, Shield, Star, Trophy, AlertCircle } from "lucide-react";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { API_BASE_URL } from "../../lib/config";
 
 // ============================================================================
