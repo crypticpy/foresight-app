@@ -1,8 +1,8 @@
-import React, { Suspense } from 'react';
-import { Navigate } from 'react-router-dom';
-import { useAuthContext } from '../hooks/useAuthContext';
-import { ErrorBoundary } from './ErrorBoundary';
-import { PageLoadingSpinner } from './PageLoadingSpinner';
+import React, { Suspense } from "react";
+import { Navigate } from "react-router-dom";
+import { useAuthContext } from "../hooks/useAuthContext";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { PageLoadingSpinner } from "./PageLoadingSpinner";
 
 /**
  * Props for the ProtectedRoute component
@@ -64,7 +64,7 @@ export interface ProtectedRouteProps {
 export function ProtectedRoute({
   element,
   loadingMessage,
-  redirectTo = '/login',
+  redirectTo = "/login",
   withSuspense = true,
 }: ProtectedRouteProps) {
   const { user } = useAuthContext();
@@ -73,16 +73,6 @@ export function ProtectedRoute({
   if (!user) {
     return <Navigate to={redirectTo} replace />;
   }
-
-  /**
-   * Handle retry for failed chunk loads
-   * Simply resets the error boundary which triggers a re-render
-   * and another attempt to load the lazy component
-   */
-  const handleRetry = () => {
-    // The ErrorBoundary will reset its state and re-render children
-    // This gives React.lazy another chance to load the module
-  };
 
   // Render with or without Suspense based on prop
   const content = withSuspense ? (
@@ -93,11 +83,11 @@ export function ProtectedRoute({
     element
   );
 
-  return (
-    <ErrorBoundary onRetry={handleRetry}>
-      {content}
-    </ErrorBoundary>
-  );
+  // Passing a no-op onRetry is the documented signal that tells
+  // ErrorBoundary to render its retry button — the boundary already
+  // resets its own state and re-mounts the children, which gives
+  // React.lazy another chance to load the chunk.
+  return <ErrorBoundary onRetry={() => {}}>{content}</ErrorBoundary>;
 }
 
 export default ProtectedRoute;
