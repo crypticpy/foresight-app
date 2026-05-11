@@ -115,20 +115,31 @@ async def execute_research_task_background(
 
         # Background heartbeat to prevent the stale-task watchdog from killing
         # long-running research while it's still making progress.
+        # research_service makes many sync supabase.execute() calls inside
+        # async — those block the event loop, which can starve this 60s sleep
+        # and freeze the heartbeat while the task is still alive. Push the
+        # write off-loop via asyncio.to_thread so it survives event-loop
+        # contention.
         async def _heartbeat():
             while True:
                 await asyncio.sleep(60)
                 try:
-                    supabase.table("research_tasks").update(
-                        {
-                            "result_summary": {
-                                "stage": f"running:{task_data.task_type}",
-                                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                    await asyncio.to_thread(
+                        lambda: supabase.table("research_tasks").update(
+                            {
+                                "result_summary": {
+                                    "stage": f"running:{task_data.task_type}",
+                                    "heartbeat_at": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
+                                }
                             }
-                        }
-                    ).eq("id", task_id).execute()
-                except Exception:
-                    pass
+                        ).eq("id", task_id).execute()
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Heartbeat write failed for task {task_id}: {e}"
+                    )
 
         heartbeat_task = asyncio.create_task(_heartbeat())
 
