@@ -141,6 +141,10 @@ FIRECRAWL_API_KEY=              # gpt-researcher
 
 # Runtime flags (read in main.py lifespan)
 FORESIGHT_EMBED_WORKER=true     # Default: embed the worker in the API process. Set false to run the worker separately.
+                                # PRODUCTION: must be false on foresight-api when foresight-worker is deployed —
+                                # gunicorn runs 4 worker procs with a 120s silence timeout (entrypoint.sh), and a
+                                # long-running deep-research task pins its gunicorn worker long enough that the
+                                # arbiter SIGTERMs it, killing the asyncio task and the heartbeat.
 FORESIGHT_ENABLE_SCHEDULER=false # Default: APScheduler off. Production web service sets this true.
 FORESIGHT_DEMO_FREEZE=false     # When true, suppresses scheduler + embedded worker auto-fires (RSS triage, scheduled discovery). User-initiated jobs still run. Use this to keep API spend at zero during demos.
 ENVIRONMENT=development|production # Controls strict CORS validation
