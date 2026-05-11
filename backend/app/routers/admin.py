@@ -1667,6 +1667,10 @@ class EmbeddingBackfillRequest(BaseModel):
     limit: int = 2000
     concurrency: int = 3
     restart: bool = False
+    # Default True so the operator's first run after the model swap actually
+    # covers NULL-embedding rows (e.g. sources, 100% NULL today). Set False
+    # to restrict to model-rotation semantics — refresh existing vectors only.
+    include_null: bool = True
 
 
 # Last-completed run summary, surfaced by GET /admin/embeddings/backfill/status
@@ -1760,6 +1764,7 @@ async def trigger_embedding_backfill(
                 limit=capped_limit,
                 concurrency=capped_concurrency,
                 offsets=offsets,
+                include_null=body.include_null,
             )
             _LAST_EMBEDDING_BACKFILL.update(
                 {

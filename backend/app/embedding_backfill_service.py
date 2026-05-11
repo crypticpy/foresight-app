@@ -82,20 +82,23 @@ async def _process_table(
     limit: int,
     concurrency: int,
     offset: int = 0,
+    include_null: bool = True,
 ) -> Dict[str, Any]:
     """Pull a `[offset, offset+limit)` slice from one table and re-embed it.
+
+    `include_null=True` (default) covers first-time embedding: rows whose
+    `embedding` is NULL are included alongside rows being re-embedded.
+    `include_null=False` is the model-rotation variant — only refreshes
+    rows that already have a vector, leaving NULLs alone.
 
     Returns counters plus `next_offset` (where the next call should resume)
     and `done` (True when this slice returned fewer than `limit` rows, i.e.
     we've reached the tail of the corpus).
     """
-    query = (
-        supabase.table(table)
-        .select(select_cols)
-        .not_.is_("embedding", "null")
-        .order("id")
-        .range(offset, offset + limit - 1)
-    )
+    query = supabase.table(table).select(select_cols)
+    if not include_null:
+        query = query.not_.is_("embedding", "null")
+    query = query.order("id").range(offset, offset + limit - 1)
     resp = await asyncio.to_thread(query.execute)
     rows: List[Dict[str, Any]] = resp.data or []
     counters: Dict[str, Any] = {
@@ -147,6 +150,7 @@ async def run_embedding_backfill(
     limit: int = 2000,
     concurrency: int = 3,
     offsets: Optional[Dict[str, int]] = None,
+    include_null: bool = True,
 ) -> Dict[str, Any]:
     """Re-embed up to `limit` rows from `cards` and/or `sources`.
 
@@ -154,6 +158,12 @@ async def run_embedding_backfill(
     pages are ordered by `id ASC`, so passing the previous run's
     `next_offset` walks the corpus forward instead of re-embedding the
     same prefix. Callers without a cursor (default) start at 0.
+
+    `include_null` (default True) covers the first-time-embedding case
+    where the corpus has never been embedded against the current model;
+    NULL-embedding rows are included alongside existing vectors. Pass
+    False to restrict to model-rotation semantics (only refresh rows
+    that already have a vector).
 
     `limit` and `concurrency` are clamped to internal hard caps so a
     misconfigured CLI invocation can't issue an unbounded query or spawn
@@ -181,6 +191,7 @@ async def run_embedding_backfill(
             limit=limit,
             concurrency=concurrency,
             offset=cards_offset,
+            include_null=include_null,
         )
 
     if target in ("sources", "both"):
@@ -192,6 +203,7 @@ async def run_embedding_backfill(
             limit=limit,
             concurrency=concurrency,
             offset=sources_offset,
+            include_null=include_null,
         )
 
     result["elapsed_s"] = round(time.time() - started, 2)

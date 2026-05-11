@@ -35,6 +35,7 @@ class _FakeQuery:
         return self
 
     def is_(self, *_a, **_kw):
+        self.recorded[self.table]["is_called"] = True
         return self
 
     def order(self, col):
@@ -149,6 +150,47 @@ def test_run_embedding_backfill_advances_offsets_per_table():
     assert fake.recorded["sources"]["range"] == (250, 749)
     assert fake.recorded["cards"]["order"] == "id"
     assert fake.recorded["sources"]["order"] == "id"
+
+
+def test_include_null_default_skips_not_null_filter():
+    """Default `include_null=True` must omit the `.not_.is_(...)` filter so
+    first-time embedding picks up NULL rows. Regressing this re-introduces
+    the bug where sources (100% NULL) silently skipped the entire corpus.
+    """
+
+    fake = _FakeSupabase()
+    with patch.object(svc, "get_embedding_deployment", return_value="test-model"):
+        asyncio.run(
+            svc.run_embedding_backfill(
+                fake,
+                target="both",
+                limit=10,
+                concurrency=1,
+            )
+        )
+
+    assert "is_called" not in fake.recorded.get("cards", {})
+    assert "is_called" not in fake.recorded.get("sources", {})
+
+
+def test_include_null_false_applies_not_null_filter():
+    """Model-rotation variant: `include_null=False` keeps the existing
+    `.not_.is_(embedding, null)` filter so only rows with vectors get
+    refreshed."""
+
+    fake = _FakeSupabase()
+    with patch.object(svc, "get_embedding_deployment", return_value="test-model"):
+        asyncio.run(
+            svc.run_embedding_backfill(
+                fake,
+                target="cards",
+                limit=10,
+                concurrency=1,
+                include_null=False,
+            )
+        )
+
+    assert fake.recorded["cards"].get("is_called") is True
 
 
 def test_process_table_marks_done_when_slice_short():
