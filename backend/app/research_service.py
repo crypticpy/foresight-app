@@ -20,11 +20,14 @@ import asyncio
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from gpt_researcher import GPTResearcher
 from supabase import Client
 import openai
+
+if TYPE_CHECKING:
+    from app.job_events import JobEventEmitter
 
 # Optional imports for enhanced source fetching
 try:
@@ -1387,7 +1390,12 @@ class ResearchService:
     # Main Entry Points
     # ========================================================================
 
-    async def execute_update(self, card_id: str, task_id: str) -> ResearchResult:
+    async def execute_update(
+        self,
+        card_id: str,
+        task_id: str,
+        events: "JobEventEmitter | None" = None,
+    ) -> ResearchResult:
         """
         Execute quick update research for a card.
 
@@ -1401,7 +1409,6 @@ class ResearchService:
         """
         logger.info(f"Starting update research for card {card_id} (task: {task_id})")
 
-        # Get card details
         card_result = (
             self.supabase.table("cards")
             .select("name, summary")
@@ -1415,33 +1422,47 @@ class ResearchService:
 
         card = card_result.data
 
-        # Step 1: Build customized query
         query = UPDATE_QUERY_TEMPLATE.format(
             name=card["name"], summary=card.get("summary", "")
         )
 
-        # Step 2: Discover sources (GPT Researcher + Serper)
+        if events:
+            events.stage("discover", message=f"discovering sources for {card['name']}")
         sources, report, cost = await self._discover_sources(
             query=query, report_type="research_report"
         )
 
-        # Step 3: Backfill missing content via unified crawler
+        if events:
+            events.stage(
+                "crawl",
+                message=f"backfilling content for {len(sources)} sources",
+                payload={"sources_found": len(sources)},
+            )
         sources = await self._backfill_content(sources)
 
-        # Step 4: Triage
+        if events:
+            events.stage(
+                "triage",
+                message=f"triaging {min(len(sources), self.MAX_SOURCES_UPDATE * 2)} sources",
+            )
         triaged = await self._triage_sources(sources[: self.MAX_SOURCES_UPDATE * 2])
 
-        # Step 5: Analyze (limit to MAX_SOURCES_UPDATE)
+        if events:
+            events.stage(
+                "analyze",
+                message=f"analyzing {min(len(triaged), self.MAX_SOURCES_UPDATE)} sources",
+                payload={"sources_relevant": len(triaged)},
+            )
         processed = await self._analyze_sources(triaged[: self.MAX_SOURCES_UPDATE])
 
-        # Step 6: Store
+        if events:
+            events.stage("save", message=f"storing {len(processed)} sources")
         sources_added = 0
         for proc in processed:
             source_id = await self._store_source(card_id, proc)
             if source_id:
                 sources_added += 1
 
-        # Detect systemic storage failures
         if processed and sources_added == 0:
             logger.critical(
                 f"ALL {len(processed)} processed sources failed to store for "
@@ -1449,7 +1470,6 @@ class ResearchService:
                 f"missing migration. Check logs above for SCHEMA ERROR details."
             )
 
-        # Step 6b: Check if profile needs refresh (auto-regenerate after 3+ new sources)
         if sources_added > 0:
             await self._maybe_refresh_profile(card_id)
             await self._discover_connections(card_id)
@@ -1531,6 +1551,17 @@ class ResearchService:
             f"Update research complete for card {card_id}: {sources_added} sources added from {len(sources)} discovered"
         )
 
+        if events:
+            events.summary(
+                message=f"update research complete: {sources_added} new sources",
+                payload={
+                    "sources_found": len(sources),
+                    "sources_relevant": len(triaged),
+                    "sources_added": sources_added,
+                    "cost_estimate": cost,
+                },
+            )
+
         return ResearchResult(
             sources_found=len(sources),
             sources_relevant=len(triaged),
@@ -1546,7 +1577,12 @@ class ResearchService:
             ),  # Store up to 10KB of report
         )
 
-    async def execute_deep_research(self, card_id: str, task_id: str) -> ResearchResult:
+    async def execute_deep_research(
+        self,
+        card_id: str,
+        task_id: str,
+        events: "JobEventEmitter | None" = None,
+    ) -> ResearchResult:
         """
         Execute comprehensive deep research for a card.
 
@@ -1636,11 +1672,27 @@ class ResearchService:
             logger.warning(f"Failed to fetch existing sources: {e}")
 
         # Step 2: Discover sources (GPT Researcher + Serper - detailed report for more depth)
+        if events:
+            events.stage(
+                "discover",
+                message="gpt-researcher discovery starting",
+                payload={"query_chars": len(query), "seed_urls": len(existing_source_urls)},
+            )
         sources, report, cost = await self._discover_sources(
             query=query,
             report_type="detailed_report",
             existing_source_urls=existing_source_urls or None,
         )
+        if events:
+            events.progress(
+                stage="discover",
+                message="gpt-researcher discovery complete",
+                payload={
+                    "sources_found": len(sources),
+                    "report_chars": len(report or ""),
+                    "cost": cost,
+                },
+            )
 
         # Step 2b: Peer city benchmarking queries
         try:
@@ -1659,19 +1711,48 @@ class ResearchService:
             logger.warning(f"Peer city benchmarking search failed: {e}")
 
         # Step 3: Backfill missing content via unified crawler
+        if events:
+            events.stage(
+                "crawl",
+                message="backfilling source content",
+                payload={"sources_in": len(sources)},
+            )
         sources = await self._backfill_content(sources)
 
         # Step 4: Triage
+        if events:
+            events.stage(
+                "triage",
+                message="LLM triage for relevance",
+                payload={"sources_in": len(sources)},
+            )
         triaged = await self._triage_sources(sources)
 
         # Step 5: Analyze Round 1 sources
+        if events:
+            events.stage(
+                "analyze",
+                message="LLM analysis round 1",
+                payload={"sources_to_analyze": min(len(triaged), self.MAX_SOURCES_DEEP)},
+            )
         processed = await self._analyze_sources(triaged[: self.MAX_SOURCES_DEEP])
         round_1_count = len(processed)
+        if events:
+            events.progress(
+                stage="analyze",
+                message="round 1 analysis complete",
+                payload={"round_1_processed": round_1_count},
+            )
 
         # Step 5b: Multi-round research — identify gaps and run follow-up queries
         round_2_count = 0
         try:
             if report and len(processed) >= 3:
+                if events:
+                    events.stage(
+                        "analyze_round_2",
+                        message="gap analysis + follow-up queries",
+                    )
                 round_1_summaries = [
                     p.analysis.summary
                     for p in processed
@@ -1709,11 +1790,23 @@ class ResearchService:
             logger.warning(f"Multi-round research failed (continuing): {e}")
 
         # Step 6: Store
+        if events:
+            events.stage(
+                "store",
+                message="storing analyzed sources",
+                payload={"sources_to_store": len(processed)},
+            )
         sources_added = 0
         for proc in processed:
             source_id = await self._store_source(card_id, proc)
             if source_id:
                 sources_added += 1
+        if events:
+            events.progress(
+                stage="store",
+                message="source storage complete",
+                payload={"sources_added": sources_added},
+            )
 
         # Detect systemic storage failures (all sources failed = likely schema/config issue)
         if processed and sources_added == 0:
@@ -1743,6 +1836,11 @@ class ResearchService:
                     )
 
         # Step 7: Generate COMPREHENSIVE strategic intelligence report
+        if events:
+            events.stage(
+                "report",
+                message="generating comprehensive report",
+            )
         comprehensive_report = None
         try:
             source_analyses = [
@@ -1961,6 +2059,11 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
             logger.warning(f"Research history lookup failed: {e}")
 
         # Step 8: Enhance card with research insights
+        if events:
+            events.stage(
+                "enhance",
+                message="enhancing card from research",
+            )
         try:
             source_summaries = [
                 p.analysis.summary
@@ -2036,6 +2139,23 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
             f"Deep research complete for card {card_id}: {sources_added} sources added, {entities_count} entities extracted"
         )
 
+        if events:
+            events.summary(
+                message="deep research complete",
+                payload={
+                    "sources_found": len(sources),
+                    "sources_relevant": len(triaged),
+                    "sources_added": sources_added,
+                    "entities_extracted": entities_count,
+                    "cost_estimate": cost,
+                    "round_1_count": round_1_count,
+                    "round_2_count": round_2_count,
+                    "report_chars": (
+                        len(comprehensive_report) if comprehensive_report else 0
+                    ),
+                },
+            )
+
         return ResearchResult(
             sources_found=len(sources),
             sources_relevant=len(triaged),
@@ -2050,7 +2170,11 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
         )
 
     async def execute_workstream_analysis(
-        self, workstream_id: str, task_id: str, user_id: str
+        self,
+        workstream_id: str,
+        task_id: str,
+        user_id: str,
+        events: "JobEventEmitter | None" = None,
     ) -> ResearchResult:
         """
         Analyze a workstream and find/create relevant cards.
@@ -2090,20 +2214,43 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
         )
 
         # Step 2: Discover sources (GPT Researcher + Serper)
+        if events:
+            events.stage(
+                "discover",
+                message="workstream discovery starting",
+                payload={"keywords": len(keywords)},
+            )
         sources, report, cost = await self._discover_sources(
             query=query, report_type="research_report"
         )
+        if events:
+            events.progress(
+                stage="discover",
+                payload={
+                    "sources_found": len(sources),
+                    "report_chars": len(report or ""),
+                    "cost": cost,
+                },
+            )
 
         # Step 3: Backfill missing content via unified crawler
+        if events:
+            events.stage("crawl", payload={"sources_in": len(sources)})
         sources = await self._backfill_content(sources)
 
         # Step 4: Triage
+        if events:
+            events.stage("triage", payload={"sources_in": len(sources)})
         triaged = await self._triage_sources(sources)
 
         # Step 5: Analyze
+        if events:
+            events.stage("analyze", payload={"sources_to_analyze": min(len(triaged), 15)})
         processed = await self._analyze_sources(triaged[:15])
 
         # Step 6: Match or create cards
+        if events:
+            events.stage("match", payload={"processed": len(processed)})
         cards_matched = []
         cards_created = []
         sources_added = 0
@@ -2135,6 +2282,19 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
         logger.info(
             f"Workstream analysis complete for {workstream_id}: matched {len(cards_matched)} cards, created {len(cards_created)} new cards"
         )
+
+        if events:
+            events.summary(
+                message="workstream analysis complete",
+                payload={
+                    "sources_found": len(sources),
+                    "sources_relevant": len(triaged),
+                    "sources_added": sources_added,
+                    "cards_matched": len(cards_matched),
+                    "cards_created": len(cards_created),
+                    "cost_estimate": cost,
+                },
+            )
 
         return ResearchResult(
             sources_found=len(sources),

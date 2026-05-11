@@ -3,12 +3,10 @@
 import asyncio
 import logging
 import os
-import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from supabase import create_client
 
 from app.authz import (
     require_card_in_workstream,
@@ -17,6 +15,13 @@ from app.authz import (
 )
 from app.cost_guardrail import check_budget_or_raise
 from app.deps import supabase, get_current_user, openai_client, limiter
+from app.job_events import (
+    EVENT_STATUS_CHANGED,
+    EVENT_WATCHDOG_KILLED,
+    JOB_RESEARCH,
+    emit,
+    record_event,
+)
 from app.models.research import ResearchTaskCreate, ResearchTask
 from app.research_service import ResearchService
 from app.usage_telemetry import llm_usage_context
@@ -100,72 +105,38 @@ async def execute_research_task_background(
                     return defaults.get(task_type, 45 * 60)
             return defaults.get(task_type, 45 * 60)
 
-        # Update status to processing
+        # Update status to processing. Liveness is no longer carried by
+        # ``result_summary.heartbeat_at`` — the JobEventEmitter below
+        # writes to ``job_events`` and the watchdog reads from there.
         now = datetime.now(timezone.utc).isoformat()
         supabase.table("research_tasks").update(
             {
                 "status": "processing",
                 "started_at": now,
-                "result_summary": {
-                    "stage": f"running:{task_data.task_type}",
-                    "heartbeat_at": now,
-                },
+                "result_summary": {"stage": f"running:{task_data.task_type}"},
             }
         ).eq("id", task_id).execute()
+        record_event(
+            JOB_RESEARCH,
+            task_id,
+            EVENT_STATUS_CHANGED,
+            stage="claim",
+            message="queued -> processing",
+            payload={"task_type": task_data.task_type},
+        )
 
         timeout_seconds = _get_timeout_seconds(task_data.task_type)
 
-        # Background heartbeat to prevent the stale-task watchdog from killing
-        # long-running research while it's still making progress.
-        #
-        # The heartbeat thread gets its OWN supabase client (separate httpx
-        # connection pool) so its PATCH writes can never queue behind the
-        # main pipeline's writes. Sharing the module-level `supabase` client
-        # caused the heartbeat to silently go quiet after ~2 ticks while the
-        # analysis pipeline saturated the shared pool with `to_thread`
-        # supabase writes (observed in prod task 4b770f63: heartbeat fired at
-        # +60s and +120s, then nothing for 9 min while the worker continued).
-        #
-        # Status guard on the update prevents a late heartbeat write
-        # (in-flight when the task finished) from clobbering the final
-        # result_summary.
-        heartbeat_stop = threading.Event()
-        try:
-            heartbeat_supabase = create_client(
-                os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"]
+        with emit(JOB_RESEARCH, task_id) as events:
+            events.stage(
+                "start",
+                message=f"research task {task_data.task_type} started",
+                payload={
+                    "task_type": task_data.task_type,
+                    "card_id": task_data.card_id,
+                    "workstream_id": task_data.workstream_id,
+                },
             )
-        except Exception:
-            # Fall back to the shared client if env is misconfigured — better
-            # to share the pool than to skip heartbeats entirely.
-            logger.exception(
-                "Failed to create dedicated heartbeat supabase client for task %s; "
-                "falling back to shared client",
-                task_id,
-            )
-            heartbeat_supabase = supabase
-
-        def _heartbeat_thread():
-            while not heartbeat_stop.wait(60):
-                try:
-                    heartbeat_supabase.table("research_tasks").update(
-                        {
-                            "result_summary": {
-                                "stage": f"running:{task_data.task_type}",
-                                "heartbeat_at": datetime.now(
-                                    timezone.utc
-                                ).isoformat(),
-                            }
-                        }
-                    ).eq("id", task_id).eq("status", "processing").execute()
-                except Exception:
-                    logger.exception(
-                        "Heartbeat write failed for task %s", task_id
-                    )
-
-        heartbeat = threading.Thread(target=_heartbeat_thread, daemon=True)
-        heartbeat.start()
-
-        try:
             with llm_usage_context(
                 user_id=user_id,
                 task_id=task_id,
@@ -173,29 +144,32 @@ async def execute_research_task_background(
                 workstream_id=task_data.workstream_id,
                 operation=f"research.{task_data.task_type}",
             ):
-                # Execute based on task type
                 if task_data.task_type == "update":
                     result = await asyncio.wait_for(
-                        service.execute_update(task_data.card_id, task_id),
+                        service.execute_update(
+                            task_data.card_id, task_id, events=events
+                        ),
                         timeout=timeout_seconds,
                     )
                 elif task_data.task_type == "deep_research":
                     result = await asyncio.wait_for(
-                        service.execute_deep_research(task_data.card_id, task_id),
+                        service.execute_deep_research(
+                            task_data.card_id, task_id, events=events
+                        ),
                         timeout=timeout_seconds,
                     )
                 elif task_data.task_type == "workstream_analysis":
                     result = await asyncio.wait_for(
                         service.execute_workstream_analysis(
-                            task_data.workstream_id, task_id, user_id
+                            task_data.workstream_id,
+                            task_id,
+                            user_id,
+                            events=events,
                         ),
                         timeout=timeout_seconds,
                     )
                 else:
                     raise ValueError(f"Unknown task type: {task_data.task_type}")
-        finally:
-            heartbeat_stop.set()
-            heartbeat.join(timeout=2)
 
         # Convert ResearchResult dataclass to dict for storage
         result_summary = {
@@ -447,69 +421,58 @@ async def get_research_task(
             return task_row
 
         summary = task_row.get("result_summary") or {}
-        heartbeat_dt = (
-            _parse_dt(summary.get("heartbeat_at"))
-            if isinstance(summary, dict)
-            else None
-        )
-
         now = datetime.now(timezone.utc)
 
-        # The heartbeat coroutine ticks every 60s while the task runs. If the
-        # last heartbeat is older than 3 missed beats, the asyncio task is
-        # gone (container restart, OOM, crash) and waiting for the overall
-        # 45-min timeout just leaves the UI spinning. Fail fast.
-        HEARTBEAT_STALE_SECONDS = 180
+        # Liveness comes from job_events: the JobEventEmitter on the worker
+        # side flushes every 5s during long inner loops and immediately on
+        # stage boundaries. No event for EVENTS_STALE_SECONDS means the
+        # asyncio task is gone (container restart, OOM, blocked supabase
+        # write) and waiting for the overall 45-min timeout just leaves the
+        # UI spinning.
+        EVENTS_STALE_SECONDS = 180
+        last_event_dt: Optional[datetime] = None
+        last_event_stage: Optional[str] = None
+        try:
+            ev = await asyncio.to_thread(
+                lambda: supabase.table("job_events")
+                .select("created_at, stage, event_type")
+                .eq("job_id", task_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if ev.data:
+                last_event_dt = _parse_dt(ev.data[0].get("created_at"))
+                last_event_stage = ev.data[0].get("stage")
+        except Exception as e:
+            logger.warning(
+                f"job_events lookup failed for task {task_id}: {e}"
+            )
+
         if (
             status_val == "processing"
-            and heartbeat_dt is not None
-            and (now - heartbeat_dt).total_seconds() > HEARTBEAT_STALE_SECONDS
+            and last_event_dt is not None
+            and (now - last_event_dt).total_seconds() > EVENTS_STALE_SECONDS
         ):
-            heartbeat_age_seconds = (now - heartbeat_dt).total_seconds()
-            heartbeat_age_min = int(heartbeat_age_seconds // 60)
+            stale_seconds = (now - last_event_dt).total_seconds()
+            stale_minutes = int(stale_seconds // 60)
 
-            # Best-effort: surface when the task last burned tokens so the
-            # error makes clear this isn't an in-flight job still racking up
-            # cost. If the query fails we still fail the task — the heartbeat
-            # check alone is enough.
-            last_llm_at: Optional[str] = None
-            try:
-                llm = await asyncio.to_thread(
-                    lambda: supabase.table("llm_usage_events")
-                    .select("created_at")
-                    .eq("task_id", task_id)
-                    .order("created_at", desc=True)
-                    .limit(1)
-                    .execute()
-                )
-                if llm.data:
-                    last_llm_at = llm.data[0].get("created_at")
-            except Exception as e:
-                logger.warning(
-                    f"llm_usage_events lookup failed for task {task_id}: {e}"
-                )
-
-            msg_parts = [
+            error_message = (
                 "Research task stopped making progress "
-                f"(no heartbeat for ~{heartbeat_age_min} minutes)."
-            ]
-            if last_llm_at:
-                msg_parts.append(f"Last LLM activity at {last_llm_at}.")
-            else:
-                msg_parts.append("No LLM activity recorded for this task.")
-            msg_parts.append(
+                f"(no events for ~{stale_minutes} minutes, last stage: "
+                f"{last_event_stage or 'unknown'}). "
                 "The worker process likely crashed or was restarted. "
                 "Please retry."
             )
-            error_message = " ".join(msg_parts)
 
             new_summary = dict(summary) if isinstance(summary, dict) else {}
             new_summary.update(
                 {
-                    "heartbeat_stale": True,
+                    "events_stale": True,
                     "failed_at": now.isoformat(),
-                    "heartbeat_age_seconds": int(heartbeat_age_seconds),
-                    "last_llm_event_at": last_llm_at,
+                    "events_age_seconds": int(stale_seconds),
+                    "last_event_stage": last_event_stage,
+                    "last_event_at": last_event_dt.isoformat(),
                 }
             )
 
@@ -521,10 +484,9 @@ async def get_research_task(
             }
 
             try:
-                # Guard the update on the status we *read* — if the worker
-                # finished between SELECT and UPDATE, this no-ops instead of
-                # overwriting a completed task as failed. Same idea as the
-                # worker's claim pattern, just in reverse.
+                # Race-guard the update on the status we *read* so a worker
+                # that finished between SELECT and UPDATE doesn't get
+                # clobbered back to failed.
                 res = await asyncio.to_thread(
                     lambda: supabase.table("research_tasks")
                     .update(updates)
@@ -535,20 +497,30 @@ async def get_research_task(
                 )
                 if res.data:
                     task_row.update(updates)
+                    record_event(
+                        JOB_RESEARCH,
+                        task_id,
+                        EVENT_WATCHDOG_KILLED,
+                        message=error_message,
+                        payload={
+                            "events_age_seconds": int(stale_seconds),
+                            "last_event_stage": last_event_stage,
+                        },
+                    )
             except Exception as e:
                 logger.warning(
-                    f"Stale-heartbeat fail-update for task {task_id} errored: {e}"
+                    f"Stale-events fail-update for task {task_id} errored: {e}"
                 )
                 return task_row
             return task_row
 
-        # Backstop: catch tasks that legitimately never registered a heartbeat
-        # (queued tasks, or processing tasks that died before the first 60s
-        # tick). Uses the overall task-type timeout (45 min for deep research).
+        # Backstop: catch tasks that never registered a job_event (queued
+        # tasks, or processing tasks that died before emitting anything).
+        # Uses the overall task-type timeout (45 min for deep research).
         base_dt = None
         if status_val == "processing":
             base_dt = (
-                heartbeat_dt
+                last_event_dt
                 or _parse_dt(task_row.get("started_at"))
                 or _parse_dt(task_row.get("created_at"))
             )
@@ -589,7 +561,7 @@ async def get_research_task(
         }
 
         try:
-            # Same race guard as the heartbeat branch above.
+            # Same race guard as the events-stale branch above.
             res = await asyncio.to_thread(
                 lambda: supabase.table("research_tasks")
                 .update(updates)
@@ -600,6 +572,16 @@ async def get_research_task(
             )
             if res.data:
                 task_row.update(updates)
+                record_event(
+                    JOB_RESEARCH,
+                    task_id,
+                    EVENT_WATCHDOG_KILLED,
+                    message=error_message,
+                    payload={
+                        "age_seconds": int(age_seconds),
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
         except Exception as e:
             logger.warning(
                 f"Timeout fail-update for task {task_id} errored: {e}"

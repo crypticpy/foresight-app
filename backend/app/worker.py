@@ -31,6 +31,14 @@ from dotenv import load_dotenv
 
 from app.brief_service import ExecutiveBriefService
 from app.deps import openai_client, supabase
+from app.job_events import (
+    EVENT_STATUS_CHANGED,
+    JOB_BRIEF,
+    JOB_DISCOVERY,
+    JOB_SCAN,
+    emit,
+    record_event,
+)
 from app.models.discovery_models import DiscoveryConfigRequest
 from app.models.research import ResearchTaskCreate
 from app.routers.discovery import execute_discovery_run_background
@@ -241,7 +249,6 @@ class ForesightWorker:
                     "started_at": now,
                     "result_summary": {
                         "stage": "claimed:research",
-                        "heartbeat_at": now,
                         "worker_id": self.worker_id,
                     },
                 }
@@ -302,6 +309,18 @@ class ForesightWorker:
         if not claimed:
             return False
 
+        record_event(
+            JOB_BRIEF,
+            brief_id,
+            EVENT_STATUS_CHANGED,
+            stage="claim",
+            message="pending -> generating",
+            payload={
+                "workstream_card_id": brief.get("workstream_card_id"),
+                "card_id": brief.get("card_id"),
+            },
+        )
+
         since_timestamp: Optional[str] = None
         sources_since_previous = brief.get("sources_since_previous") or {}
         if isinstance(sources_since_previous, dict):
@@ -321,15 +340,21 @@ class ForesightWorker:
 
         service = ExecutiveBriefService(supabase, openai_client)
         try:
-            await asyncio.wait_for(
-                service.generate_executive_brief(
-                    brief_id=brief_id,
-                    workstream_card_id=brief["workstream_card_id"],
-                    card_id=brief["card_id"],
-                    since_timestamp=since_timestamp,
-                ),
-                timeout=self.brief_timeout_seconds,
-            )
+            with emit(JOB_BRIEF, brief_id) as events:
+                events.stage(
+                    "start",
+                    message="executive brief generation starting",
+                )
+                await asyncio.wait_for(
+                    service.generate_executive_brief(
+                        brief_id=brief_id,
+                        workstream_card_id=brief["workstream_card_id"],
+                        card_id=brief["card_id"],
+                        since_timestamp=since_timestamp,
+                    ),
+                    timeout=self.brief_timeout_seconds,
+                )
+                events.summary(message="executive brief generation complete")
         except asyncio.TimeoutError:
             await service.update_brief_status(
                 brief_id,
@@ -367,7 +392,6 @@ class ForesightWorker:
 
         summary_report["stage"] = "running"
         summary_report["worker_id"] = self.worker_id
-        summary_report["heartbeat_at"] = datetime.now(timezone.utc).isoformat()
 
         claimed = (
             supabase.table("discovery_runs")
@@ -410,11 +434,25 @@ class ForesightWorker:
             },
         )
 
+        record_event(
+            JOB_DISCOVERY,
+            run_id,
+            EVENT_STATUS_CHANGED,
+            stage="claim",
+            message="queued -> running",
+            payload={"triggered_by_user": triggered_by_user},
+        )
+
         try:
-            await asyncio.wait_for(
-                execute_discovery_run_background(run_id, config, triggered_by_user),
-                timeout=self.discovery_timeout_seconds,
-            )
+            with emit(JOB_DISCOVERY, run_id) as events:
+                events.stage("start", message="discovery run starting")
+                await asyncio.wait_for(
+                    execute_discovery_run_background(
+                        run_id, config, triggered_by_user
+                    ),
+                    timeout=self.discovery_timeout_seconds,
+                )
+                events.summary(message="discovery run complete")
         except asyncio.TimeoutError:
             summary_report["stage"] = "failed"
             summary_report["timed_out"] = True
@@ -480,6 +518,18 @@ class ForesightWorker:
         if not claimed:
             return False
 
+        record_event(
+            JOB_SCAN,
+            scan_id,
+            EVENT_STATUS_CHANGED,
+            stage="claim",
+            message="queued -> running",
+            payload={
+                "workstream_id": scan.get("workstream_id"),
+                "user_id": scan.get("user_id"),
+            },
+        )
+
         config = scan.get("config") or {}
         # Parse config if it's a JSON string (Supabase behavior)
         if isinstance(config, str):
@@ -501,10 +551,13 @@ class ForesightWorker:
         )
 
         try:
-            await asyncio.wait_for(
-                execute_workstream_scan_background(scan_id, config),
-                timeout=self.workstream_scan_timeout_seconds,
-            )
+            with emit(JOB_SCAN, scan_id) as events:
+                events.stage("start", message="workstream scan starting")
+                await asyncio.wait_for(
+                    execute_workstream_scan_background(scan_id, config),
+                    timeout=self.workstream_scan_timeout_seconds,
+                )
+                events.summary(message="workstream scan complete")
         except asyncio.TimeoutError:
             supabase.table("workstream_scans").update(
                 {
