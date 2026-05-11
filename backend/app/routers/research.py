@@ -390,7 +390,7 @@ async def get_research_task(
                 return defaults.get(task_type, 45 * 60)
         return defaults.get(task_type, 45 * 60)
 
-    def _maybe_fail_stale_task(task_row: Dict[str, Any]) -> Dict[str, Any]:
+    async def _maybe_fail_stale_task(task_row: Dict[str, Any]) -> Dict[str, Any]:
         status_val = task_row.get("status")
         if status_val not in ("queued", "processing"):
             return task_row
@@ -402,6 +402,98 @@ async def get_research_task(
             else None
         )
 
+        now = datetime.now(timezone.utc)
+
+        # The heartbeat coroutine ticks every 60s while the task runs. If the
+        # last heartbeat is older than 3 missed beats, the asyncio task is
+        # gone (container restart, OOM, crash) and waiting for the overall
+        # 45-min timeout just leaves the UI spinning. Fail fast.
+        HEARTBEAT_STALE_SECONDS = 180
+        if (
+            status_val == "processing"
+            and heartbeat_dt is not None
+            and (now - heartbeat_dt).total_seconds() > HEARTBEAT_STALE_SECONDS
+        ):
+            heartbeat_age_seconds = (now - heartbeat_dt).total_seconds()
+            heartbeat_age_min = int(heartbeat_age_seconds // 60)
+
+            # Best-effort: surface when the task last burned tokens so the
+            # error makes clear this isn't an in-flight job still racking up
+            # cost. If the query fails we still fail the task — the heartbeat
+            # check alone is enough.
+            last_llm_at: Optional[str] = None
+            try:
+                llm = await asyncio.to_thread(
+                    lambda: supabase.table("llm_usage_events")
+                    .select("created_at")
+                    .eq("task_id", task_id)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if llm.data:
+                    last_llm_at = llm.data[0].get("created_at")
+            except Exception as e:
+                logger.warning(
+                    f"llm_usage_events lookup failed for task {task_id}: {e}"
+                )
+
+            msg_parts = [
+                "Research task stopped making progress "
+                f"(no heartbeat for ~{heartbeat_age_min} minutes)."
+            ]
+            if last_llm_at:
+                msg_parts.append(f"Last LLM activity at {last_llm_at}.")
+            else:
+                msg_parts.append("No LLM activity recorded for this task.")
+            msg_parts.append(
+                "The worker process likely crashed or was restarted. "
+                "Please retry."
+            )
+            error_message = " ".join(msg_parts)
+
+            new_summary = dict(summary) if isinstance(summary, dict) else {}
+            new_summary.update(
+                {
+                    "heartbeat_stale": True,
+                    "failed_at": now.isoformat(),
+                    "heartbeat_age_seconds": int(heartbeat_age_seconds),
+                    "last_llm_event_at": last_llm_at,
+                }
+            )
+
+            updates = {
+                "status": "failed",
+                "completed_at": now.isoformat(),
+                "error_message": error_message,
+                "result_summary": new_summary,
+            }
+
+            try:
+                # Guard the update on the status we *read* — if the worker
+                # finished between SELECT and UPDATE, this no-ops instead of
+                # overwriting a completed task as failed. Same idea as the
+                # worker's claim pattern, just in reverse.
+                res = await asyncio.to_thread(
+                    lambda: supabase.table("research_tasks")
+                    .update(updates)
+                    .eq("id", task_id)
+                    .eq("user_id", current_user["id"])
+                    .eq("status", status_val)
+                    .execute()
+                )
+                if res.data:
+                    task_row.update(updates)
+            except Exception as e:
+                logger.warning(
+                    f"Stale-heartbeat fail-update for task {task_id} errored: {e}"
+                )
+                return task_row
+            return task_row
+
+        # Backstop: catch tasks that legitimately never registered a heartbeat
+        # (queued tasks, or processing tasks that died before the first 60s
+        # tick). Uses the overall task-type timeout (45 min for deep research).
         base_dt = None
         if status_val == "processing":
             base_dt = (
@@ -418,7 +510,7 @@ async def get_research_task(
         timeout_seconds = _get_timeout_seconds(
             task_row.get("task_type", ""), status_val
         )
-        age_seconds = (datetime.now(timezone.utc) - base_dt).total_seconds()
+        age_seconds = (now - base_dt).total_seconds()
 
         if age_seconds <= timeout_seconds:
             return task_row
@@ -433,30 +525,39 @@ async def get_research_task(
         new_summary.update(
             {
                 "timed_out": True,
-                "timed_out_at": datetime.now(timezone.utc).isoformat(),
+                "timed_out_at": now.isoformat(),
                 "timeout_seconds": timeout_seconds,
             }
         )
 
         updates = {
             "status": "failed",
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": now.isoformat(),
             "error_message": error_message,
             "result_summary": new_summary,
         }
 
         try:
-            supabase.table("research_tasks").update(updates).eq("id", task_id).eq(
-                "user_id", current_user["id"]
-            ).execute()
-            task_row.update(updates)
-        except Exception:
-            # If we can't update, return original task row.
+            # Same race guard as the heartbeat branch above.
+            res = await asyncio.to_thread(
+                lambda: supabase.table("research_tasks")
+                .update(updates)
+                .eq("id", task_id)
+                .eq("user_id", current_user["id"])
+                .eq("status", status_val)
+                .execute()
+            )
+            if res.data:
+                task_row.update(updates)
+        except Exception as e:
+            logger.warning(
+                f"Timeout fail-update for task {task_id} errored: {e}"
+            )
             return task_row
 
         return task_row
 
-    task = _maybe_fail_stale_task(task)
+    task = await _maybe_fail_stale_task(task)
 
     return ResearchTask(**task)
 
