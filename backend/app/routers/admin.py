@@ -1657,11 +1657,16 @@ class EmbeddingBackfillRequest(BaseModel):
 
     Use after rotating ``OPENAI_EMBEDDING_MODEL`` so persisted vectors stop
     living in two different latent spaces.
+
+    Repeated invocations auto-advance per-table cursors so the corpus is
+    walked forward rather than re-embedding the same prefix. Send
+    ``restart=true`` to reset both cursors to 0.
     """
 
     target: Literal["cards", "sources", "both"] = "both"
     limit: int = 2000
     concurrency: int = 3
+    restart: bool = False
 
 
 # Last-completed run summary, surfaced by GET /admin/embeddings/backfill/status
@@ -1692,6 +1697,21 @@ async def trigger_embedding_backfill(
     capped_limit = max(1, min(body.limit, 10000))
     capped_concurrency = max(1, min(body.concurrency, 10))
 
+    # Auto-advance the per-table cursor from the previous run's `next_offset`
+    # so repeated button-presses walk the corpus instead of re-embedding the
+    # same prefix. `restart=true` resets both cursors back to 0.
+    offsets: dict[str, int] = {"cards": 0, "sources": 0}
+    if not body.restart:
+        prior_summary = _LAST_EMBEDDING_BACKFILL.get("summary") or {}
+        for table in ("cards", "sources"):
+            table_summary = prior_summary.get(table) or {}
+            next_offset = table_summary.get("next_offset")
+            if isinstance(next_offset, int) and next_offset > 0:
+                # If the prior run reported `done: true`, that table has been
+                # exhausted — wrap back to 0 so the next click starts a fresh
+                # pass rather than getting stuck past the tail.
+                offsets[table] = 0 if table_summary.get("done") else next_offset
+
     _LAST_EMBEDDING_BACKFILL.clear()
     _LAST_EMBEDDING_BACKFILL.update(
         {
@@ -1700,6 +1720,7 @@ async def trigger_embedding_backfill(
             "limit": capped_limit,
             "concurrency": capped_concurrency,
             "model": _resolve_model("text-embedding-ada-002"),
+            "offsets": offsets,
             "started_at": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -1711,6 +1732,7 @@ async def trigger_embedding_backfill(
                 target=body.target,
                 limit=capped_limit,
                 concurrency=capped_concurrency,
+                offsets=offsets,
             )
             _LAST_EMBEDDING_BACKFILL.update(
                 {
@@ -1738,6 +1760,7 @@ async def trigger_embedding_backfill(
         "target": body.target,
         "limit": capped_limit,
         "concurrency": capped_concurrency,
+        "offsets": offsets,
     }
 
 

@@ -63,27 +63,33 @@ export type AdminAction =
   | "lens-backfill"
   | "embeddings-backfill";
 
+interface AdminActionConfig {
+  endpoint: string;
+  body?: Record<string, unknown>;
+}
+
+// `Record<AdminAction, …>` forces TypeScript to fail compilation if a new
+// member is added to `AdminAction` without a handler here, instead of
+// silently indexing `undefined` at runtime.
+const ADMIN_ACTION_CONFIG: Record<AdminAction, AdminActionConfig> = {
+  scan: { endpoint: "/api/v1/admin/scan" },
+  velocity: { endpoint: "/api/v1/admin/velocity/calculate" },
+  quality: { endpoint: "/api/v1/admin/quality/recalculate-all" },
+  "lens-backfill": {
+    endpoint: "/api/v1/admin/classify/backfill",
+    body: { limit: 100, force: false },
+  },
+  "embeddings-backfill": {
+    endpoint: "/api/v1/admin/embeddings/backfill",
+    body: { target: "both", limit: 2000, concurrency: 3 },
+  },
+};
+
 export function triggerAdminAction(
   token: string,
   action: AdminAction,
 ): Promise<Record<string, unknown>> {
-  const endpoints = {
-    scan: { endpoint: "/api/v1/admin/scan", body: undefined },
-    velocity: { endpoint: "/api/v1/admin/velocity/calculate", body: undefined },
-    quality: {
-      endpoint: "/api/v1/admin/quality/recalculate-all",
-      body: undefined,
-    },
-    "lens-backfill": {
-      endpoint: "/api/v1/admin/classify/backfill",
-      body: { limit: 100, force: false },
-    },
-    "embeddings-backfill": {
-      endpoint: "/api/v1/admin/embeddings/backfill",
-      body: { target: "both", limit: 2000, concurrency: 3 },
-    },
-  } as const;
-  const config = endpoints[action];
+  const config = ADMIN_ACTION_CONFIG[action];
   return apiRequest<Record<string, unknown>>(config.endpoint, token, {
     method: "POST",
     body: config.body ? JSON.stringify(config.body) : undefined,

@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 # uses (`recovery_service._generate_embedding`, `research_service.embed_text`).
 _INPUT_CHAR_CAP = 8000
 
+# Hard caps the service applies regardless of caller. The admin router caps
+# the same values before calling in, but CLI / scripts / future callers
+# bypass that — so the floor for safety lives here too.
+_LIMIT_HARD_CAP = 10000
+_CONCURRENCY_HARD_CAP = 10
+
 
 def _build_card_text(card: Dict[str, Any]) -> str:
     """Compose the embedding input for a cards row.
@@ -75,17 +81,32 @@ async def _process_table(
     text_builder,
     limit: int,
     concurrency: int,
-) -> Dict[str, int]:
-    """Pull candidates from one table and re-embed them with bounded concurrency."""
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Pull a `[offset, offset+limit)` slice from one table and re-embed it.
+
+    Returns counters plus `next_offset` (where the next call should resume)
+    and `done` (True when this slice returned fewer than `limit` rows, i.e.
+    we've reached the tail of the corpus).
+    """
     query = (
         supabase.table(table)
         .select(select_cols)
         .not_.is_("embedding", "null")
-        .limit(limit)
+        .order("id")
+        .range(offset, offset + limit - 1)
     )
     resp = await asyncio.to_thread(query.execute)
     rows: List[Dict[str, Any]] = resp.data or []
-    counters = {"total": len(rows), "succeeded": 0, "skipped": 0, "failed": 0}
+    counters: Dict[str, Any] = {
+        "total": len(rows),
+        "succeeded": 0,
+        "skipped": 0,
+        "failed": 0,
+        "offset": offset,
+        "next_offset": offset + len(rows),
+        "done": len(rows) < limit,
+    }
     if not rows:
         return counters
 
@@ -125,17 +146,28 @@ async def run_embedding_backfill(
     target: Literal["cards", "sources", "both"] = "both",
     limit: int = 2000,
     concurrency: int = 3,
+    offsets: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """Re-embed up to `limit` rows from `cards` and/or `sources`.
 
-    Returns a dict with `model`, `elapsed_s`, and per-table counters.
+    `offsets` is a per-table starting cursor (e.g. ``{"cards": 2000}``):
+    pages are ordered by `id ASC`, so passing the previous run's
+    `next_offset` walks the corpus forward instead of re-embedding the
+    same prefix. Callers without a cursor (default) start at 0.
 
-    The corpus is read with a single `.limit(limit)` query per table — for
-    a one-shot model swap that's fine; if you need to walk a larger pool
-    than the cap, run the endpoint repeatedly (rows with non-null
-    embeddings come back in undefined order, so successive runs will
-    eventually cover the whole set).
+    `limit` and `concurrency` are clamped to internal hard caps so a
+    misconfigured CLI invocation can't issue an unbounded query or spawn
+    too many concurrent embedding calls.
+
+    Returns a dict with `model`, `elapsed_s`, and per-table counters
+    including `next_offset` / `done`.
     """
+    limit = max(1, min(int(limit), _LIMIT_HARD_CAP))
+    concurrency = max(1, min(int(concurrency), _CONCURRENCY_HARD_CAP))
+    offsets = offsets or {}
+    cards_offset = max(0, int(offsets.get("cards", 0)))
+    sources_offset = max(0, int(offsets.get("sources", 0)))
+
     model = get_embedding_deployment()
     started = time.time()
     result: Dict[str, Any] = {"model": model, "target": target}
@@ -148,6 +180,7 @@ async def run_embedding_backfill(
             text_builder=_build_card_text,
             limit=limit,
             concurrency=concurrency,
+            offset=cards_offset,
         )
 
     if target in ("sources", "both"):
@@ -158,6 +191,7 @@ async def run_embedding_backfill(
             text_builder=_build_source_text,
             limit=limit,
             concurrency=concurrency,
+            offset=sources_offset,
         )
 
     result["elapsed_s"] = round(time.time() - started, 2)
