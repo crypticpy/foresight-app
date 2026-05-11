@@ -91,7 +91,10 @@ const COA_COLORS = {
 const STATUS_CONFIG: Record<
   ExportStatus,
   {
-    icon: React.ComponentType<{ className?: string }>;
+    icon: React.ComponentType<{
+      className?: string;
+      style?: React.CSSProperties;
+    }>;
     title: string;
     description: string;
     color: string;
@@ -181,6 +184,7 @@ export const ExportProgressModal: React.FC<ExportProgressModalProps> = ({
 
   // Handle escape key - only allow close when completed or error
   useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.key === "Escape" &&
@@ -190,10 +194,8 @@ export const ExportProgressModal: React.FC<ExportProgressModalProps> = ({
       }
     };
 
-    if (isOpen) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose, status]);
 
   // Focus management

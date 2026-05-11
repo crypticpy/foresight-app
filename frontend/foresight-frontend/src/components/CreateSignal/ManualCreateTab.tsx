@@ -25,7 +25,7 @@
 import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, CheckCircle, AlertTriangle } from "lucide-react";
-import { supabase } from "../../App";
+import { getAuthToken } from "../../lib/auth";
 import { cn } from "../../lib/utils";
 import { type Card } from "../../lib/discovery-api";
 import { SeedUrlInput } from "./SeedUrlInput";
@@ -126,10 +126,8 @@ export function ManualCreateTab({ onCreated }: ManualCreateTabProps) {
     setError(null);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const token = await getAuthToken();
+      if (!token) {
         setError("Please sign in to create signals.");
         return;
       }
@@ -150,7 +148,7 @@ export function ManualCreateTab({ onCreated }: ManualCreateTabProps) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(payload),
         },

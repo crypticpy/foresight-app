@@ -17,6 +17,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { CardDetail } from "../CardDetail";
+import { ToastProvider } from "../../ui/Toast";
 import type { Card, ResearchTask, Source, TimelineEvent, Note } from "../types";
 
 // ============================================================================
@@ -484,11 +485,13 @@ global.fetch = mockFetch;
  */
 const renderCardDetail = (slug = "test-card-slug") => {
   return render(
-    <MemoryRouter initialEntries={[`/signals/${slug}`]}>
-      <Routes>
-        <Route path="/signals/:slug" element={<CardDetail />} />
-      </Routes>
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={[`/signals/${slug}`]}>
+        <Routes>
+          <Route path="/signals/:slug" element={<CardDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>,
   );
 };
 
@@ -926,14 +929,16 @@ describe("CardDetail", () => {
   describe("Custom ClassName", () => {
     it("applies custom className to container", async () => {
       render(
-        <MemoryRouter initialEntries={["/signals/test-card-slug"]}>
-          <Routes>
-            <Route
-              path="/signals/:slug"
-              element={<CardDetail className="custom-test-class" />}
-            />
-          </Routes>
-        </MemoryRouter>,
+        <ToastProvider>
+          <MemoryRouter initialEntries={["/signals/test-card-slug"]}>
+            <Routes>
+              <Route
+                path="/signals/:slug"
+                element={<CardDetail className="custom-test-class" />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>,
       );
 
       await waitFor(

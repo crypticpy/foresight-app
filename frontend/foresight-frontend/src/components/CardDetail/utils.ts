@@ -62,7 +62,7 @@ export const metricDefinitions: Record<string, MetricDefinition> = {
 export const parseStageNumber = (stageId: string): number | null => {
   if (!stageId) return null;
   const match = stageId.match(/^(\d+)/);
-  return match ? parseInt(match[1], 10) : null;
+  return match?.[1] ? parseInt(match[1], 10) : null;
 };
 
 /**
@@ -115,38 +115,4 @@ export const getScoreColorClasses = (score: number): ScoreColorClasses => {
   };
 };
 
-/**
- * Format a date string as relative time for display
- *
- * Converts an ISO date string to a human-readable relative time format.
- * Shows progressively less precise times as the date gets older:
- * - "Just now" for < 1 minute
- * - "Xm ago" for < 1 hour
- * - "Xh ago" for < 24 hours
- * - "Xd ago" for < 7 days
- * - Full date for >= 7 days
- *
- * @param dateStr - ISO date string or undefined
- * @returns Formatted relative time string, or "Never" if dateStr is undefined
- *
- * @example
- * formatRelativeTime("2024-01-15T10:30:00Z") // might return "2d ago"
- * formatRelativeTime(undefined) // returns "Never"
- */
-export const formatRelativeTime = (dateStr: string | undefined): string => {
-  if (!dateStr) return "Never";
-
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-  if (diffMinutes < 1) return "Just now";
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString();
-};
+export { formatRelativeTime } from "@/lib/utils";

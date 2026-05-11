@@ -15,7 +15,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Cpu, Building2, User, MapPin, Lightbulb, Loader2 } from "lucide-react";
 import { cn } from "../../../../lib/utils";
-import { supabase } from "../../../../App";
+import { getAuthToken } from "../../../../lib/auth";
 import { API_BASE_URL } from "../../utils";
 
 // =============================================================================
@@ -166,10 +166,8 @@ export const KeyEntitiesPanel: React.FC<KeyEntitiesPanelProps> = ({
   const fetchEntities = useCallback(async () => {
     try {
       setError(null);
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) {
+      const token = await getAuthToken();
+      if (!token) {
         setError("Not authenticated");
         setLoading(false);
         return;
@@ -180,7 +178,7 @@ export const KeyEntitiesPanel: React.FC<KeyEntitiesPanelProps> = ({
         {
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
         },
       );

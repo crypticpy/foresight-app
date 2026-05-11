@@ -42,7 +42,7 @@ export interface ExportDropdownProps {
   /** The slug of the card (used for filename) */
   cardSlug: string;
   /** Function to get the current auth token */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
   /** Callback when an export error occurs */
   onError?: (error: string) => void;
   /** Optional callback when export starts */
@@ -122,6 +122,7 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
    * Handle clicks outside the dropdown to close it
    */
   useEffect(() => {
+    if (!isOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
       if (
         dropdownRef.current &&
@@ -131,30 +132,27 @@ export const ExportDropdown: React.FC<ExportDropdownProps> = ({
       }
     };
 
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => {
-        document.removeEventListener("mousedown", handleClickOutside);
-      };
-    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, [isOpen]);
 
   /**
    * Handle keyboard navigation and escape to close
    */
   useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && isOpen) {
+      if (event.key === "Escape") {
         setIsOpen(false);
       }
     };
 
-    if (isOpen) {
-      document.addEventListener("keydown", handleKeyDown);
-      return () => {
-        document.removeEventListener("keydown", handleKeyDown);
-      };
-    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isOpen]);
 
   /**

@@ -37,6 +37,10 @@ const VIEW_W = 100;
 const VIEW_H = 32;
 const PAD_Y = 3;
 
+// SVG attributes can't take Tailwind classes, so the brand-blue token is
+// referenced by its hex value directly.
+const DEFAULT_STROKE = "#44499C"; // brand-blue
+
 interface ChartGeometry {
   linePath: string;
   areaPath: string;
@@ -116,7 +120,7 @@ function computeGeometry(data: SparklinePoint[]): ChartGeometry {
 export function Sparkline({
   data,
   className,
-  stroke = "#44499C",
+  stroke = DEFAULT_STROKE,
   fill,
   strokeWidth = 2,
   ariaLabel,

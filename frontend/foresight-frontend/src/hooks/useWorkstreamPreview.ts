@@ -7,28 +7,32 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 import { fetchFilterPreview } from "../types/workstream";
 import type { FilterPreviewResult, FormData } from "../types/workstream";
 
 export function useWorkstreamPreview(formData: FormData, hasFilters: boolean) {
   const [preview, setPreview] = useState<FilterPreviewResult | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchPreview = useCallback(async () => {
     if (!hasFilters) {
       setPreview(null);
+      setPreviewError(null);
       return;
     }
     setPreviewLoading(true);
+    setPreviewError(null);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      const token = await getAuthToken();
+      if (!token) {
+        setPreviewError("Not signed in");
+        return;
+      }
 
-      const result = await fetchFilterPreview(session.access_token, {
+      const result = await fetchFilterPreview(token, {
         pillar_ids: formData.pillar_ids,
         goal_ids: formData.goal_ids,
         stage_ids: formData.stage_ids,
@@ -37,7 +41,9 @@ export function useWorkstreamPreview(formData: FormData, hasFilters: boolean) {
       });
       setPreview(result);
     } catch (error) {
-      console.error("Failed to fetch filter preview:", error);
+      setPreviewError(
+        error instanceof Error ? error.message : "Failed to fetch preview",
+      );
       setPreview(null);
     } finally {
       setPreviewLoading(false);
@@ -71,5 +77,5 @@ export function useWorkstreamPreview(formData: FormData, hasFilters: boolean) {
     void fetchPreview();
   }, [fetchPreview]);
 
-  return { preview, previewLoading, triggerPreviewFetch };
+  return { preview, previewLoading, previewError, triggerPreviewFetch };
 }

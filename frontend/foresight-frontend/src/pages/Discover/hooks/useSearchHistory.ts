@@ -4,9 +4,9 @@
  * Manages search history state and operations for the Discover page.
  */
 
-import { useState, useCallback, useEffect } from 'react';
-import { supabase } from '../../../App';
-import { useDebouncedCallback } from '../../../hooks/useDebounce';
+import { useState, useCallback, useEffect } from "react";
+import { getAuthToken } from "../../../lib/auth";
+import { useDebouncedCallback } from "../../../hooks/useDebounce";
 import {
   getSearchHistory,
   recordSearchHistory,
@@ -15,7 +15,7 @@ import {
   type SearchHistoryEntry,
   type SearchHistoryCreate,
   type SavedSearchQueryConfig,
-} from '../../../lib/discovery-api';
+} from "../../../lib/discovery-api";
 
 export interface UseSearchHistoryReturn {
   /** Search history entries */
@@ -31,7 +31,10 @@ export interface UseSearchHistoryReturn {
   /** Load search history from server */
   loadSearchHistory: () => Promise<void>;
   /** Record a search to history (debounced) */
-  recordSearch: (queryConfig: SavedSearchQueryConfig, resultCount: number) => void;
+  recordSearch: (
+    queryConfig: SavedSearchQueryConfig,
+    resultCount: number,
+  ) => void;
   /** Delete a single history entry */
   deleteHistoryEntry: (entryId: string, e: React.MouseEvent) => Promise<void>;
   /** Clear all history */
@@ -44,11 +47,15 @@ export interface UseSearchHistoryReturn {
  * @param userId - Current user ID (or undefined if not authenticated)
  * @returns Search history state and handlers
  */
-export function useSearchHistory(userId: string | undefined): UseSearchHistoryReturn {
+export function useSearchHistory(
+  userId: string | undefined,
+): UseSearchHistoryReturn {
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
-  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(
+    null,
+  );
 
   const toggleHistoryExpanded = useCallback(() => {
     setIsHistoryExpanded((prev) => !prev);
@@ -62,8 +69,7 @@ export function useSearchHistory(userId: string | undefined): UseSearchHistoryRe
 
     setHistoryLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
+      const token = await getAuthToken();
 
       if (token) {
         const response = await getSearchHistory(token, 20);
@@ -85,12 +91,12 @@ export function useSearchHistory(userId: string | undefined): UseSearchHistoryRe
 
       // Skip recording if no search criteria are set (default empty state)
       const hasQuery = queryConfig.query && queryConfig.query.trim().length > 0;
-      const hasFilters = queryConfig.filters && Object.keys(queryConfig.filters).length > 0;
+      const hasFilters =
+        queryConfig.filters && Object.keys(queryConfig.filters).length > 0;
       if (!hasQuery && !hasFilters) return;
 
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
+        const token = await getAuthToken();
 
         if (token) {
           const entry: SearchHistoryCreate = {
@@ -102,7 +108,10 @@ export function useSearchHistory(userId: string | undefined): UseSearchHistoryRe
 
           // Update local history state - prepend new entry and limit to 50
           setSearchHistory((prev) => {
-            const updated = [newEntry, ...prev.filter((h) => h.id !== newEntry.id)];
+            const updated = [
+              newEntry,
+              ...prev.filter((h) => h.id !== newEntry.id),
+            ];
             return updated.slice(0, 50);
           });
         }
@@ -110,44 +119,48 @@ export function useSearchHistory(userId: string | undefined): UseSearchHistoryRe
         // Silently fail - history recording is not critical
       }
     },
-    [userId]
+    [userId],
   );
 
   /**
    * Debounced version of recordSearchToHistory (2000ms delay)
    * Allows users time to settle on their final search before recording
    */
-  const { debouncedCallback: recordSearch } = useDebouncedCallback(recordSearchToHistory, 2000);
+  const { debouncedCallback: recordSearch } = useDebouncedCallback(
+    recordSearchToHistory,
+    2000,
+  );
 
   /**
    * Delete a single history entry
    */
-  const deleteHistoryEntry = useCallback(async (entryId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const deleteHistoryEntry = useCallback(
+    async (entryId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
 
-    setDeletingHistoryId(entryId);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
+      setDeletingHistoryId(entryId);
+      try {
+        const token = await getAuthToken();
 
-      if (token) {
-        await deleteSearchHistoryEntry(token, entryId);
-        setSearchHistory((prev) => prev.filter((h) => h.id !== entryId));
+        if (token) {
+          await deleteSearchHistoryEntry(token, entryId);
+          setSearchHistory((prev) => prev.filter((h) => h.id !== entryId));
+        }
+      } catch {
+        // Silently fail
+      } finally {
+        setDeletingHistoryId(null);
       }
-    } catch {
-      // Silently fail
-    } finally {
-      setDeletingHistoryId(null);
-    }
-  }, []);
+    },
+    [],
+  );
 
   /**
    * Clear all history
    */
   const clearHistory = useCallback(async () => {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
+      const token = await getAuthToken();
 
       if (token) {
         await clearSearchHistory(token);

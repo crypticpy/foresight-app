@@ -16,6 +16,43 @@ export type CardOrigin =
   | "workstream_scan"
   | "manual";
 
+/** Lens classification: kind of strategic signal. */
+export type SignalType = "trend" | "driver" | "signal";
+
+/** Strategic anchor scores (CSP framework). */
+export interface AnchorScores {
+  equity: number;
+  affordability: number;
+  innovation: number;
+  sustainability_resiliency: number;
+  proactive_prevention: number;
+  community_trust: number;
+}
+
+/** Budget impact assessment from the lens classifier. */
+export interface BudgetAssessment {
+  relevance: number;
+  dimensions: string[];
+  magnitude_band: string | null;
+  cycle: string | null;
+  notes: string | null;
+}
+
+/** Climate / sustainability assessment from the lens classifier. */
+export interface ClimateAssessment {
+  relevance: number;
+  drivers: string[];
+  horizon: string | null;
+  notes: string | null;
+}
+
+/** Per-user manual classifier overrides applied on top of LLM output. */
+export interface UserMetadata {
+  overrides: Record<string, unknown>;
+  added: Record<string, string[]>;
+  removed: Record<string, string[]>;
+}
+
 export interface CardArtifacts {
   has_deep_research: boolean;
   has_brief: boolean;
@@ -69,11 +106,19 @@ export interface FullCard extends BaseCard {
   is_exploratory?: boolean;
   source_count?: number;
   discovery_metadata?: DiscoveryMetadata;
-  // Lens metadata — present after lens-classification cascade has run.
+  // Lens metadata — populated by the classifier cascade. Older cards may
+  // have null/empty values until backfilled.
+  signal_type?: SignalType | null;
+  secondary_pillars?: string[];
+  anchor_scores?: AnchorScores | null;
   csp_goal_ids?: string[] | null;
-  issue_tags?: string[] | null;
-  budget_assessment?: { relevance: number } | Record<string, unknown> | null;
-  climate_assessment?: { relevance: number } | Record<string, unknown> | null;
+  csp_measure_ids?: string[];
+  issue_tags?: string[];
+  budget_assessment?: BudgetAssessment | null;
+  climate_assessment?: ClimateAssessment | null;
+  user_metadata?: UserMetadata | null;
+  classifier_version?: string | null;
+  classified_at?: string | null;
 }
 
 /**

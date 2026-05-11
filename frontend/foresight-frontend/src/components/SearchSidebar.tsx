@@ -25,7 +25,7 @@ import {
   SavedSearch,
   SavedSearchQueryConfig,
 } from "../lib/discovery-api";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 
 // ============================================================================
 // Types
@@ -58,14 +58,6 @@ export function SearchSidebar({
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Get auth token helper
-  const getAuthToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || null;
-  }, []);
-
   // Load saved searches
   const loadSavedSearches = useCallback(async () => {
     setIsLoading(true);
@@ -87,7 +79,7 @@ export function SearchSidebar({
     } finally {
       setIsLoading(false);
     }
-  }, [getAuthToken]);
+  }, []);
 
   // Load on mount and when refreshKey changes
   useEffect(() => {

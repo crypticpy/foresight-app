@@ -5,7 +5,6 @@
  * Matches the existing app loading state styling with brand colors and dark mode support.
  */
 
-import React from 'react';
 import { cn } from '../lib/utils';
 
 export interface PageLoadingSpinnerProps {

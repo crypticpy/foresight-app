@@ -11,7 +11,8 @@
  */
 
 import { useState, useEffect, useCallback, KeyboardEvent } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { useAuthContext } from "./useAuthContext";
 import { useWorkstreamPreview } from "./useWorkstreamPreview";
 import { useKeywordSuggestions } from "./useKeywordSuggestions";
@@ -83,14 +84,6 @@ export function useWorkstreamForm({
   // ============================================================================
   // Sub-hooks
   // ============================================================================
-
-  // Helper to get auth token
-  const getAuthToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
 
   // Preview sub-hook
   const { preview, previewLoading, triggerPreviewFetch } = useWorkstreamPreview(
@@ -339,15 +332,13 @@ export function useWorkstreamForm({
         onSuccess();
       } else {
         // CREATE mode: use backend API so auto-populate and auto-scan queueing runs
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const token = await getAuthToken();
 
         const response = await fetch(`${API_BASE_URL}/api/v1/me/workstreams`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(payload),
         });

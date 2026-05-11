@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 import {
   acceptInvite,
   previewInvite,
@@ -26,8 +26,7 @@ export default function InviteAccept() {
 
   const accept = async () => {
     if (!token) return;
-    const { data } = await supabase.auth.getSession();
-    const authToken = data.session?.access_token;
+    const authToken = await getAuthToken();
     if (!authToken) {
       navigate(`/login?redirect=/invite/${token}`);
       return;

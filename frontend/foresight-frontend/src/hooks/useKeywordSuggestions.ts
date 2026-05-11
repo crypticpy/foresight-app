@@ -15,10 +15,11 @@ export function useKeywordSuggestions(
     description: string;
     keywords: string[];
   },
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
 ) {
   const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([]);
   const [isSuggestingKeywords, setIsSuggestingKeywords] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
 
   const handleSuggestKeywords = useCallback(
     async (topicOverride?: string) => {
@@ -29,16 +30,22 @@ export function useKeywordSuggestions(
 
       setIsSuggestingKeywords(true);
       setSuggestedKeywords([]);
+      setSuggestionError(null);
       try {
         const token = await getAuthToken();
-        if (!token) return;
+        if (!token) {
+          setSuggestionError("Not signed in");
+          return;
+        }
         const result = await suggestKeywords(topic, token);
         const newSuggestions = result.suggestions.filter(
           (kw) => !ctx.keywords.includes(kw),
         );
         setSuggestedKeywords(newSuggestions);
       } catch (error) {
-        console.error("Failed to suggest keywords:", error);
+        setSuggestionError(
+          error instanceof Error ? error.message : "Failed to suggest keywords",
+        );
       } finally {
         setIsSuggestingKeywords(false);
       }
@@ -53,6 +60,7 @@ export function useKeywordSuggestions(
   return {
     suggestedKeywords,
     isSuggestingKeywords,
+    suggestionError,
     handleSuggestKeywords,
     removeSuggestion,
     setSuggestedKeywords,

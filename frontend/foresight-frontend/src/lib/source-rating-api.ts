@@ -65,16 +65,16 @@ export interface RateSourcePayload {
  * If the user has already rated this source, the existing rating is updated.
  * Otherwise a new rating is created.
  *
+ * @param token - Bearer token for authentication
  * @param sourceId - The ID of the source to rate
  * @param data - The rating data to submit
- * @param token - Bearer token for authentication
  * @returns The created or updated rating
  * @throws Error if the API request fails
  */
 export async function rateSource(
+  token: string,
   sourceId: string,
   data: RateSourcePayload,
-  token: string,
 ): Promise<SourceRating> {
   const res = await fetch(`${API_BASE_URL}/api/v1/sources/${sourceId}/rate`, {
     method: "POST",
@@ -97,14 +97,14 @@ export async function rateSource(
  * Returns the average quality rating, total count, relevance distribution,
  * and the current user's own rating if they have submitted one.
  *
- * @param sourceId - The ID of the source to get ratings for
  * @param token - Bearer token for authentication
+ * @param sourceId - The ID of the source to get ratings for
  * @returns Aggregate rating data including the current user's rating
  * @throws Error if the API request fails
  */
 export async function getSourceRatings(
-  sourceId: string,
   token: string,
+  sourceId: string,
 ): Promise<SourceRatingAggregate> {
   const res = await fetch(
     `${API_BASE_URL}/api/v1/sources/${sourceId}/ratings`,
@@ -124,13 +124,13 @@ export async function getSourceRatings(
 /**
  * Delete the current user's rating for a source.
  *
- * @param sourceId - The ID of the source whose rating to delete
  * @param token - Bearer token for authentication
+ * @param sourceId - The ID of the source whose rating to delete
  * @throws Error if the API request fails
  */
 export async function deleteSourceRating(
-  sourceId: string,
   token: string,
+  sourceId: string,
 ): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/v1/sources/${sourceId}/rate`, {
     method: "DELETE",

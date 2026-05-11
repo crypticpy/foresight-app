@@ -172,8 +172,8 @@ export const DeepResearchPanel: React.FC<DeepResearchPanelProps> = ({
     });
   }, []);
 
-  // Don't render if no deep research reports
-  if (deepResearchTasks.length === 0) {
+  // Don't render if no deep research reports — also narrows latestReport.
+  if (!latestReport) {
     return (
       <div
         className={cn(
@@ -283,7 +283,7 @@ export const DeepResearchPanel: React.FC<DeepResearchPanelProps> = ({
           <div className="mt-4 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="max-h-[70vh] overflow-y-auto p-4 sm:p-6 bg-gray-50 dark:bg-dark-surface">
               <MarkdownReport
-                content={latestReport.result_summary!.report_preview!}
+                content={latestReport.result_summary?.report_preview ?? ""}
               />
             </div>
           </div>

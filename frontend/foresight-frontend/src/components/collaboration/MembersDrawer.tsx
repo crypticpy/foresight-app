@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { X, Trash2 } from "lucide-react";
-import { supabase } from "../../App";
+import { getAuthToken } from "../../lib/auth";
 import {
   listMembers,
   removeMember,
@@ -28,8 +28,7 @@ export function MembersDrawer({
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
     try {
       setMembers(await listMembers(token, workstreamId));
@@ -44,8 +43,7 @@ export function MembersDrawer({
   }, [load, open]);
 
   const changeRole = async (member: WorkstreamMember, role: string) => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
     try {
       setError(null);
@@ -64,8 +62,7 @@ export function MembersDrawer({
   };
 
   const remove = async (member: WorkstreamMember) => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
     try {
       setError(null);

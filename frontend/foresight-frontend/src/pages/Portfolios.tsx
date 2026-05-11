@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Briefcase, Loader2, Trash2 } from "lucide-react";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 import { cn } from "../lib/utils";
 import {
   deletePortfolio,
@@ -24,18 +24,11 @@ export default function Portfolios() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const getToken = useCallback(async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Authentication required");
       const list = await listPortfolios(token);
       setPortfolios(list);
@@ -46,7 +39,7 @@ export default function Portfolios() {
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -54,7 +47,7 @@ export default function Portfolios() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this portfolio?")) return;
-    const token = await getToken();
+    const token = await getAuthToken();
     if (!token) return;
     setDeletingId(id);
     try {

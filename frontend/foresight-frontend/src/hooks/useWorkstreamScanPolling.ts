@@ -103,14 +103,18 @@ export function useWorkstreamScanPolling({
               await onCompleteRef.current?.(current);
             }
           } catch (err) {
-            console.error("Error polling scan status:", err);
+            onErrorRef.current?.(
+              err instanceof Error ? err.message : "Scan polling failed",
+            );
           }
         };
 
         pollRef.current = setInterval(poll, intervalMs);
         poll(); // Immediately poll once
       } catch (err) {
-        console.error("Error fetching initial scan status:", err);
+        onErrorRef.current?.(
+          err instanceof Error ? err.message : "Could not fetch scan status",
+        );
       }
     },
     [workstreamId, getAuthToken, maxAttempts, intervalMs, stopPolling],

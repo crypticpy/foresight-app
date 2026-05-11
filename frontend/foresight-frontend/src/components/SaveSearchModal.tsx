@@ -12,7 +12,7 @@ import {
   createSavedSearch,
   SavedSearchQueryConfig,
 } from "../lib/discovery-api";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 
 // ============================================================================
 // Types
@@ -70,14 +70,6 @@ export function SaveSearchModal({
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
-
-  // Get auth token helper
-  const getAuthToken = async (): Promise<string | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || null;
-  };
 
   // Build a description of what's being saved
   const getSearchDescription = (): string => {

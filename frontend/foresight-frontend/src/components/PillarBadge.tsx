@@ -7,7 +7,6 @@
  * - Tooltip showing full pillar name, description, and related goals
  */
 
-import React from 'react';
 import {
   Heart,
   Briefcase,

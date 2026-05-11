@@ -13,7 +13,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { fetchPendingCount } from "../lib/discovery-api";
 import { fetchLensOverview } from "../lib/dashboard-api";
 import { logger } from "../lib/logger";
@@ -217,7 +218,11 @@ export function useDashboardData(
         low: safeCount(qualityLowResult),
       });
     } catch (error) {
+      // Rethrow so refresh()'s Promise.allSettled correctly reports `ok: false`.
+      // Per-result errors logged above are intentional diagnostic-only since
+      // those branches degrade gracefully to empty data.
       console.error("Error loading dashboard data:", error);
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -225,11 +230,9 @@ export function useDashboardData(
 
   const loadPendingCount = useCallback(async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        const count = await fetchPendingCount(session.access_token);
+      const token = await getAuthToken();
+      if (token) {
+        const count = await fetchPendingCount(token);
         setPendingReviewCount(count);
       }
     } catch (err) {
@@ -240,11 +243,9 @@ export function useDashboardData(
 
   const loadLensOverview = useCallback(async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const overview = await fetchLensOverview(session.access_token, 14);
+      const token = await getAuthToken();
+      if (!token) return;
+      const overview = await fetchLensOverview(token, 14);
       setLensOverview(overview);
     } catch (err) {
       // Lens overview is supplementary — render the dashboard regardless.
@@ -253,7 +254,10 @@ export function useDashboardData(
   }, []);
 
   useEffect(() => {
-    void loadDashboardData();
+    // Loaders may reject (loadDashboardData rethrows for refresh()'s allSettled).
+    // On mount we have no caller to report to, so swallow rejections here —
+    // the per-loader catch blocks have already logged + degraded the UI.
+    loadDashboardData().catch(() => {});
     void loadPendingCount();
     void loadLensOverview();
   }, [loadDashboardData, loadPendingCount, loadLensOverview]);

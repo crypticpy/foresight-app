@@ -15,7 +15,7 @@ import {
   type CardSnapshot,
 } from "../../../../lib/discovery-api";
 import { MarkdownReport } from "../../MarkdownReport";
-import { supabase } from "../../../../App";
+import { getAuthToken } from "../../../../lib/auth";
 
 interface DescriptionHistoryProps {
   cardId: string;
@@ -23,6 +23,11 @@ interface DescriptionHistoryProps {
   onClose: () => void;
   onRestore?: () => void;
 }
+
+const MANUAL_EDIT_TRIGGER: { label: string; color: string } = {
+  label: "Manual Edit",
+  color: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
+};
 
 const TRIGGER_LABELS: Record<string, { label: string; color: string }> = {
   deep_research: {
@@ -39,10 +44,7 @@ const TRIGGER_LABELS: Record<string, { label: string; color: string }> = {
     color:
       "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
   },
-  manual_edit: {
-    label: "Manual Edit",
-    color: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
-  },
+  manual_edit: MANUAL_EDIT_TRIGGER,
   restore: {
     label: "Restored",
     color:
@@ -53,6 +55,9 @@ const TRIGGER_LABELS: Record<string, { label: string; color: string }> = {
     color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
   },
 };
+
+const getTriggerInfo = (trigger: string) =>
+  TRIGGER_LABELS[trigger] ?? MANUAL_EDIT_TRIGGER;
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -85,17 +90,10 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
 
-  const getToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || "";
-  }, []);
-
   const loadSnapshots = useCallback(async () => {
     setLoading(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         const result = await fetchCardSnapshots(token, cardId, "description");
         setSnapshots(result.snapshots);
@@ -105,7 +103,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [cardId, getToken]);
+  }, [cardId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -116,7 +114,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
   const handlePreview = async (snapshotId: string) => {
     setPreviewLoading(true);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         const snapshot = await fetchCardSnapshot(token, cardId, snapshotId);
         setPreviewSnapshot(snapshot);
@@ -138,7 +136,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
     }
     setRestoring(snapshotId);
     try {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (token) {
         await restoreCardSnapshot(token, cardId, snapshotId);
         onRestore?.();
@@ -227,8 +225,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
             </div>
           ) : (
             snapshots.map((snap, index) => {
-              const triggerInfo =
-                TRIGGER_LABELS[snap.trigger] ?? TRIGGER_LABELS.manual_edit!;
+              const triggerInfo = getTriggerInfo(snap.trigger);
               return (
                 <div
                   key={snap.id}
@@ -242,9 +239,9 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${triggerInfo!.color}`}
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${triggerInfo.color}`}
                         >
-                          {triggerInfo!.label}
+                          {triggerInfo.label}
                         </span>
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {formatWordCount(snap.content_length)}
@@ -301,15 +298,9 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
                   Version Preview
                 </h4>
                 <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                    (TRIGGER_LABELS[previewSnapshot.trigger] ??
-                      TRIGGER_LABELS.manual_edit!)!.color
-                  }`}
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getTriggerInfo(previewSnapshot.trigger).color}`}
                 >
-                  {
-                    (TRIGGER_LABELS[previewSnapshot.trigger] ??
-                      TRIGGER_LABELS.manual_edit!)!.label
-                  }
+                  {getTriggerInfo(previewSnapshot.trigger).label}
                 </span>
                 <span className="text-xs text-gray-500">
                   {formatDate(previewSnapshot.created_at)}

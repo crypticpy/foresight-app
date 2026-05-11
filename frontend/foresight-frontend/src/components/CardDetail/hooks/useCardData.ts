@@ -27,7 +27,8 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "../../../App";
+import { supabase } from "../../../lib/supabase";
+import { getAuthToken } from "../../../lib/auth";
 import {
   getScoreHistory,
   getStageHistory,
@@ -86,7 +87,7 @@ export interface UseCardDataReturn {
   /** Refetch related cards data */
   refetchRelatedCards: () => Promise<void>;
   /** Get authentication token for API requests */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 /**
@@ -105,10 +106,20 @@ export interface UseCardDataReturn {
  * @param user - The authenticated user object, or null if not authenticated
  * @returns Object containing all card data and management functions
  */
+export interface UseCardDataOptions {
+  /**
+   * When true, drop the `status=active` filter so review-queue / draft cards
+   * are visible. Defaults to false (active-only).
+   */
+  reviewMode?: boolean;
+}
+
 export function useCardData(
   slug: string | undefined,
   user: User | null,
+  options: UseCardDataOptions = {},
 ): UseCardDataReturn {
+  const { reviewMode = false } = options;
   // Core card data state
   const [card, setCard] = useState<Card | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
@@ -135,28 +146,15 @@ export function useCardData(
   );
 
   /**
-   * Get the current authentication token for API requests
-   */
-  const getAuthToken = useCallback(async (): Promise<string | undefined> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
-
-  /**
    * Load card detail and related data from Supabase
    */
   const loadCardDetail = useCallback(async () => {
     if (!slug) return;
 
     try {
-      const { data: cardData } = await supabase
-        .from("cards")
-        .select("*")
-        .eq("slug", slug)
-        .eq("status", "active")
-        .single();
+      let query = supabase.from("cards").select("*").eq("slug", slug);
+      if (!reviewMode) query = query.eq("status", "active");
+      const { data: cardData } = await query.single();
 
       if (cardData) {
         setCard(cardData);
@@ -197,7 +195,7 @@ export function useCardData(
     } finally {
       setLoading(false);
     }
-  }, [slug, user?.id]);
+  }, [slug, user?.id, reviewMode]);
 
   /**
    * Load score history from Discovery API
@@ -221,7 +219,7 @@ export function useCardData(
     } finally {
       setScoreHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Load stage history from Discovery API
@@ -240,7 +238,7 @@ export function useCardData(
     } finally {
       setStageHistoryLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Load related cards from Discovery API
@@ -266,7 +264,7 @@ export function useCardData(
     } finally {
       setRelatedCardsLoading(false);
     }
-  }, [card?.id, getAuthToken]);
+  }, [card?.id]);
 
   /**
    * Check if the current user is following this card

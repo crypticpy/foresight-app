@@ -12,7 +12,7 @@
  * - Keyboard navigation (Escape to close)
  */
 
-import React, { useState, useEffect, useCallback, memo } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import {
   X,
   Loader2,
@@ -23,20 +23,23 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/utils";
-import { supabase } from "../../App";
+import { supabase } from "../../lib/supabase";
 import { addCardToWorkstream } from "../../lib/workstream-api";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-interface Workstream {
-  id: string;
-  name: string;
+import type { Workstream as CanonicalWorkstream } from "../../types/workstream";
+
+// API may return description as null; the canonical Workstream uses
+// `description: string`. Override that one field here.
+type Workstream = Pick<
+  CanonicalWorkstream,
+  "id" | "name" | "is_active" | "created_at"
+> & {
   description: string | null;
-  is_active: boolean;
-  created_at: string;
-}
+};
 
 export interface AddToWorkstreamModalProps {
   /** Whether the modal is open */
@@ -50,7 +53,7 @@ export interface AddToWorkstreamModalProps {
   /** Callback when card is successfully added */
   onSuccess?: (workstreamName: string) => void;
   /** Function to get auth token */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
 }
 
 // =============================================================================
@@ -131,8 +134,8 @@ export const AddToWorkstreamModal = memo(function AddToWorkstreamModal({
           throw new Error("Authentication required");
         }
 
-        // Add to screening column by default
-        await addCardToWorkstream(token, workstream.id, cardId, "screening");
+        // Add to inbox column by default
+        await addCardToWorkstream(token, workstream.id, cardId, "inbox");
 
         onSuccess?.(workstream.name);
         onClose();

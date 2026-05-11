@@ -251,7 +251,8 @@ export function KanbanBoard({
       activeMobileColumnIndex <= 0
         ? columnsWithCards.length - 1
         : activeMobileColumnIndex - 1;
-    setActiveMobileColumn(columnsWithCards[nextIndex].id);
+    const nextColumn = columnsWithCards[nextIndex];
+    if (nextColumn) setActiveMobileColumn(nextColumn.id);
   }, [activeMobileColumnIndex, columnsWithCards]);
 
   const handleNextMobileColumn = useCallback(() => {
@@ -259,7 +260,8 @@ export function KanbanBoard({
       activeMobileColumnIndex >= columnsWithCards.length - 1
         ? 0
         : activeMobileColumnIndex + 1;
-    setActiveMobileColumn(columnsWithCards[nextIndex].id);
+    const nextColumn = columnsWithCards[nextIndex];
+    if (nextColumn) setActiveMobileColumn(nextColumn.id);
   }, [activeMobileColumnIndex, columnsWithCards]);
 
   return (

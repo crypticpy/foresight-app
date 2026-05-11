@@ -7,7 +7,7 @@ import {
 
 export function useFollowCard(
   cardId: string | undefined,
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
   initialState?: { is_following?: boolean; follower_count?: number },
 ) {
   const [isFollowing, setIsFollowing] = useState(
@@ -27,7 +27,7 @@ export function useFollowCard(
     if (!cardId) return;
     let cancelled = false;
     getAuthToken()
-      .then((token) => (token ? getCardFollowers(cardId, token) : null))
+      .then((token) => (token ? getCardFollowers(token, cardId) : null))
       .then((state) => {
         if (!state || cancelled) return;
         setIsFollowing(state.is_following);
@@ -50,8 +50,8 @@ export function useFollowCard(
     setFollowerCount((count) => Math.max(0, count + (next ? 1 : -1)));
     try {
       const state = next
-        ? await followCard(cardId, token)
-        : await unfollowCard(cardId, token);
+        ? await followCard(token, cardId)
+        : await unfollowCard(token, cardId);
       setIsFollowing(state.is_following);
       setFollowerCount(state.follower_count);
     } catch {

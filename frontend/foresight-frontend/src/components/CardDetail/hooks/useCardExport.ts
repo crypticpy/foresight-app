@@ -88,7 +88,7 @@ const FORMAT_EXTENSIONS: Record<ExportFormat, string> = {
  */
 export function useCardExport(
   card: Card | null,
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
   options?: ExportOptions,
 ): UseCardExportReturn {
   const [isExporting, setIsExporting] = useState(false);

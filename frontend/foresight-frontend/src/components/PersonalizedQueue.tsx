@@ -13,7 +13,7 @@
  * - Infinite scroll pagination support
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   Eye,
@@ -27,7 +27,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useAuthContext } from "../hooks/useAuthContext";
-import { supabase } from "../App";
+import { supabase } from "../lib/supabase";
+import { getAuthToken } from "../lib/auth";
 import { PillarBadge } from "./PillarBadge";
 import { HorizonBadge } from "./HorizonBadge";
 import { StageBadge } from "./StageBadge";
@@ -290,11 +291,9 @@ export function PersonalizedQueue({
   // Load personalized queue
   const loadQueue = useCallback(
     async (isLoadMore = false) => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const token = await getAuthToken();
 
-      if (!session?.access_token) {
+      if (!token) {
         setError("Please sign in to view your personalized queue");
         setLoading(false);
         return;
@@ -310,7 +309,7 @@ export function PersonalizedQueue({
 
         const currentOffset = isLoadMore ? offset : 0;
         const data = await fetchPersonalizedDiscoveryQueue(
-          session.access_token,
+          token,
           pageSize,
           currentOffset,
         );
@@ -360,10 +359,8 @@ export function PersonalizedQueue({
   const handleDismiss = async (cardId: string) => {
     if (dismissingCardId) return;
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return;
+    const token = await getAuthToken();
+    if (!token) return;
 
     setDismissingCardId(cardId);
 
@@ -371,7 +368,7 @@ export function PersonalizedQueue({
     setCards((prev) => prev.filter((c) => c.id !== cardId));
 
     try {
-      await dismissCard(session.access_token, cardId, "irrelevant");
+      await dismissCard(token, cardId, "irrelevant");
     } catch (_err) {
       // Revert on error by reloading
       setOffset(0);
@@ -409,7 +406,6 @@ export function PersonalizedQueue({
         await supabase.from("card_follows").insert({
           user_id: user.id,
           card_id: cardId,
-          priority: "medium",
         });
       }
     } catch (_err) {

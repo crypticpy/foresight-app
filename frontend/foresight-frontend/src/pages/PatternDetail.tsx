@@ -9,7 +9,7 @@ import {
   MessageSquare,
   AlertCircle,
 } from "lucide-react";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../lib/config";
 import { PillarBadge } from "../components/PillarBadge";
@@ -112,16 +112,14 @@ export default function PatternDetail() {
     setLoading(true);
     setError(null);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const token = await getAuthToken();
+      if (!token) {
         setError("You must be signed in to view patterns.");
         return;
       }
       const res = await fetch(`${API_BASE_URL}/api/v1/pattern-insights/${id}`, {
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
       });
@@ -151,16 +149,14 @@ export default function PatternDetail() {
       if (!insight || updatingStatus) return;
       setUpdatingStatus(true);
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
+        const token = await getAuthToken();
+        if (!token) return;
         const res = await fetch(
           `${API_BASE_URL}/api/v1/pattern-insights/${insight.id}`,
           {
             method: "PATCH",
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ status: newStatus }),

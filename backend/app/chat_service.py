@@ -100,8 +100,34 @@ def _sse_token(content: str) -> str:
 
 
 def _sse_error(message: str) -> str:
-    """Format an error SSE event."""
+    """Format an error SSE event without a structured code.
+
+    Prefer ``_sse_error_code`` so the UI banner can display ``[E_…]`` and
+    the same string is greppable in the browser/Railway logs.
+    """
     return f"data: {json.dumps({'type': 'error', 'content': message})}\n\n"
+
+
+def _sse_error_code(
+    code: str,
+    message: str,
+    *,
+    detail: Optional[str] = None,
+) -> str:
+    """Format an error SSE event with a stable error code and optional detail.
+
+    The frontend parser pulls ``code``/``detail`` into the visible error so
+    a user can read off "E_CHAT_LLM_TIMEOUT — ReadTimeout" and we can
+    correlate that to the matching ``logger.error`` row on the backend.
+    """
+    payload: Dict[str, Any] = {
+        "type": "error",
+        "code": code,
+        "content": message,
+    }
+    if detail:
+        payload["detail"] = detail
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -561,8 +587,9 @@ async def chat(
     try:
         # 1. Rate limiting
         if not await _check_rate_limit(supabase_client, user_id):
-            yield _sse_error(
-                "Rate limit exceeded. Please wait a moment before sending another message."
+            yield _sse_error_code(
+                "E_CHAT_RATE_LIMIT_USER",
+                "Rate limit exceeded. Please wait a moment before sending another message.",
             )
             return
 
@@ -571,7 +598,10 @@ async def chat(
             supabase_client, user_id, conversation_id
         )
         if not quota_ok:
-            yield _sse_error(quota_reason or "Chat quota exceeded.")
+            yield _sse_error_code(
+                "E_CHAT_QUOTA",
+                quota_reason or "Chat quota exceeded.",
+            )
             return
 
         # 1c. Prompt-injection scan on the incoming user message (PR 5).
@@ -606,10 +636,12 @@ async def chat(
                 user_id,
                 [m.pattern_id for m in injection_blocking],
             )
-            yield _sse_error(
+            yield _sse_error_code(
+                "E_CHAT_INJECTION_BLOCKED",
                 "Your message was flagged by our prompt-injection filter "
                 "and was not sent. If this looks like a false positive, "
-                "please rephrase or contact an admin."
+                "please rephrase or contact an admin.",
+                detail=",".join(m.pattern_id for m in injection_blocking),
             )
             return
 
@@ -625,7 +657,11 @@ async def chat(
             )
         except Exception as e:
             logger.error(f"Failed to manage conversation: {e}")
-            yield _sse_error("Failed to create or find conversation. Please try again.")
+            yield _sse_error_code(
+                "E_CHAT_CONVERSATION_FAILED",
+                "Failed to create or find conversation. Please try again.",
+                detail=f"{type(e).__name__}: {str(e)[:200]}",
+            )
             return
 
         # Tag every downstream LLM call with the now-known conversation_id
@@ -677,11 +713,19 @@ async def chat(
             source_map = scope_metadata.get("source_map", {})
         except Exception as e:
             logger.error(f"Context retrieval failed for scope={scope}: {e}")
-            yield _sse_error("Failed to retrieve context. Please try again.")
+            yield _sse_error_code(
+                "E_CHAT_CONTEXT_FAILED",
+                "Failed to retrieve context. Please try again.",
+                detail=f"{type(e).__name__}: {str(e)[:200]}",
+            )
             return
 
         if scope_metadata.get("error"):
-            yield _sse_error(f"Context error: {scope_metadata['error']}")
+            yield _sse_error_code(
+                "E_CHAT_CONTEXT_SCOPE",
+                "Context error: scope retrieval reported a failure.",
+                detail=str(scope_metadata["error"])[:200],
+            )
             return
 
         yield _sse_event(
@@ -1008,6 +1052,28 @@ async def chat(
                         chat_scope=scope,
                         chat_scope_id=scope_id,
                     )
+                    # Surface tool failures as a progress event so the UI
+                    # can show "tool foo failed" without aborting the
+                    # whole stream — the model still gets the error JSON
+                    # back as a function_call_output and can recover.
+                    try:
+                        parsed_result = json.loads(tool_result)
+                        if (
+                            isinstance(parsed_result, dict)
+                            and parsed_result.get("error")
+                        ):
+                            yield _sse_event(
+                                "progress",
+                                {
+                                    "step": "tool_error",
+                                    "tool": tool_name,
+                                    "detail": str(parsed_result["error"])[
+                                        :200
+                                    ],
+                                },
+                            )
+                    except (ValueError, TypeError):
+                        pass
                     next_input_appendix.append(
                         {
                             "type": "function_call_output",
@@ -1045,21 +1111,33 @@ async def chat(
 
         except Exception as e:
             error_type = type(e).__name__
+            error_str = str(e)
             logger.error(f"Azure OpenAI streaming error ({error_type}): {e}")
 
-            if "rate_limit" in str(e).lower() or "429" in str(e):
-                yield _sse_error(
-                    "The AI service is currently busy. Please try again in a moment."
+            detail = f"{error_type}: {error_str[:200]}"
+            if "rate_limit" in error_str.lower() or "429" in error_str:
+                yield _sse_error_code(
+                    "E_CHAT_LLM_RATE_LIMIT",
+                    "The AI service is currently busy. Please try again in a moment.",
+                    detail=detail,
                 )
-            elif "timeout" in str(e).lower():
-                yield _sse_error(
-                    "The request timed out. Please try a simpler question."
+            elif "timeout" in error_str.lower():
+                yield _sse_error_code(
+                    "E_CHAT_LLM_TIMEOUT",
+                    "The request timed out. Please try a simpler question.",
+                    detail=detail,
                 )
-            elif "connection" in str(e).lower():
-                yield _sse_error("Connection to AI service lost. Please try again.")
+            elif "connection" in error_str.lower():
+                yield _sse_error_code(
+                    "E_CHAT_LLM_CONNECTION",
+                    "Connection to AI service lost. Please try again.",
+                    detail=detail,
+                )
             else:
-                yield _sse_error(
-                    "An error occurred while generating a response. Please try again."
+                yield _sse_error_code(
+                    "E_CHAT_LLM_FAILED",
+                    "An error occurred while generating a response. Please try again.",
+                    detail=detail,
                 )
 
             # Still store partial response if we got any
@@ -1129,7 +1207,11 @@ async def chat(
 
     except Exception as e:
         logger.error(f"Unhandled error in chat generator: {e}", exc_info=True)
-        yield _sse_error("An unexpected error occurred. Please try again.")
+        yield _sse_error_code(
+            "E_CHAT_UNHANDLED",
+            "An unexpected error occurred. Please try again.",
+            detail=f"{type(e).__name__}: {str(e)[:200]}",
+        )
 
 
 # ---------------------------------------------------------------------------

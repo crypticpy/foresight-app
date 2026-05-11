@@ -51,20 +51,20 @@ export interface CardQualityData {
 /**
  * Fetch the quality data (SQI score and component breakdown) for a card.
  *
- * @param cardId - UUID of the card
  * @param token - Bearer auth token from Supabase session
+ * @param cardId - UUID of the card
  * @returns The card quality data including component scores
  * @throws {Error} If the request fails or returns a non-OK status
  *
  * @example
  * ```ts
- * const quality = await getCardQuality(card.id, session.access_token);
+ * const quality = await getCardQuality(session.access_token, card.id);
  * console.log(quality.overall_score); // 78
  * ```
  */
 export async function getCardQuality(
-  cardId: string,
   token: string,
+  cardId: string,
 ): Promise<CardQualityData> {
   const res = await fetch(`${API_BASE_URL}/api/v1/cards/${cardId}/quality`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -76,19 +76,19 @@ export async function getCardQuality(
 /**
  * Trigger a recalculation of the quality score for a card.
  *
- * @param cardId - UUID of the card
  * @param token - Bearer auth token from Supabase session
+ * @param cardId - UUID of the card
  * @returns The newly calculated card quality data
  * @throws {Error} If the request fails or returns a non-OK status
  *
  * @example
  * ```ts
- * const refreshed = await recalculateCardQuality(card.id, session.access_token);
+ * const refreshed = await recalculateCardQuality(session.access_token, card.id);
  * ```
  */
 export async function recalculateCardQuality(
-  cardId: string,
   token: string,
+  cardId: string,
 ): Promise<CardQualityData> {
   const res = await fetch(
     `${API_BASE_URL}/api/v1/cards/${cardId}/quality/recalculate`,

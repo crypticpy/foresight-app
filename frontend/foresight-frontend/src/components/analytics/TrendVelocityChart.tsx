@@ -27,6 +27,24 @@ import { format, parseISO } from "date-fns";
 import { TrendingUp, TrendingDown, Minus, Loader2 } from "lucide-react";
 
 // ============================================================================
+// Chart palette (Recharts SVG props can't take Tailwind classes)
+// ============================================================================
+
+const CHART_COLORS = {
+  // Tailwind gray scale used directly because Recharts stroke/fill props
+  // don't accept className.
+  gridStroke: "#e5e7eb", // gray-200
+  axisStroke: "#d1d5db", // gray-300
+  refLine: "#9ca3af", // gray-400
+  tickLabel: "#6b7280", // gray-500
+  // Brand
+  brandBlue: "#44499C",
+  brandGreen: "#009F4D",
+  // Dot stroke
+  dotStroke: "#fff",
+};
+
+// ============================================================================
 // Type Definitions
 // ============================================================================
 
@@ -276,22 +294,22 @@ export const TrendVelocityChart: React.FC<TrendVelocityChartProps> = ({
         >
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="#e5e7eb"
+            stroke={CHART_COLORS.gridStroke}
             className="dark:stroke-gray-700"
           />
           <XAxis
             dataKey="date"
             tickFormatter={formatXAxisDate}
-            tick={{ fontSize: 12, fill: "#6b7280" }}
-            tickLine={{ stroke: "#d1d5db" }}
-            axisLine={{ stroke: "#d1d5db" }}
+            tick={{ fontSize: 12, fill: CHART_COLORS.tickLabel }}
+            tickLine={{ stroke: CHART_COLORS.axisStroke }}
+            axisLine={{ stroke: CHART_COLORS.axisStroke }}
             interval="preserveStartEnd"
             minTickGap={50}
           />
           <YAxis
-            tick={{ fontSize: 12, fill: "#6b7280" }}
-            tickLine={{ stroke: "#d1d5db" }}
-            axisLine={{ stroke: "#d1d5db" }}
+            tick={{ fontSize: 12, fill: CHART_COLORS.tickLabel }}
+            tickLine={{ stroke: CHART_COLORS.axisStroke }}
+            axisLine={{ stroke: CHART_COLORS.axisStroke }}
             tickFormatter={(value) => value.toLocaleString()}
           />
           <Tooltip content={<CustomTooltip />} />
@@ -307,12 +325,12 @@ export const TrendVelocityChart: React.FC<TrendVelocityChartProps> = ({
           {avgVelocity > 0 && (
             <ReferenceLine
               y={avgVelocity}
-              stroke="#9ca3af"
+              stroke={CHART_COLORS.refLine}
               strokeDasharray="5 5"
               label={{
                 value: `Avg: ${avgVelocity.toFixed(0)}`,
                 position: "right",
-                fill: "#6b7280",
+                fill: CHART_COLORS.tickLabel,
                 fontSize: 11,
               }}
             />
@@ -321,13 +339,13 @@ export const TrendVelocityChart: React.FC<TrendVelocityChartProps> = ({
             type="monotone"
             dataKey="velocity"
             name="Total Velocity"
-            stroke="#44499C"
+            stroke={CHART_COLORS.brandBlue}
             strokeWidth={2}
-            dot={{ fill: "#44499C", strokeWidth: 2, r: 3 }}
+            dot={{ fill: CHART_COLORS.brandBlue, strokeWidth: 2, r: 3 }}
             activeDot={{
               r: 6,
-              fill: "#44499C",
-              stroke: "#fff",
+              fill: CHART_COLORS.brandBlue,
+              stroke: CHART_COLORS.dotStroke,
               strokeWidth: 2,
             }}
             animationDuration={disableAnimations ? 0 : 500}
@@ -336,13 +354,13 @@ export const TrendVelocityChart: React.FC<TrendVelocityChartProps> = ({
             type="monotone"
             dataKey="count"
             name="Signal Count"
-            stroke="#009F4D"
+            stroke={CHART_COLORS.brandGreen}
             strokeWidth={2}
-            dot={{ fill: "#009F4D", strokeWidth: 2, r: 3 }}
+            dot={{ fill: CHART_COLORS.brandGreen, strokeWidth: 2, r: 3 }}
             activeDot={{
               r: 6,
-              fill: "#009F4D",
-              stroke: "#fff",
+              fill: CHART_COLORS.brandGreen,
+              stroke: CHART_COLORS.dotStroke,
               strokeWidth: 2,
             }}
             animationDuration={disableAnimations ? 0 : 500}

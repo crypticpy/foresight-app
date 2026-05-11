@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { fetchCostStatus } from "../lib/cost-api";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -13,10 +13,7 @@ export function CostStatusBanner() {
 
     const load = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
         if (!token) {
           if (!cancelled) setPaused(false);
           return;

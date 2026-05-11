@@ -5,6 +5,7 @@
  */
 
 import { format, formatDistanceToNow } from "date-fns";
+import type { SavedSearchQueryConfig } from "../../lib/discovery-api";
 import type { SortOption } from "./types";
 
 /**
@@ -70,6 +71,122 @@ export const formatCardDate = (
       text: "Unknown",
     };
   }
+};
+
+/**
+ * Inputs to {@link buildSavedSearchConfig} — mirrors the filter state owned
+ * by the Discover composer.
+ */
+export interface SavedSearchInputs {
+  searchTerm: string;
+  selectedPillar: string;
+  selectedStage: string;
+  selectedHorizon: string;
+  dateFrom: string;
+  dateTo: string;
+  impactMin: number;
+  relevanceMin: number;
+  noveltyMin: number;
+  useSemanticSearch: boolean;
+}
+
+/**
+ * Build a {@link SavedSearchQueryConfig} from the Discover page's current
+ * filter inputs. Used by both the Save Search modal and the recent-searches
+ * recorder so the two stay in sync.
+ */
+export const buildSavedSearchConfig = (
+  inputs: SavedSearchInputs,
+): SavedSearchQueryConfig => {
+  const {
+    searchTerm,
+    selectedPillar,
+    selectedStage,
+    selectedHorizon,
+    dateFrom,
+    dateTo,
+    impactMin,
+    relevanceMin,
+    noveltyMin,
+    useSemanticSearch,
+  } = inputs;
+
+  const config: SavedSearchQueryConfig = {
+    use_vector_search: useSemanticSearch,
+  };
+
+  if (searchTerm.trim()) {
+    config.query = searchTerm.trim();
+  }
+
+  const filters: SavedSearchQueryConfig["filters"] = {};
+
+  if (selectedPillar) filters.pillar_ids = [selectedPillar];
+  if (selectedStage) filters.stage_ids = [selectedStage];
+  if (selectedHorizon) filters.horizon = selectedHorizon as "H1" | "H2" | "H3";
+  if (dateFrom || dateTo) {
+    filters.date_range = {
+      ...(dateFrom && { start: dateFrom }),
+      ...(dateTo && { end: dateTo }),
+    };
+  }
+  if (impactMin > 0 || relevanceMin > 0 || noveltyMin > 0) {
+    filters.score_thresholds = {
+      ...(impactMin > 0 && { impact_score: { min: impactMin } }),
+      ...(relevanceMin > 0 && { relevance_score: { min: relevanceMin } }),
+      ...(noveltyMin > 0 && { novelty_score: { min: noveltyMin } }),
+    };
+  }
+
+  if (Object.keys(filters).length > 0) {
+    config.filters = filters;
+  }
+
+  return config;
+};
+
+/**
+ * Build a short, human-readable description of a saved-search query config.
+ * Used by the recent-searches list to show what each entry will load.
+ */
+export const getHistoryDescription = (
+  config: SavedSearchQueryConfig,
+): string => {
+  const parts: string[] = [];
+
+  if (config.query) {
+    parts.push(`"${config.query}"`);
+  }
+
+  if (config.filters) {
+    const { pillar_ids, stage_ids, horizon, date_range, score_thresholds } =
+      config.filters;
+
+    if (pillar_ids && pillar_ids.length > 0) {
+      parts.push(`${pillar_ids.length} pillar(s)`);
+    }
+    if (stage_ids && stage_ids.length > 0) {
+      parts.push(`${stage_ids.length} stage(s)`);
+    }
+    if (horizon && horizon !== "ALL") {
+      parts.push(`${horizon}`);
+    }
+    if (date_range && (date_range.start || date_range.end)) {
+      parts.push("date filter");
+    }
+    if (score_thresholds && Object.keys(score_thresholds).length > 0) {
+      parts.push("score filters");
+    }
+  }
+
+  if (parts.length === 0 && !config.use_vector_search) {
+    return "All signals";
+  }
+
+  return (
+    parts.join(" • ") ||
+    (config.use_vector_search ? "Semantic search" : "All signals")
+  );
 };
 
 /**

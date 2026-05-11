@@ -32,7 +32,7 @@
  * @module CardDetail/ResearchStatusBanner
  */
 
-import React from 'react';
+import React from "react";
 import {
   Loader2,
   Check,
@@ -40,10 +40,10 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-} from 'lucide-react';
-import { cn } from '../../lib/utils';
-import { MarkdownReport } from './MarkdownReport';
-import type { ResearchTask } from './types';
+} from "lucide-react";
+import { cn } from "../../lib/utils";
+import { MarkdownReport } from "./MarkdownReport";
+import type { ResearchTask } from "./types";
 
 /**
  * Props for the ResearchStatusBanner component
@@ -95,17 +95,22 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
   className,
 }) => {
   // Determine the current state for styling
-  const isCompleted = researchTask?.status === 'completed' && !isResearching && !researchError;
-  const hasReport = researchTask?.result_summary?.report_preview;
+  const isCompleted =
+    researchTask?.status === "completed" && !isResearching && !researchError;
+  const reportPreview = researchTask?.result_summary?.report_preview;
+  const hasReport = Boolean(reportPreview);
 
   return (
     <div
       className={cn(
-        'mb-6 rounded-lg border overflow-hidden',
-        isResearching && 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800',
-        researchError && 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800',
-        isCompleted && 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800',
-        className
+        "mb-6 rounded-lg border overflow-hidden",
+        isResearching &&
+          "bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800",
+        researchError &&
+          "bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800",
+        isCompleted &&
+          "bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800",
+        className,
       )}
     >
       {/* Status Header */}
@@ -120,9 +125,9 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
               />
               <div>
                 <p className="font-medium text-blue-800 dark:text-blue-200">
-                  {researchTask?.task_type === 'deep_research'
-                    ? 'Deep research in progress...'
-                    : 'Updating sources...'}
+                  {researchTask?.task_type === "deep_research"
+                    ? "Deep research in progress..."
+                    : "Updating sources..."}
                 </p>
                 <p className="text-sm text-blue-600 dark:text-blue-300">
                   This may take a minute. You can continue browsing.
@@ -172,10 +177,12 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
                   Research completed!
                 </p>
                 <p className="text-sm text-green-600 dark:text-green-300">
-                  Discovered {researchTask.result_summary?.sources_found || 0} sources
+                  Discovered {researchTask.result_summary?.sources_found || 0}{" "}
+                  sources
                   {researchTask.result_summary?.sources_relevant &&
                     ` → ${researchTask.result_summary.sources_relevant} relevant`}
-                  {' → '}added {researchTask.result_summary?.sources_added || 0} new
+                  {" → "}added {researchTask.result_summary?.sources_added || 0}{" "}
+                  new
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -187,11 +194,14 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
                     aria-controls="research-report-panel"
                   >
                     <FileText className="h-4 w-4 mr-1.5" aria-hidden="true" />
-                    {showReport ? 'Hide' : 'View'} Report
+                    {showReport ? "Hide" : "View"} Report
                     {showReport ? (
                       <ChevronUp className="h-4 w-4 ml-1" aria-hidden="true" />
                     ) : (
-                      <ChevronDown className="h-4 w-4 ml-1" aria-hidden="true" />
+                      <ChevronDown
+                        className="h-4 w-4 ml-1"
+                        aria-hidden="true"
+                      />
                     )}
                   </button>
                 )}
@@ -224,11 +234,16 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
               <button
                 onClick={onCopyReport}
                 className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 dark:text-gray-300 dark:bg-dark-surface dark:hover:bg-gray-700 rounded transition-colors"
-                aria-label={reportCopied ? 'Report copied' : 'Copy report to clipboard'}
+                aria-label={
+                  reportCopied ? "Report copied" : "Copy report to clipboard"
+                }
               >
                 {reportCopied ? (
                   <>
-                    <Check className="h-3 w-3 mr-1 text-green-600" aria-hidden="true" />
+                    <Check
+                      className="h-3 w-3 mr-1 text-green-600"
+                      aria-hidden="true"
+                    />
                     Copied!
                   </>
                 ) : (
@@ -242,7 +257,7 @@ export const ResearchStatusBanner: React.FC<ResearchStatusBannerProps> = ({
 
             {/* Report Content */}
             <div className="max-h-[70vh] sm:max-h-[500px] overflow-y-auto p-3 sm:p-4 bg-gray-50 dark:bg-dark-surface rounded-lg">
-              <MarkdownReport content={researchTask.result_summary!.report_preview!} />
+              <MarkdownReport content={reportPreview ?? ""} />
             </div>
           </div>
         </div>

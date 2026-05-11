@@ -82,7 +82,7 @@ export interface UseResearchReturn {
  */
 export function useResearch(
   card: Card | null,
-  getAuthToken: () => Promise<string | undefined>,
+  getAuthToken: () => Promise<string | null>,
   onResearchComplete?: () => void
 ): UseResearchReturn {
   // Research task state

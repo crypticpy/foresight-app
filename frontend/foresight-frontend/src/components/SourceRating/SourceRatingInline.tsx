@@ -114,7 +114,7 @@ export const SourceRatingInline: React.FC<SourceRatingInlineProps> = ({
       try {
         setLoading(true);
         setError(null);
-        const data = await getSourceRatings(sourceId, token);
+        const data = await getSourceRatings(token, sourceId);
 
         if (cancelled) return;
 
@@ -154,19 +154,15 @@ export const SourceRatingInline: React.FC<SourceRatingInlineProps> = ({
 
       setSubmitting(true);
       try {
-        await rateSource(
-          sourceId,
-          {
-            quality_rating: quality,
-            relevance_rating: relevance,
-            comment: commentText || undefined,
-          },
-          token,
-        );
+        await rateSource(token, sourceId, {
+          quality_rating: quality,
+          relevance_rating: relevance,
+          comment: commentText || undefined,
+        });
 
         // Re-fetch aggregate to get updated stats
         if (mountedRef.current) {
-          const updated = await getSourceRatings(sourceId, token);
+          const updated = await getSourceRatings(token, sourceId);
           if (mountedRef.current) {
             setAggregate(updated);
           }

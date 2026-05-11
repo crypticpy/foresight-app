@@ -1,21 +1,11 @@
 /**
  * CardDetail Component
  *
- * A refactored, modular component that displays comprehensive card/trend details.
- * This component orchestrates top-level state management and data flow,
- * delegating rendering to focused sub-components.
+ * Top-level orchestrator for the card-detail route. State, polling, and data
+ * loading live in the hooks under `./hooks/`; this file owns the tab chrome,
+ * loading/not-found states, and the dispatch between tab panels.
  *
- * Original: 1829 lines -> Refactored: ~290 lines
- *
- * Features:
- * - Modular composition of sub-components
- * - Centralized state management for data loading
- * - Research task triggering and polling
- * - Tab-based navigation (Overview, Sources, Timeline, Notes, Related)
- * - Dark mode support
- * - Responsive design
- *
- * @module CardDetail
+ * @module components/CardDetail/CardDetail
  */
 
 import React, {
@@ -27,7 +17,6 @@ import React, {
 } from "react";
 import {
   useParams,
-  Link,
   useNavigate,
   useSearchParams,
   useLocation,
@@ -40,17 +29,23 @@ import {
   GitBranch,
   FolderOpen,
   MessageSquare,
-  FileQuestion,
-  ArrowLeft,
-  Compass,
   Microscope,
 } from "lucide-react";
-import { supabase } from "../../App";
+
+import { getAuthToken } from "../../lib/auth";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useFollowCard } from "../../hooks/useFollowCard";
+import { useToast } from "../ui/Toast";
 import { cn } from "../../lib/utils";
+import { getCardArtifacts } from "../../lib/card-artifacts-api";
+import type {
+  AnchorScores,
+  PillarCode,
+  SignalType,
+  UserMetadata,
+} from "../../lib/lens-api";
 
-// CardDetail sub-components
+import { CardDetailLoading, CardDetailNotFound } from "./CardDetailStates";
 import { CardDetailHeader } from "./CardDetailHeader";
 import { CardActionButtons } from "./CardActionButtons";
 import { ResearchStatusBanner } from "./ResearchStatusBanner";
@@ -62,52 +57,20 @@ import {
   ActivityStatsPanel,
 } from "./tabs/OverviewTab";
 import { LensMetadataPanel } from "../lens/LensMetadataPanel";
-import type {
-  AnchorScores,
-  PillarCode,
-  SignalType,
-  UserMetadata,
-} from "../../lib/lens-api";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { TimelineTab } from "./tabs/TimelineTab";
 import { NotesTab } from "./tabs/NotesTab";
 import { ResearchTab } from "./tabs/ResearchTab";
 import { AssetsTab } from "./AssetsTab";
-const ChatTabContent = React.lazy(() => import("./ChatTabContent"));
-
-// Visualization Components
 import { ScoreTimelineChart } from "../visualizations/ScoreTimelineChart";
 import { ConceptNetworkDiagram } from "../visualizations/ConceptNetworkDiagram";
 
-// Types and utilities
-import type {
-  Card,
-  ResearchTask,
-  Source,
-  TimelineEvent,
-  Note,
-  CardDetailTab,
-} from "./types";
-import { API_BASE_URL } from "./utils";
-import { getCardArtifacts } from "../../lib/card-artifacts-api";
+import { useCardData, useResearch, useCardAssets } from "./hooks";
+import type { CardDetailTab } from "./types";
 
-// API Functions
-import {
-  getScoreHistory,
-  getStageHistory,
-  getRelatedCards,
-  fetchCardAssets,
-  type ScoreHistory,
-  type StageHistory,
-  type RelatedCard,
-  type CardAsset,
-} from "../../lib/discovery-api";
+const ChatTabContent = React.lazy(() => import("./ChatTabContent"));
 
-/**
- * Props for the CardDetail component
- */
 export interface CardDetailProps {
-  /** Optional custom className for the container */
   className?: string;
   /** Optional slug for embedded views that do not own the route. */
   slugOverride?: string;
@@ -119,15 +82,6 @@ export interface CardDetailProps {
   onRelatedCardClick?: (cardSlug: string) => void;
 }
 
-/**
- * CardDetail displays comprehensive information about a card/trend.
- *
- * This is the main orchestrator component that:
- * - Loads and manages all card-related data
- * - Handles research task triggering and status polling
- * - Manages user interactions (following, notes)
- * - Renders sub-components in a tabbed layout
- */
 export const CardDetail: React.FC<CardDetailProps> = ({
   className = "",
   slugOverride,
@@ -138,11 +92,11 @@ export const CardDetail: React.FC<CardDetailProps> = ({
   const { slug: routeSlug } = useParams<{ slug: string }>();
   const slug = slugOverride ?? routeSlug;
   const { user } = useAuthContext();
+  const { pushToast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const location = useLocation();
 
-  // Allow viewing non-active cards (e.g., pending review) when opened from the queue.
   const mode = searchParams.get("mode");
   const isReviewMode = mode === "review" || mode === "edit";
   const fromPath = (location.state as { from?: string })?.from;
@@ -155,178 +109,55 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         ? "Back to Dashboard"
         : "Back to Discover";
 
-  // Core card data
-  const [card, setCard] = useState<Card | null>(null);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<CardDetailTab>("overview");
   const [newNote, setNewNote] = useState("");
 
-  // Research state
-  const [researchTask, setResearchTask] = useState<ResearchTask | null>(null);
-  const [isResearching, setIsResearching] = useState(false);
-  const [researchError, setResearchError] = useState<string | null>(null);
-  const [showReport, setShowReport] = useState(false);
-  const [reportCopied, setReportCopied] = useState(false);
-  const [researchHistory, setResearchHistory] = useState<ResearchTask[]>([]);
+  const {
+    card: rawCard,
+    sources,
+    timeline,
+    notes,
+    researchHistory,
+    loading,
+    scoreHistory,
+    scoreHistoryLoading,
+    scoreHistoryError,
+    stageHistory,
+    stageHistoryLoading,
+    relatedCards,
+    relatedCardsLoading,
+    relatedCardsError,
+    addNote,
+    refetch,
+    refetchScoreHistory,
+    refetchRelatedCards,
+  } = useCardData(slug, user, { reviewMode: isReviewMode });
 
-  // Trend visualization state
-  const [scoreHistory, setScoreHistory] = useState<ScoreHistory[]>([]);
-  const [stageHistory, setStageHistory] = useState<StageHistory[]>([]);
-  const [scoreHistoryLoading, setScoreHistoryLoading] = useState(false);
-  const [stageHistoryLoading, setStageHistoryLoading] = useState(false);
-  const [scoreHistoryError, setScoreHistoryError] = useState<string | null>(
-    null,
+  // Enrich card with on-demand artifacts (fetched after initial load).
+  const [artifacts, setArtifacts] =
+    useState<NonNullable<typeof rawCard>["artifacts"]>(undefined);
+  useEffect(() => {
+    setArtifacts(undefined);
+    if (!rawCard?.id) return;
+    let cancelled = false;
+    getAuthToken()
+      .then((token) => (token ? getCardArtifacts(token, rawCard.id) : null))
+      .then((next) => {
+        if (next && !cancelled) setArtifacts(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [rawCard?.id]);
+
+  const card = useMemo(
+    () =>
+      rawCard
+        ? { ...rawCard, artifacts: artifacts ?? rawCard.artifacts }
+        : null,
+    [rawCard, artifacts],
   );
-
-  // Related cards state
-  const [relatedCards, setRelatedCards] = useState<RelatedCard[]>([]);
-  const [relatedCardsLoading, setRelatedCardsLoading] = useState(false);
-  const [relatedCardsError, setRelatedCardsError] = useState<string | null>(
-    null,
-  );
-
-  // Assets state
-  const [assets, setAssets] = useState<CardAsset[]>([]);
-  const [assetsLoading, setAssetsLoading] = useState(false);
-  const [assetsError, setAssetsError] = useState<string | null>(null);
-
-  // Get auth token for API requests
-  const getAuthToken = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token;
-  }, []);
-
-  // Load card detail from database
-  const loadCardDetail = useCallback(async () => {
-    if (!slug) return;
-    try {
-      let query = supabase.from("cards").select("*").eq("slug", slug);
-
-      // Default: only show active cards. Review mode: allow pending/draft cards.
-      if (!isReviewMode) {
-        query = query.eq("status", "active");
-      }
-
-      const { data: cardData } = await query.single();
-
-      if (cardData) {
-        setCard(cardData);
-
-        // Load related data in parallel
-        const [sourcesRes, timelineRes, notesRes, researchRes] =
-          await Promise.all([
-            supabase
-              .from("sources")
-              .select("*")
-              .eq("card_id", cardData.id)
-              .order("relevance_score", { ascending: false }),
-            supabase
-              .from("card_timeline")
-              .select("*")
-              .eq("card_id", cardData.id)
-              .order("created_at", { ascending: false }),
-            supabase
-              .from("card_notes")
-              .select("*")
-              .eq("card_id", cardData.id)
-              .or(`user_id.eq.${user?.id},is_private.eq.false`)
-              .order("created_at", { ascending: false }),
-            supabase
-              .from("research_tasks")
-              .select("*")
-              .eq("card_id", cardData.id)
-              .eq("status", "completed")
-              .order("completed_at", { ascending: false })
-              .limit(10),
-          ]);
-
-        setSources(sourcesRes.data || []);
-        setTimeline(timelineRes.data || []);
-        setNotes(notesRes.data || []);
-        setResearchHistory(researchRes.data || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [slug, user?.id, isReviewMode]);
-
-  // Load score/stage history and related cards
-  const loadScoreHistory = useCallback(async () => {
-    if (!card?.id) return;
-    setScoreHistoryLoading(true);
-    setScoreHistoryError(null);
-    try {
-      const token = await getAuthToken();
-      if (token) {
-        const response = await getScoreHistory(token, card.id);
-        setScoreHistory(response.history);
-      }
-    } catch (error: unknown) {
-      setScoreHistoryError(
-        error instanceof Error ? error.message : "Failed to load",
-      );
-    } finally {
-      setScoreHistoryLoading(false);
-    }
-  }, [card?.id, getAuthToken]);
-
-  const loadStageHistory = useCallback(async () => {
-    if (!card?.id) return;
-    setStageHistoryLoading(true);
-    try {
-      const token = await getAuthToken();
-      if (token) {
-        const response = await getStageHistory(token, card.id);
-        setStageHistory(response.history);
-      }
-    } finally {
-      setStageHistoryLoading(false);
-    }
-  }, [card?.id, getAuthToken]);
-
-  const loadRelatedCards = useCallback(async () => {
-    if (!card?.id) return;
-    setRelatedCardsLoading(true);
-    setRelatedCardsError(null);
-    try {
-      const token = await getAuthToken();
-      if (token) {
-        const response = await getRelatedCards(token, card.id);
-        setRelatedCards(response.related_cards);
-      }
-    } catch (error: unknown) {
-      setRelatedCardsError(
-        error instanceof Error ? error.message : "Failed to load",
-      );
-    } finally {
-      setRelatedCardsLoading(false);
-    }
-  }, [card?.id, getAuthToken]);
-
-  // Load card assets (briefs, research reports, exports)
-  const loadAssets = useCallback(async () => {
-    if (!card?.id) return;
-    setAssetsLoading(true);
-    setAssetsError(null);
-    try {
-      const token = await getAuthToken();
-      if (token) {
-        const response = await fetchCardAssets(token, card.id);
-        setAssets(response.assets);
-      }
-    } catch (error: unknown) {
-      setAssetsError(
-        error instanceof Error ? error.message : "Failed to load assets",
-      );
-    } finally {
-      setAssetsLoading(false);
-    }
-  }, [card?.id, getAuthToken]);
 
   const {
     isFollowing,
@@ -335,111 +166,43 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     toggleFollow,
   } = useFollowCard(card?.id, getAuthToken, card ?? undefined);
 
-  // Add note
-  const addNote = useCallback(async () => {
-    if (!user || !card || !newNote.trim()) return;
-    try {
-      const { data } = await supabase
-        .from("card_notes")
-        .insert({
-          user_id: user.id,
-          card_id: card.id,
-          content: newNote,
-          is_private: false,
-        })
-        .select()
-        .single();
-      if (data) {
-        setNotes([data, ...notes]);
-        setNewNote("");
-      }
-    } catch (error) {
-      console.error("Error adding note:", error);
+  const {
+    researchTask,
+    isResearching,
+    researchError,
+    showReport,
+    reportCopied,
+    canDeepResearch,
+    triggerResearch,
+    toggleReport,
+    copyReport,
+    dismissError,
+    dismissTask,
+  } = useResearch(card, getAuthToken, refetch);
+
+  const {
+    assets,
+    loading: assetsLoading,
+    error: assetsError,
+    refetch: refetchAssets,
+  } = useCardAssets(card?.id);
+
+  const handleAddNote = useCallback(async () => {
+    if (!newNote.trim()) return;
+    const ok = await addNote(newNote);
+    if (ok) {
+      setNewNote("");
+    } else {
+      pushToast("Failed to add note", { variant: "error" });
     }
-  }, [user, card, newNote, notes]);
+  }, [addNote, newNote, pushToast]);
 
-  // Poll for research task status
-  const pollTaskStatus = useCallback(
-    async (taskId: string) => {
-      const token = await getAuthToken();
-      if (!token) return;
-
-      const poll = async () => {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/v1/research/${taskId}`,
-            { headers: { Authorization: `Bearer ${token}` } },
-          );
-          if (!response.ok) throw new Error("Failed to get task status");
-          const task: ResearchTask = await response.json();
-          setResearchTask(task);
-
-          if (task.status === "completed") {
-            setIsResearching(false);
-            loadCardDetail();
-          } else if (task.status === "failed") {
-            setIsResearching(false);
-            setResearchError(task.error_message || "Research failed");
-          } else {
-            setTimeout(poll, 2000);
-          }
-        } catch {
-          setIsResearching(false);
-          setResearchError("Failed to check research status");
-        }
-      };
-      poll();
-    },
-    [getAuthToken, loadCardDetail],
-  );
-
-  // Trigger research
-  const triggerResearch = useCallback(
-    async (taskType: "update" | "deep_research") => {
-      if (!card || isResearching) return;
-      setIsResearching(true);
-      setResearchError(null);
-      setResearchTask(null);
-
-      try {
-        const token = await getAuthToken();
-        if (!token) throw new Error("Not authenticated");
-
-        const response = await fetch(`${API_BASE_URL}/api/v1/research`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ card_id: card.id, task_type: taskType }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.detail || "Failed to start research");
-        }
-
-        const task = await response.json();
-        setResearchTask(task);
-        pollTaskStatus(task.id);
-      } catch (error: unknown) {
-        setResearchError(
-          error instanceof Error ? error.message : "Failed to start research",
-        );
-        setIsResearching(false);
-      }
-    },
-    [card, isResearching, getAuthToken, pollTaskStatus],
-  );
-
-  // Handle deep research request from DeepResearchPanel
   const handleDeepResearch = useCallback(() => {
     triggerResearch("deep_research");
   }, [triggerResearch]);
 
-  // Handle related card click
   const handleRelatedCardClick = useCallback(
-    (cardId: string, cardSlug: string) => {
+    (_cardId: string, cardSlug: string) => {
       if (!cardSlug) return;
       if (onRelatedCardClick) {
         onRelatedCardClick(cardSlug);
@@ -452,52 +215,11 @@ export const CardDetail: React.FC<CardDetailProps> = ({
 
   const handleArtifactSelect = useCallback(
     (type: "deep" | "brief" | "scan") => {
-      if (type === "deep" || type === "brief") {
-        setActiveTab("assets");
-      } else {
-        setActiveTab("timeline");
-      }
+      setActiveTab(type === "deep" || type === "brief" ? "assets" : "timeline");
     },
     [],
   );
 
-  // Effects
-  useEffect(() => {
-    if (slug) loadCardDetail();
-  }, [slug, loadCardDetail]);
-  useEffect(() => {
-    if (!card?.id) return;
-    let cancelled = false;
-    getAuthToken()
-      .then((token) => (token ? getCardArtifacts(card.id, token) : null))
-      .then((artifacts) => {
-        if (!artifacts || cancelled) return;
-        setCard((current) => (current ? { ...current, artifacts } : current));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [card?.id, getAuthToken]);
-  useEffect(() => {
-    if (card?.id) {
-      loadScoreHistory();
-      loadStageHistory();
-      loadRelatedCards();
-      loadAssets();
-    }
-  }, [
-    card?.id,
-    loadScoreHistory,
-    loadStageHistory,
-    loadRelatedCards,
-    loadAssets,
-  ]);
-
-  // Computed values
-  const canDeepResearch = card && (card.deep_research_count_today ?? 0) < 2;
-
-  // Tab definitions
   const tabs = useMemo(
     () => [
       { id: "overview" as const, name: "Overview", icon: Eye },
@@ -516,67 +238,22 @@ export const CardDetail: React.FC<CardDetailProps> = ({
     [readOnly],
   );
 
-  // If readOnly hides the active tab (e.g. notes/chat for shared-link
-  // viewers), snap back to overview rather than rendering an orphaned
-  // panel with no corresponding tab button.
+  // Snap back to overview if the active tab disappears under readOnly.
   useEffect(() => {
-    if (!tabs.some((t) => t.id === activeTab)) {
-      setActiveTab("overview");
-    }
+    if (!tabs.some((t) => t.id === activeTab)) setActiveTab("overview");
   }, [tabs, activeTab]);
 
-  // Loading state
   if (loading) {
-    return (
-      <div
-        className={cn(
-          "min-h-screen flex items-center justify-center",
-          embedded && "min-h-[24rem]",
-        )}
-      >
-        <div className="animate-spin rounded-full h-16 w-16 sm:h-24 sm:w-24 border-b-2 border-brand-blue" />
-      </div>
-    );
+    return <CardDetailLoading embedded={embedded} />;
   }
 
-  // Not found state
   if (!card) {
     return (
-      <div
-        className={cn(
-          "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16",
-          embedded && "px-0 sm:px-0 lg:px-0 py-10",
-        )}
-      >
-        <div className="text-center bg-white dark:bg-dark-surface rounded-2xl shadow border border-gray-200 dark:border-gray-700 p-10">
-          <div className="mx-auto h-14 w-14 rounded-full bg-brand-blue/10 dark:bg-brand-blue/20 flex items-center justify-center mb-5">
-            <FileQuestion className="h-7 w-7 text-brand-blue" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Signal not found
-          </h1>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 max-w-md mx-auto">
-            This signal may have been removed, renamed, or the link is
-            incorrect.
-          </p>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              to={backLink}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-blue hover:bg-brand-dark-blue text-white text-sm font-medium transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              {backLinkText}
-            </Link>
-            <Link
-              to="/discover"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-surface-hover text-sm font-medium transition-colors"
-            >
-              <Compass className="h-4 w-4" />
-              Browse all signals
-            </Link>
-          </div>
-        </div>
-      </div>
+      <CardDetailNotFound
+        backLink={backLink}
+        backLinkText={backLinkText}
+        embedded={embedded}
+      />
     );
   }
 
@@ -588,7 +265,6 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         className,
       )}
     >
-      {/* Header with action buttons */}
       <CardDetailHeader
         card={card}
         backLink={backLink}
@@ -604,7 +280,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
             followSaving={followSaving}
             isResearching={isResearching}
             researchTask={researchTask}
-            canDeepResearch={canDeepResearch ?? false}
+            canDeepResearch={canDeepResearch}
             onTriggerResearch={triggerResearch}
             onToggleFollow={toggleFollow}
             getAuthToken={getAuthToken}
@@ -612,7 +288,6 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         )}
       </CardDetailHeader>
 
-      {/* Research Status Banner */}
       {(isResearching ||
         researchError ||
         researchTask?.status === "completed") && (
@@ -622,20 +297,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({
           researchTask={researchTask}
           showReport={showReport}
           reportCopied={reportCopied}
-          onToggleReport={() => setShowReport(!showReport)}
-          onCopyReport={() => {
-            navigator.clipboard.writeText(
-              researchTask?.result_summary?.report_preview || "",
-            );
-            setReportCopied(true);
-            setTimeout(() => setReportCopied(false), 2000);
-          }}
-          onDismissError={() => setResearchError(null)}
-          onDismissTask={() => setResearchTask(null)}
+          onToggleReport={toggleReport}
+          onCopyReport={copyReport}
+          onDismissError={dismissError}
+          onDismissTask={dismissTask}
         />
       )}
 
-      {/* Tab Navigation */}
       <div className="border-b border-gray-200 dark:border-gray-700 mb-6 sm:mb-8 -mx-4 px-4 sm:mx-0 sm:px-0">
         <nav
           className="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto scrollbar-hide"
@@ -664,14 +332,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         </nav>
       </div>
 
-      {/* Tab Content */}
       {activeTab === "overview" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <CardDescription
               description={card.description}
               cardId={card.id}
-              onRestore={loadCardDetail}
+              onRestore={refetch}
             />
             <CardClassification
               card={card}
@@ -715,14 +382,13 @@ export const CardDetail: React.FC<CardDetailProps> = ({
               budgetAssessment={card.budget_assessment ?? null}
               climateAssessment={card.climate_assessment ?? null}
             />
-            {/* Score History - Compact sidebar widget */}
             <ScoreTimelineChart
               data={scoreHistory}
               title="Score History"
               height={180}
               loading={scoreHistoryLoading}
               error={scoreHistoryError}
-              onRetry={loadScoreHistory}
+              onRetry={refetchScoreHistory}
               compact
             />
           </div>
@@ -733,7 +399,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
         <ResearchTab
           researchHistory={researchHistory}
           onRequestDeepResearch={readOnly ? undefined : handleDeepResearch}
-          canRequestDeepResearch={!readOnly && (canDeepResearch ?? false)}
+          canRequestDeepResearch={!readOnly && canDeepResearch}
         />
       )}
       {activeTab === "sources" && <SourcesTab sources={sources} />}
@@ -743,7 +409,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
           notes={notes}
           newNoteValue={newNote}
           onNewNoteChange={setNewNote}
-          onAddNote={addNote}
+          onAddNote={handleAddNote}
         />
       )}
       {activeTab === "related" && (
@@ -756,7 +422,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
           height={600}
           loading={relatedCardsLoading}
           error={relatedCardsError}
-          onRetry={loadRelatedCards}
+          onRetry={refetchRelatedCards}
           onCardClick={handleRelatedCardClick}
           showMinimap
           showBackground
@@ -784,7 +450,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
           assets={assets}
           isLoading={assetsLoading}
           error={assetsError}
-          onRefresh={loadAssets}
+          onRefresh={refetchAssets}
         />
       )}
     </div>

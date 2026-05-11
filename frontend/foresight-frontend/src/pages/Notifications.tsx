@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../App";
+import { getAuthToken } from "../lib/auth";
 import {
   listNotifications,
   markNotificationsRead,
@@ -10,8 +10,7 @@ export default function Notifications() {
   const [items, setItems] = useState<NotificationItem[]>([]);
 
   const load = async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
     setItems(await listNotifications(token));
   };
@@ -21,8 +20,7 @@ export default function Notifications() {
   }, []);
 
   const markAll = async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await getAuthToken();
     if (!token) return;
     await markNotificationsRead(token);
     await load();

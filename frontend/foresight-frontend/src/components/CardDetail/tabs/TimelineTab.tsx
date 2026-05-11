@@ -269,7 +269,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({
                           {/* Report Content */}
                           <div className="p-4 sm:p-6 bg-white dark:bg-dark-surface-deep max-h-[70vh] sm:max-h-[80vh] overflow-y-auto overflow-x-hidden">
                             <MarkdownReport
-                              content={event.metadata!.detailed_report!}
+                              content={event.metadata?.detailed_report ?? ""}
                             />
                           </div>
                         </div>

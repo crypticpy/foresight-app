@@ -55,7 +55,7 @@ export interface CardActionButtonsProps {
   /** Callback to toggle follow status */
   onToggleFollow: () => void;
   /** Function to get auth token for API requests */
-  getAuthToken: () => Promise<string | undefined>;
+  getAuthToken: () => Promise<string | null>;
   /** Optional additional className */
   className?: string;
 }
