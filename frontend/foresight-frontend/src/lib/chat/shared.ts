@@ -85,8 +85,19 @@ export type SSEEvent =
       type: "done";
       data: { conversation_id: string; message_id: string };
     }
-  | { type: "error"; data?: string; content?: string }
-  | { type: "progress"; data: { step: string; detail: string } }
+  | {
+      type: "error";
+      data?: string;
+      content?: string;
+      /** Stable error code like ``E_CHAT_LLM_TIMEOUT`` for debug/log correlation. */
+      code?: string;
+      /** Short diagnostic detail (exception class, scope error, etc.). */
+      detail?: string;
+    }
+  | {
+      type: "progress";
+      data: { step: string; detail: string; tool?: string };
+    }
   | { type: "metadata"; data: Record<string, unknown> };
 
 /**

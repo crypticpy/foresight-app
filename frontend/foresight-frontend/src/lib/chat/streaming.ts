@@ -185,11 +185,14 @@ function processSSELine(line: string, callbacks: SSECallbacks): void {
         callbacks.onDone(event.data);
         break;
 
-      case "error":
-        callbacks.onError(
-          event.data || event.content || "Unknown streaming error",
-        );
+      case "error": {
+        const baseMsg =
+          event.data || event.content || "Unknown streaming error";
+        const codePrefix = event.code ? `[${event.code}] ` : "";
+        const detailSuffix = event.detail ? ` — ${event.detail}` : "";
+        callbacks.onError(`${codePrefix}${baseMsg}${detailSuffix}`);
         break;
+      }
 
       case "progress":
         callbacks.onProgress?.(event.data);
