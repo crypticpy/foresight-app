@@ -14,13 +14,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def _capture_inserts(monkeypatch) -> list[dict[str, Any]]:
-    """Replace the telemetry executor with a synchronous capture sink.
+    """Replace the telemetry submit hook with a synchronous capture sink.
 
-    The executor receives a callable plus its args; we invoke it inline so
-    the audit-payload build (which lives inside ``_insert_llm_usage_event``)
-    still runs against the test's monkeypatched ``is_audit_content_enabled``.
-    The DB-touching ``_insert_event`` is stubbed to capture the assembled
-    row instead of issuing a Supabase insert.
+    Telemetry now flows through ``_submit_telemetry`` (a hand-rolled bounded
+    queue), so we monkeypatch it to invoke its task inline. That keeps the
+    audit-payload build (inside ``_insert_llm_usage_event``) running against
+    the test's monkeypatched ``is_audit_content_enabled``. The DB-touching
+    ``_insert_event`` is stubbed to capture the assembled row instead of
+    issuing a Supabase insert.
     """
     from app import usage_telemetry
 
@@ -30,11 +31,10 @@ def _capture_inserts(monkeypatch) -> list[dict[str, Any]]:
         if table == "llm_usage_events":
             captured.append(dict(event))
 
-    class _SyncExecutor:
-        def submit(self, fn, *args, **kwargs):
-            fn(*args, **kwargs)
+    def _sync_submit(task):
+        task()
 
-    monkeypatch.setattr(usage_telemetry, "_executor", _SyncExecutor())
+    monkeypatch.setattr(usage_telemetry, "_submit_telemetry", _sync_submit)
     monkeypatch.setattr(usage_telemetry, "_insert_event", _capture_insert)
     return captured
 

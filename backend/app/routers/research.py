@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from supabase import create_client
 
 from app.authz import (
     require_card_in_workstream,
@@ -116,19 +117,37 @@ async def execute_research_task_background(
 
         # Background heartbeat to prevent the stale-task watchdog from killing
         # long-running research while it's still making progress.
-        # research_service makes sync supabase.execute() calls inside async,
-        # which can block the event loop. An asyncio heartbeat coroutine
-        # can't fire its sleep() during that — even with to_thread inside —
-        # because the loop itself is starved. Use a real OS thread so the
-        # heartbeat survives loop contention. Status guard on the update
-        # prevents a late heartbeat write (in-flight when the task finished)
-        # from clobbering the final result_summary.
+        #
+        # The heartbeat thread gets its OWN supabase client (separate httpx
+        # connection pool) so its PATCH writes can never queue behind the
+        # main pipeline's writes. Sharing the module-level `supabase` client
+        # caused the heartbeat to silently go quiet after ~2 ticks while the
+        # analysis pipeline saturated the shared pool with `to_thread`
+        # supabase writes (observed in prod task 4b770f63: heartbeat fired at
+        # +60s and +120s, then nothing for 9 min while the worker continued).
+        #
+        # Status guard on the update prevents a late heartbeat write
+        # (in-flight when the task finished) from clobbering the final
+        # result_summary.
         heartbeat_stop = threading.Event()
+        try:
+            heartbeat_supabase = create_client(
+                os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"]
+            )
+        except Exception:
+            # Fall back to the shared client if env is misconfigured — better
+            # to share the pool than to skip heartbeats entirely.
+            logger.exception(
+                "Failed to create dedicated heartbeat supabase client for task %s; "
+                "falling back to shared client",
+                task_id,
+            )
+            heartbeat_supabase = supabase
 
         def _heartbeat_thread():
             while not heartbeat_stop.wait(60):
                 try:
-                    supabase.table("research_tasks").update(
+                    heartbeat_supabase.table("research_tasks").update(
                         {
                             "result_summary": {
                                 "stage": f"running:{task_data.task_type}",
@@ -190,14 +209,31 @@ async def execute_research_task_background(
             "report_preview": result.report_preview,  # Full research report text
         }
 
-        # Update as completed
-        supabase.table("research_tasks").update(
-            {
-                "status": "completed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "result_summary": result_summary,
-            }
-        ).eq("id", task_id).execute()
+        # Update as completed — but only if the watchdog hasn't already
+        # failed this task. Without the status guard, a slow run can finish
+        # after the watchdog's heartbeat-stale failure and flip the row from
+        # `failed` back to `completed`, leaving a confused state where the
+        # watchdog's error_message lingers on a "completed" row.
+        completion_result = (
+            supabase.table("research_tasks")
+            .update(
+                {
+                    "status": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "result_summary": result_summary,
+                }
+            )
+            .eq("id", task_id)
+            .eq("status", "processing")
+            .execute()
+        )
+        if not completion_result.data:
+            logger.warning(
+                "Research task %s completed work but row was already %s "
+                "(watchdog likely won the race); leaving terminal state intact",
+                task_id,
+                "non-processing",
+            )
 
         # Update signal quality score after research completion
         if task_data.card_id:
@@ -211,24 +247,24 @@ async def execute_research_task_background(
                 )
 
     except asyncio.TimeoutError:
-        # Update as failed (timeout)
+        # Update as failed (timeout) — same race guard as completion path.
         supabase.table("research_tasks").update(
             {
                 "status": "failed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "error_message": f"Research task timed out while {task_data.task_type} was running",
             }
-        ).eq("id", task_id).execute()
+        ).eq("id", task_id).eq("status", "processing").execute()
 
     except Exception as e:
-        # Update as failed
+        # Update as failed — same race guard as completion path.
         supabase.table("research_tasks").update(
             {
                 "status": "failed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "error_message": str(e),
             }
-        ).eq("id", task_id).execute()
+        ).eq("id", task_id).eq("status", "processing").execute()
 
 
 # ============================================================================
