@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import defaultdict
 from typing import Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 DEFAULT_TIMEOUT_S = 5.0
+
+# If supabase wedges, every abandoned call leaves a daemon thread sitting on
+# the same blocked socket. Without a cap, a 5s-flush ticker plus a wedged
+# endpoint would leak one thread per tick per emitter — over an hour that's
+# thousands of zombies. This counter shed new work for a label once we
+# already have ``_MAX_IN_FLIGHT_PER_LABEL`` threads stuck on it. The threads
+# still drain naturally when (or if) the wedge clears.
+_MAX_IN_FLIGHT_PER_LABEL = 4
+_in_flight: dict[str, int] = defaultdict(int)
+_in_flight_lock = threading.Lock()
 
 
 def safe_write(
@@ -36,7 +47,22 @@ def safe_write(
     return value is best-effort — callers should treat None as "we don't
     know, keep going" rather than fatal. This module is meant for paths
     where blocking would be worse than missing one write.
+
+    If too many calls for ``label`` are already blocked on side threads,
+    new work is dropped immediately (with a warning) rather than spawning
+    more threads on a wedged endpoint.
     """
+    with _in_flight_lock:
+        current = _in_flight[label]
+        if current >= _MAX_IN_FLIGHT_PER_LABEL:
+            logger.warning(
+                "supabase op %s saturated (%d in-flight); dropping write",
+                label,
+                current,
+            )
+            return None
+        _in_flight[label] = current + 1
+
     done = threading.Event()
     result_holder: dict[str, object] = {}
 
@@ -46,14 +72,23 @@ def safe_write(
         except BaseException as exc:  # noqa: BLE001 — surface via holder
             result_holder["exc"] = exc
         finally:
+            with _in_flight_lock:
+                _in_flight[label] -= 1
             done.set()
 
-    side = threading.Thread(
-        target=_runner,
-        name=f"supabase-safe-{label}",
-        daemon=True,
-    )
-    side.start()
+    try:
+        side = threading.Thread(
+            target=_runner,
+            name=f"supabase-safe-{label}",
+            daemon=True,
+        )
+        side.start()
+    except BaseException:
+        # Thread.start() failing leaves _runner unrun, so decrement here
+        # so the saturation guard doesn't lock the label out forever.
+        with _in_flight_lock:
+            _in_flight[label] -= 1
+        raise
     if not done.wait(timeout_s):
         logger.warning(
             "supabase op %s exceeded %.1fs; abandoning", label, timeout_s

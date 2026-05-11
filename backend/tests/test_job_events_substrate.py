@@ -56,6 +56,37 @@ def test_safe_write_timeout_returns_none(caplog):
     assert any("exceeded" in rec.message for rec in caplog.records)
 
 
+def test_safe_write_saturation_drops_new_writes(caplog):
+    """Once _MAX_IN_FLIGHT_PER_LABEL threads are stuck on a label, further
+    safe_write calls for that label must drop immediately rather than
+    spawning more daemon threads on a wedged endpoint."""
+    from app import supabase_safe
+
+    release = threading.Event()
+    label = "test_saturation"
+
+    def blocking_op():
+        release.wait(timeout=2)
+        return "late"
+
+    # Fill the in-flight slots with wedged calls.
+    for _ in range(supabase_safe._MAX_IN_FLIGHT_PER_LABEL):
+        result = safe_write(blocking_op, timeout_s=0.05, label=label)
+        assert result is None  # timed out, but thread still in flight
+
+    with caplog.at_level("WARNING"):
+        # This one should be dropped without spawning a new thread.
+        dropped = safe_write(lambda: "shouldn't run", timeout_s=1.0, label=label)
+
+    assert dropped is None
+    assert any("saturated" in rec.message for rec in caplog.records), (
+        "saturation guard did not log a drop"
+    )
+    # Release the side threads so they decrement the counter and the
+    # process can exit cleanly.
+    release.set()
+
+
 @pytest.fixture
 def collected_rows(monkeypatch):
     """Replace ``_insert_rows`` with an in-memory collector.

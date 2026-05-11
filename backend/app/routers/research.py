@@ -116,7 +116,8 @@ async def execute_research_task_background(
                 "result_summary": {"stage": f"running:{task_data.task_type}"},
             }
         ).eq("id", task_id).execute()
-        record_event(
+        await asyncio.to_thread(
+            record_event,
             JOB_RESEARCH,
             task_id,
             EVENT_STATUS_CHANGED,
@@ -505,7 +506,8 @@ async def get_research_task(
                 )
                 if res.data:
                     task_row.update(updates)
-                    record_event(
+                    await asyncio.to_thread(
+                        record_event,
                         JOB_RESEARCH,
                         task_id,
                         EVENT_WATCHDOG_KILLED,
@@ -580,7 +582,8 @@ async def get_research_task(
             )
             if res.data:
                 task_row.update(updates)
-                record_event(
+                await asyncio.to_thread(
+                    record_event,
                     JOB_RESEARCH,
                     task_id,
                     EVENT_WATCHDOG_KILLED,
