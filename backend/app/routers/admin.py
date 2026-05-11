@@ -1677,7 +1677,9 @@ _LAST_EMBEDDING_BACKFILL: dict[str, Any] = {"state": "idle"}
 
 
 @router.post("/admin/embeddings/backfill")
+@limiter.limit("3/minute")
 async def trigger_embedding_backfill(
+    request: Request,
     body: EmbeddingBackfillRequest,
     current_user: dict = Depends(get_current_user),
 ):
@@ -1688,11 +1690,21 @@ async def trigger_embedding_backfill(
     (cards: name+summary+description, sources: title+ai_summary), and
     overwrites the column. Runs in the background; check
     ``GET /admin/embeddings/backfill/status`` for the result.
+
+    Rate-limited to 3/min and rejects overlapping launches with 409 so a
+    double-click can't run two concurrent backfills that race on the same
+    rows (wasted embedding spend + last-write-wins on the column).
     """
     require_admin(current_user)
 
+    if _LAST_EMBEDDING_BACKFILL.get("state") == "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An embedding backfill is already running",
+        )
+
     from app.embedding_backfill_service import run_embedding_backfill
-    from app.openai_provider import get_deployment_name as _resolve_model
+    from app.openai_provider import get_embedding_deployment
 
     capped_limit = max(1, min(body.limit, 10000))
     capped_concurrency = max(1, min(body.concurrency, 10))
@@ -1719,7 +1731,7 @@ async def trigger_embedding_backfill(
             "target": body.target,
             "limit": capped_limit,
             "concurrency": capped_concurrency,
-            "model": _resolve_model("text-embedding-ada-002"),
+            "model": get_embedding_deployment(),
             "offsets": offsets,
             "started_at": datetime.now(timezone.utc).isoformat(),
         }

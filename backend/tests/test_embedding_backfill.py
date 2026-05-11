@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app import embedding_backfill_service as svc
 
@@ -70,10 +70,31 @@ class _FakeSupabase:
 
 
 def test_run_embedding_backfill_caps_limit_and_concurrency():
-    """A caller passing absurd values must be clamped, not honored."""
+    """A caller passing absurd values must be clamped, not honored.
+
+    Asserts both:
+    - `limit` clamping by inspecting the actual `.range(...)` slice the
+      service queries (visible even with zero rows returned).
+    - `concurrency` clamping by mocking `_process_table` and checking the
+      value handed to it, since the semaphore itself is only exercised
+      when there are rows to process.
+    """
 
     fake = _FakeSupabase()
-    with patch.object(svc, "get_embedding_deployment", return_value="test-model"):
+    mocked_process = AsyncMock(
+        return_value={
+            "total": 0,
+            "succeeded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "offset": 0,
+            "next_offset": 0,
+            "done": True,
+        }
+    )
+    with patch.object(svc, "_process_table", mocked_process), patch.object(
+        svc, "get_embedding_deployment", return_value="test-model"
+    ):
         result = asyncio.run(
             svc.run_embedding_backfill(
                 fake,
@@ -83,12 +104,30 @@ def test_run_embedding_backfill_caps_limit_and_concurrency():
             )
         )
 
-    # The slice we asked for must use the hard-cap, not the absurd value.
-    cards_range = fake.recorded["cards"]["range"]
-    assert cards_range == (0, svc._LIMIT_HARD_CAP - 1)
-    # `next_offset == 0` because the fake returned no rows.
-    assert result["cards"]["next_offset"] == 0
+    # `_process_table` receives the clamped values, not the absurd ones.
+    process_kwargs = mocked_process.await_args.kwargs
+    assert process_kwargs["limit"] == svc._LIMIT_HARD_CAP
+    assert process_kwargs["concurrency"] == svc._CONCURRENCY_HARD_CAP
     assert result["cards"]["done"] is True
+
+
+def test_run_embedding_backfill_queries_clamped_range_without_mock():
+    """End-to-end variant: with the real `_process_table`, the Supabase
+    query slice reflects the clamped limit so a regression that bypassed
+    the cap would show up in the recorded `.range(...)` call."""
+
+    fake = _FakeSupabase()
+    with patch.object(svc, "get_embedding_deployment", return_value="test-model"):
+        asyncio.run(
+            svc.run_embedding_backfill(
+                fake,
+                target="cards",
+                limit=10_000_000,
+                concurrency=3,
+            )
+        )
+
+    assert fake.recorded["cards"]["range"] == (0, svc._LIMIT_HARD_CAP - 1)
 
 
 def test_run_embedding_backfill_advances_offsets_per_table():
