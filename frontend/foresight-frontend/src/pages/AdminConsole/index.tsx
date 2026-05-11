@@ -11,6 +11,7 @@ import React, { useCallback, useState } from "react";
 import { Loader2, RefreshCw, Shield } from "lucide-react";
 
 import {
+  type AdminAction,
   fetchAdminOverview,
   fetchRecentJobs,
   triggerAdminAction,
@@ -90,7 +91,7 @@ const AdminConsole: React.FC = () => {
   // Operations triggers — these aren't tied to a feature hook because they
   // mutate two bootstrap slices (jobs + overview) at once.
   const runAction = useCallback(
-    async (action: "scan" | "velocity" | "quality" | "lens-backfill") => {
+    async (action: AdminAction) => {
       try {
         const token = await getToken();
         const result = await triggerAdminAction(token, action);
