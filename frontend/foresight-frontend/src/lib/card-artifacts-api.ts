@@ -45,12 +45,22 @@ export async function getCardsArtifacts(
   const merged: Record<string, CardArtifacts> = {};
   for (let i = 0; i < cardIds.length; i += ARTIFACTS_BATCH_SIZE) {
     const chunk = cardIds.slice(i, i + ARTIFACTS_BATCH_SIZE);
-    const batch = await apiRequest<Record<string, CardArtifacts>>(
-      `/api/v1/cards/artifacts`,
-      token,
-      { method: "POST", body: JSON.stringify({ card_ids: chunk }) },
-    );
-    Object.assign(merged, batch);
+    try {
+      const batch = await apiRequest<Record<string, CardArtifacts>>(
+        `/api/v1/cards/artifacts`,
+        token,
+        { method: "POST", body: JSON.stringify({ card_ids: chunk }) },
+      );
+      Object.assign(merged, batch);
+    } catch (err) {
+      // Don't drop successfully-fetched batches on a transient failure mid-loop —
+      // the caller (hydrateCardCollab) treats the merged map as best-effort
+      // decoration, so partial data is better than throwing the whole thing out.
+      console.warn(
+        `getCardsArtifacts: chunk ${i / ARTIFACTS_BATCH_SIZE} failed, continuing with partial data`,
+        err,
+      );
+    }
   }
   return merged;
 }
