@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
+from app.authz import is_admin
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -249,6 +250,7 @@ async def chat_endpoint(
                 user_id=user_id,
                 supabase_client=supabase,
                 mentions=mention_dicts,
+                is_admin=is_admin(current_user),
             ):
                 yield event
 

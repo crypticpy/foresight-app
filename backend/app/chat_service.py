@@ -198,6 +198,7 @@ async def _check_chat_quota(
     supabase: Client,
     user_id: str,
     conversation_id: Optional[str],
+    is_admin: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     """
     Pilot-window cap on chat usage. Returns (allowed, reason).
@@ -208,10 +209,13 @@ async def _check_chat_quota(
       conversations created since UTC midnight today; reject when
       >= CHAT_DAILY_SESSIONS.
 
+    Admins bypass the pilot cap so the test/admin account can keep working
+    during demos.
+
     Fails open on Supabase errors so transient infrastructure issues don't
     silently lock users out.
     """
-    if not CHAT_QUOTA_ENABLED:
+    if not CHAT_QUOTA_ENABLED or is_admin:
         return True, None
 
     try:
@@ -566,6 +570,7 @@ async def chat(
     user_id: str,
     supabase_client: Client,
     mentions: Optional[List[Dict[str, Any]]] = None,
+    is_admin: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Main chat function that returns an async generator of SSE events.
@@ -593,9 +598,9 @@ async def chat(
             )
             return
 
-        # 1b. Pilot quota (sessions/day + turns/session)
+        # 1b. Pilot quota (sessions/day + turns/session); admins are exempt.
         quota_ok, quota_reason = await _check_chat_quota(
-            supabase_client, user_id, conversation_id
+            supabase_client, user_id, conversation_id, is_admin=is_admin
         )
         if not quota_ok:
             yield _sse_error_code(
