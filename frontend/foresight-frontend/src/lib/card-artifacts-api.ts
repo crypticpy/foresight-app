@@ -27,14 +27,30 @@ export function getCardArtifacts(token: string, cardId: string) {
   return apiRequest<CardArtifacts>(`/api/v1/cards/${cardId}/artifacts`, token);
 }
 
-export function getCardsArtifacts(
+// Server-side cap is 250 ids per request (BATCH_CARD_ID_LIMIT in
+// card_subresources.py). Chunk at the cap so Discover's full-page result set
+// (PostgREST returns up to 1000 rows by default) doesn't 400 the batch lookup.
+//
+// Chunks are issued sequentially (not Promise.all) to keep concurrent
+// in-flight POSTs low for mobile/cellular clients — the caller already
+// parallelizes artifacts + followers, so this stays at 2 concurrent fetches
+// rather than 2 × ceil(N/250).
+const ARTIFACTS_BATCH_SIZE = 250;
+
+export async function getCardsArtifacts(
   token: string,
   cardIds: string[],
 ): Promise<Record<string, CardArtifacts>> {
-  if (cardIds.length === 0) return Promise.resolve({});
-  return apiRequest<Record<string, CardArtifacts>>(
-    `/api/v1/cards/artifacts`,
-    token,
-    { method: "POST", body: JSON.stringify({ card_ids: cardIds }) },
-  );
+  if (cardIds.length === 0) return {};
+  const merged: Record<string, CardArtifacts> = {};
+  for (let i = 0; i < cardIds.length; i += ARTIFACTS_BATCH_SIZE) {
+    const chunk = cardIds.slice(i, i + ARTIFACTS_BATCH_SIZE);
+    const batch = await apiRequest<Record<string, CardArtifacts>>(
+      `/api/v1/cards/artifacts`,
+      token,
+      { method: "POST", body: JSON.stringify({ card_ids: chunk }) },
+    );
+    Object.assign(merged, batch);
+  }
+  return merged;
 }
