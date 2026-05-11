@@ -61,6 +61,11 @@ def safe_write(
         return None
     exc = result_holder.get("exc")
     if exc is not None:
-        logger.debug("supabase op %s failed: %s", label, exc)
+        # exc_info preserves the traceback so a logging handler that's
+        # configured for it can show *where* the supabase op blew up.
+        # Kept at debug so a noisy failing path doesn't swamp prod logs.
+        logger.debug(
+            "supabase op %s failed: %s", label, exc, exc_info=exc
+        )
         return None
     return result_holder.get("value")  # type: ignore[return-value]

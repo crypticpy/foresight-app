@@ -122,25 +122,113 @@ def test_emitter_context_manager_records_error_on_exception(collected_rows):
     assert error_rows[0]["payload"]["exception_type"] == "ValueError"
 
 
+def _wait_for(predicate, *, timeout: float = 2.0, interval: float = 0.02):
+    """Poll until predicate is truthy or timeout elapses.
+
+    Avoids hard-coded sleeps that get flaky on slow CI runners.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return False
+
+
 def test_emitter_periodic_ticker_flushes(collected_rows, monkeypatch):
     """The background ticker flushes buffered progress events without
-    waiting for close(). We shrink the interval so the test doesn't drag."""
+    waiting for close(). Polls instead of using a fixed sleep so the test
+    isn't flaky on slow CI runners."""
     monkeypatch.setattr(job_events, "_FLUSH_INTERVAL_S", 0.05)
 
     emitter = job_events.JobEventEmitter("research_task", "task-4")
     try:
         emitter.progress(stage="loop")
-        # Wait long enough for at least one ticker fire.
-        time.sleep(0.2)
-        ticked = [
-            r
-            for r in collected_rows
-            if r["job_id"] == "task-4"
-            and r["event_type"] == job_events.EVENT_PROGRESS
-        ]
-        assert ticked, "ticker did not flush progress event before close()"
+        appeared = _wait_for(
+            lambda: any(
+                r["job_id"] == "task-4"
+                and r["event_type"] == job_events.EVENT_PROGRESS
+                for r in collected_rows
+            )
+        )
+        assert appeared, "ticker did not flush progress event before close()"
     finally:
         emitter.close()
+
+
+def test_ticker_emits_heartbeat_during_long_silence(collected_rows, monkeypatch):
+    """During a long blocking inner call (no stage events for >heartbeat
+    interval), the ticker should emit a synthetic 'tick' progress event
+    tagged with the last stage so the watchdog still sees liveness.
+
+    This is the Codex P1 case: ``_discover_sources()`` can hold for 300s+,
+    longer than the watchdog's 180s stale threshold, with no stage events
+    firing. Without ticker-emitted heartbeats, the watchdog kills a
+    still-running task.
+    """
+    monkeypatch.setattr(job_events, "_FLUSH_INTERVAL_S", 0.02)
+    monkeypatch.setattr(job_events, "_HEARTBEAT_INTERVAL_S", 0.05)
+
+    emitter = job_events.JobEventEmitter("research_task", "task-heartbeat")
+    try:
+        # Emit one stage so the emitter has a "current stage" to tag the
+        # heartbeat with. After this, simulate a long blocking inner call
+        # by simply not emitting anything; the ticker should fire ticks.
+        emitter.stage("discover", message="long inner call starting")
+
+        def has_tick():
+            return any(
+                r["job_id"] == "task-heartbeat"
+                and r["event_type"] == job_events.EVENT_PROGRESS
+                and r.get("message") == "tick"
+                and r.get("stage") == "discover"
+                for r in collected_rows
+            )
+
+        assert _wait_for(has_tick, timeout=1.0), (
+            "ticker never fired a heartbeat tick during silent stage"
+        )
+    finally:
+        emitter.close()
+
+
+def test_ticker_does_not_heartbeat_before_first_stage(collected_rows, monkeypatch):
+    """Until the caller has emitted a stage, the ticker has nothing useful
+    to tag a heartbeat with — it should stay quiet rather than write rows
+    with stage=None."""
+    monkeypatch.setattr(job_events, "_FLUSH_INTERVAL_S", 0.02)
+    monkeypatch.setattr(job_events, "_HEARTBEAT_INTERVAL_S", 0.05)
+
+    emitter = job_events.JobEventEmitter("research_task", "task-quiet")
+    try:
+        # Let several heartbeat intervals pass with no stage emitted.
+        time.sleep(0.2)
+        ticks = [
+            r
+            for r in collected_rows
+            if r["job_id"] == "task-quiet"
+            and r.get("message") == "tick"
+        ]
+        assert not ticks, "ticker fired a heartbeat before any stage was emitted"
+    finally:
+        emitter.close()
+
+
+def test_external_call_strips_provider_from_payload(collected_rows):
+    emitter = job_events.JobEventEmitter("research_task", "task-provider")
+    try:
+        emitter.external_call(
+            provider="gpt-researcher",
+            stage="discover",
+            payload={"provider": "imposter", "count": 5},
+        )
+    finally:
+        emitter.close()
+
+    rows = [r for r in collected_rows if r["job_id"] == "task-provider"]
+    assert len(rows) == 1
+    assert rows[0]["payload"]["provider"] == "gpt-researcher"
+    assert rows[0]["payload"]["count"] == 5
 
 
 def test_record_event_one_shot(collected_rows):

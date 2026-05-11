@@ -22,11 +22,12 @@ import logging
 import os
 import queue
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from supabase import Client, create_client
+from supabase import Client
 
 from app.supabase_safe import safe_write
 
@@ -49,24 +50,26 @@ EVENT_WATCHDOG_KILLED = "watchdog_killed"
 
 _FLUSH_INTERVAL_S = float(os.getenv("FORESIGHT_JOB_EVENTS_FLUSH_S", "5"))
 _INSERT_TIMEOUT_S = float(os.getenv("FORESIGHT_JOB_EVENTS_INSERT_TIMEOUT_S", "5"))
-
-_supabase_client: Client | None = None
-_client_lock = threading.Lock()
+# How long the emitter may be silent before the ticker fires a synthetic
+# heartbeat event. Must stay well below the watchdog's stale threshold
+# (default 180s) so a long blocking inner call — e.g. gpt-researcher's
+# discovery, which can hold for 300s+ — doesn't get killed.
+_HEARTBEAT_INTERVAL_S = float(os.getenv("FORESIGHT_JOB_EVENTS_HEARTBEAT_S", "60"))
 
 
 def _get_client() -> Client | None:
-    global _supabase_client
-    if _supabase_client is not None:
-        return _supabase_client
-    with _client_lock:
-        if _supabase_client is not None:
-            return _supabase_client
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_SERVICE_KEY")
-        if not url or not key:
-            return None
-        _supabase_client = create_client(url, key)
-        return _supabase_client
+    """Return the shared service-role supabase client.
+
+    Imported lazily so importing ``job_events`` from contexts that don't
+    have supabase env vars (tests, doc builds) won't crash. ``safe_write``
+    provides the wedge isolation, so a shared client is fine here.
+    """
+    try:
+        from app.deps import supabase as _service_client
+    except Exception as exc:  # noqa: BLE001 — best-effort observability path
+        logger.debug("job_events: deps.supabase unavailable: %s", exc)
+        return None
+    return _service_client
 
 
 def _make_row(
@@ -137,6 +140,13 @@ class JobEventEmitter:
         self.job_id = str(job_id)
         self._buffer: queue.SimpleQueue[dict[str, Any]] = queue.SimpleQueue()
         self._closed = threading.Event()
+        # Track the last stage we emitted + the last time anything was
+        # written, so the ticker can fire a synthetic heartbeat during long
+        # blocking inner calls (gpt-researcher discovery, large LLM calls)
+        # where the main flow is silent for minutes at a time.
+        self._last_stage: str | None = None
+        self._last_emit_at = time.monotonic()
+        self._state_lock = threading.Lock()
         self._ticker = threading.Thread(
             target=self._tick_loop,
             name=f"job-events-{self.job_id[:8]}",
@@ -146,6 +156,21 @@ class JobEventEmitter:
 
     def _tick_loop(self) -> None:
         while not self._closed.wait(_FLUSH_INTERVAL_S):
+            with self._state_lock:
+                idle_for = time.monotonic() - self._last_emit_at
+                last_stage = self._last_stage
+            # Once the emitter has been silent for longer than the
+            # heartbeat interval, drop a tick row so the watchdog sees
+            # liveness even if the inner call is still blocking. Skipped
+            # when no stage has been emitted yet so we don't write a row
+            # before the caller has signaled what work is in flight.
+            if last_stage is not None and idle_for >= _HEARTBEAT_INTERVAL_S:
+                self._enqueue(
+                    EVENT_PROGRESS,
+                    stage=last_stage,
+                    message="tick",
+                    payload={"idle_seconds": int(idle_for)},
+                )
             self._flush()
 
     def _drain(self) -> list[dict[str, Any]]:
@@ -174,6 +199,10 @@ class JobEventEmitter:
                 self.job_type, self.job_id, event_type, stage, message, payload
             )
         )
+        with self._state_lock:
+            self._last_emit_at = time.monotonic()
+            if stage is not None:
+                self._last_stage = stage
 
     def stage(
         self,
@@ -218,7 +247,11 @@ class JobEventEmitter:
         message: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        body = {"provider": provider, **(payload or {})}
+        # Strip any 'provider' key from caller payload so it can't override
+        # the argument silently — provider identifies the row, not metadata.
+        clean = dict(payload or {})
+        clean.pop("provider", None)
+        body = {"provider": provider, **clean}
         self._enqueue(
             EVENT_EXTERNAL_CALL, stage=stage, message=message, payload=body
         )

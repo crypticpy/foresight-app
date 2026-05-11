@@ -429,7 +429,15 @@ async def get_research_task(
         # asyncio task is gone (container restart, OOM, blocked supabase
         # write) and waiting for the overall 45-min timeout just leaves the
         # UI spinning.
-        EVENTS_STALE_SECONDS = 180
+        try:
+            EVENTS_STALE_SECONDS = int(
+                os.getenv("RESEARCH_TASK_EVENTS_STALE_SECONDS", "180")
+            )
+        except ValueError:
+            logger.warning(
+                "Invalid RESEARCH_TASK_EVENTS_STALE_SECONDS; using 180"
+            )
+            EVENTS_STALE_SECONDS = 180
         last_event_dt: Optional[datetime] = None
         last_event_stage: Optional[str] = None
         try:
