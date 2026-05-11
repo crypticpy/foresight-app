@@ -56,9 +56,16 @@ export function fetchRecentJobs(token: string): Promise<RecentJobsResponse> {
   return apiRequest<RecentJobsResponse>("/api/v1/admin/jobs/recent", token);
 }
 
+export type AdminAction =
+  | "scan"
+  | "velocity"
+  | "quality"
+  | "lens-backfill"
+  | "embeddings-backfill";
+
 export function triggerAdminAction(
   token: string,
-  action: "scan" | "velocity" | "quality" | "lens-backfill",
+  action: AdminAction,
 ): Promise<Record<string, unknown>> {
   const endpoints = {
     scan: { endpoint: "/api/v1/admin/scan", body: undefined },
@@ -70,6 +77,10 @@ export function triggerAdminAction(
     "lens-backfill": {
       endpoint: "/api/v1/admin/classify/backfill",
       body: { limit: 100, force: false },
+    },
+    "embeddings-backfill": {
+      endpoint: "/api/v1/admin/embeddings/backfill",
+      body: { target: "both", limit: 2000, concurrency: 3 },
     },
   } as const;
   const config = endpoints[action];

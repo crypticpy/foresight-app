@@ -1645,3 +1645,109 @@ async def trigger_lens_backfill(
         "target_version": target_version,
         "force": body.force,
     }
+
+
+# ============================================================================
+# Embedding backfill (re-embed cards + sources after a model swap)
+# ============================================================================
+
+
+class EmbeddingBackfillRequest(BaseModel):
+    """Targets for the embedding re-run.
+
+    Use after rotating ``OPENAI_EMBEDDING_MODEL`` so persisted vectors stop
+    living in two different latent spaces.
+    """
+
+    target: Literal["cards", "sources", "both"] = "both"
+    limit: int = 2000
+    concurrency: int = 3
+
+
+# Last-completed run summary, surfaced by GET /admin/embeddings/backfill/status
+# so the operator can see what the most recent button-press actually did
+# without tailing Railway logs. In-memory only — fine because the operator's
+# the only consumer and a redeploy resets state.
+_LAST_EMBEDDING_BACKFILL: dict[str, Any] = {"state": "idle"}
+
+
+@router.post("/admin/embeddings/backfill")
+async def trigger_embedding_backfill(
+    body: EmbeddingBackfillRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-embed `cards` and/or `sources` rows against the active embedding model.
+
+    Pulls up to ``limit`` rows per table whose ``embedding`` is non-null,
+    regenerates the vector with the input shape each pipeline writes today
+    (cards: name+summary+description, sources: title+ai_summary), and
+    overwrites the column. Runs in the background; check
+    ``GET /admin/embeddings/backfill/status`` for the result.
+    """
+    require_admin(current_user)
+
+    from app.embedding_backfill_service import run_embedding_backfill
+    from app.openai_provider import get_deployment_name as _resolve_model
+
+    capped_limit = max(1, min(body.limit, 10000))
+    capped_concurrency = max(1, min(body.concurrency, 10))
+
+    _LAST_EMBEDDING_BACKFILL.clear()
+    _LAST_EMBEDDING_BACKFILL.update(
+        {
+            "state": "running",
+            "target": body.target,
+            "limit": capped_limit,
+            "concurrency": capped_concurrency,
+            "model": _resolve_model("text-embedding-ada-002"),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+    async def _run():
+        try:
+            summary = await run_embedding_backfill(
+                supabase,
+                target=body.target,
+                limit=capped_limit,
+                concurrency=capped_concurrency,
+            )
+            _LAST_EMBEDDING_BACKFILL.update(
+                {
+                    "state": "complete",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "summary": summary,
+                }
+            )
+        except Exception as exc:
+            logger.exception("Embedding backfill failed: %s", exc)
+            _LAST_EMBEDDING_BACKFILL.update(
+                {
+                    "state": "failed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "error": _safe_error("embedding backfill", exc),
+                }
+            )
+
+    task = asyncio.create_task(_run())
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    return {
+        "status": "started",
+        "target": body.target,
+        "limit": capped_limit,
+        "concurrency": capped_concurrency,
+    }
+
+
+@router.get("/admin/embeddings/backfill/status")
+async def get_embedding_backfill_status(
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the most recent embedding-backfill run's state.
+
+    Returns ``{"state": "idle"}`` if the process hasn't run since boot.
+    """
+    require_admin(current_user)
+    return dict(_LAST_EMBEDDING_BACKFILL)

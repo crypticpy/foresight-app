@@ -8,7 +8,10 @@
 
 import { Play, Telescope } from "lucide-react";
 
-import { type RecentJobsResponse } from "../../../lib/admin-api";
+import {
+  type AdminAction,
+  type RecentJobsResponse,
+} from "../../../lib/admin-api";
 import { cn } from "../../../lib/utils";
 import { formatDate, SectionHeader, StatusPill } from "../helpers";
 
@@ -18,29 +21,39 @@ export function OperationsTab({
   onInspectRun,
 }: {
   jobs: RecentJobsResponse | null;
-  onAction: (action: "scan" | "velocity" | "quality" | "lens-backfill") => void;
+  onAction: (action: AdminAction) => void;
   onInspectRun: (runId: string) => void;
 }) {
-  const actions = [
+  const actions: Array<{
+    id: AdminAction;
+    title: string;
+    description: string;
+  }> = [
     {
-      id: "scan" as const,
+      id: "scan",
       title: "Manual update scan",
       description: "Queue quick update tasks for active signals stale for 24h.",
     },
     {
-      id: "velocity" as const,
+      id: "velocity",
       title: "Velocity recalculation",
       description: "Recalculate trend velocity for all active signals.",
     },
     {
-      id: "quality" as const,
+      id: "quality",
       title: "Quality recalculation",
       description: "Recompute signal quality scores across all cards.",
     },
     {
-      id: "lens-backfill" as const,
+      id: "lens-backfill",
       title: "Lens classification backfill",
       description: "Backfill lens metadata for up to 100 cards.",
+    },
+    {
+      id: "embeddings-backfill",
+      title: "Re-embed corpus",
+      description:
+        "Regenerate cards + sources embeddings against the active model (up to 2000 rows per table).",
     },
   ];
 
