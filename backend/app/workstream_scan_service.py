@@ -1260,7 +1260,8 @@ Example: ["query 1", "query 2", ...]"""
             if existing.data:
                 return False  # Already in workstream
 
-            # Add to inbox
+            # Column is `added_at`, not `created_at`. PGRST204 here was
+            # swallowed by the outer except → silent attach failure.
             result = (
                 self.supabase.table("workstream_cards")
                 .insert(
@@ -1271,7 +1272,7 @@ Example: ["query 1", "query 2", ...]"""
                         "status": "inbox",
                         "position": 0,
                         "added_from": "workstream_scan",
-                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "added_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
                 .execute()
