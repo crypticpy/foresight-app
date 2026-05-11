@@ -73,6 +73,9 @@ async def _embed_one(text: str) -> Optional[List[float]]:
         return None
 
 
+_POSTGREST_PAGE_SIZE = 1000
+
+
 async def _process_table(
     supabase: Any,
     *,
@@ -84,7 +87,12 @@ async def _process_table(
     offset: int = 0,
     include_null: bool = True,
 ) -> Dict[str, Any]:
-    """Pull a `[offset, offset+limit)` slice from one table and re-embed it.
+    """Pull `[offset, offset+limit)` rows from one table and re-embed them.
+
+    PostgREST caps a single response at 1000 rows regardless of `.range()`,
+    so we internally page in 1000-row slices until we hit `limit` or a
+    slice returns short. The outer `limit` is the total rows processed in
+    this call — not the size of one query.
 
     `include_null=True` (default) covers first-time embedding: rows whose
     `embedding` is NULL are included alongside rows being re-embedded.
@@ -92,27 +100,18 @@ async def _process_table(
     rows that already have a vector, leaving NULLs alone.
 
     Returns counters plus `next_offset` (where the next call should resume)
-    and `done` (True when this slice returned fewer than `limit` rows, i.e.
-    we've reached the tail of the corpus).
+    and `done` (True when we reached the tail of the corpus, i.e. the last
+    internal page returned fewer than `_POSTGREST_PAGE_SIZE` rows).
     """
-    query = supabase.table(table).select(select_cols)
-    if not include_null:
-        query = query.not_.is_("embedding", "null")
-    query = query.order("id").range(offset, offset + limit - 1)
-    resp = await asyncio.to_thread(query.execute)
-    rows: List[Dict[str, Any]] = resp.data or []
     counters: Dict[str, Any] = {
-        "total": len(rows),
+        "total": 0,
         "succeeded": 0,
         "skipped": 0,
         "failed": 0,
         "offset": offset,
-        "next_offset": offset + len(rows),
-        "done": len(rows) < limit,
+        "next_offset": offset,
+        "done": False,
     }
-    if not rows:
-        return counters
-
     sem = asyncio.Semaphore(max(1, concurrency))
 
     async def _one(row: Dict[str, Any]) -> None:
@@ -120,9 +119,6 @@ async def _process_table(
             text = text_builder(row)
             embedding = await _embed_one(text)
             if embedding is None:
-                # Either the input was too short to be meaningful or the
-                # embedding API itself errored. Either way: leave the old
-                # vector in place rather than nulling out search coverage.
                 counters["skipped" if len(text) < 10 else "failed"] += 1
                 return
             try:
@@ -139,7 +135,30 @@ async def _process_table(
                 )
                 counters["failed"] += 1
 
-    await asyncio.gather(*[_one(r) for r in rows])
+    cursor = offset
+    while counters["total"] < limit:
+        page_size = min(_POSTGREST_PAGE_SIZE, limit - counters["total"])
+        query = supabase.table(table).select(select_cols)
+        if not include_null:
+            query = query.not_.is_("embedding", "null")
+        query = query.order("id").range(cursor, cursor + page_size - 1)
+        resp = await asyncio.to_thread(query.execute)
+        rows: List[Dict[str, Any]] = resp.data or []
+        if not rows:
+            counters["done"] = True
+            break
+
+        counters["total"] += len(rows)
+        counters["next_offset"] = cursor + len(rows)
+        await asyncio.gather(*[_one(r) for r in rows])
+
+        # Short page → past the tail. Stop and mark done so callers can
+        # reset the cursor on the next click.
+        if len(rows) < page_size:
+            counters["done"] = True
+            break
+        cursor += len(rows)
+
     return counters
 
 

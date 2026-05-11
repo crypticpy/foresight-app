@@ -43,7 +43,10 @@ class _FakeQuery:
         return self
 
     def range(self, start, end):
-        self.recorded[self.table]["range"] = (start, end)
+        # Record the first range only — sufficient for the existing slice
+        # assertions, which only care about the opening page.
+        self.recorded[self.table].setdefault("range", (start, end))
+        self.recorded[self.table].setdefault("ranges", []).append((start, end))
         return self
 
     def limit(self, _n):
@@ -113,9 +116,9 @@ def test_run_embedding_backfill_caps_limit_and_concurrency():
 
 
 def test_run_embedding_backfill_queries_clamped_range_without_mock():
-    """End-to-end variant: with the real `_process_table`, the Supabase
-    query slice reflects the clamped limit so a regression that bypassed
-    the cap would show up in the recorded `.range(...)` call."""
+    """End-to-end variant: with the real `_process_table`, the first
+    Supabase page slice is capped at the PostgREST page size (1000),
+    not the request limit. Confirms the internal pager is in use."""
 
     fake = _FakeSupabase()
     with patch.object(svc, "get_embedding_deployment", return_value="test-model"):
@@ -128,7 +131,7 @@ def test_run_embedding_backfill_queries_clamped_range_without_mock():
             )
         )
 
-    assert fake.recorded["cards"]["range"] == (0, svc._LIMIT_HARD_CAP - 1)
+    assert fake.recorded["cards"]["range"] == (0, svc._POSTGREST_PAGE_SIZE - 1)
 
 
 def test_run_embedding_backfill_advances_offsets_per_table():
@@ -150,6 +153,76 @@ def test_run_embedding_backfill_advances_offsets_per_table():
     assert fake.recorded["sources"]["range"] == (250, 749)
     assert fake.recorded["cards"]["order"] == "id"
     assert fake.recorded["sources"]["order"] == "id"
+
+
+def test_process_table_pages_past_postgrest_cap():
+    """PostgREST caps responses at 1000 rows; `_process_table` must page
+    internally so a 7000-row corpus completes in one call, not one page.
+    """
+
+    pages: List[List[Dict[str, Any]]] = [
+        # 3 full 1000-row pages, then a 50-row tail.
+        [{"id": f"r{i:05d}", "name": "x", "summary": "y", "description": "z"} for i in range(start, start + 1000)]
+        for start in (0, 1000, 2000)
+    ] + [
+        [
+            {"id": f"r{i:05d}", "name": "x", "summary": "y", "description": "z"}
+            for i in range(3000, 3050)
+        ]
+    ]
+    issued: List[List[Dict[str, Any]]] = list(pages)
+
+    class _PagingQuery(_FakeQuery):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self._is_write = False
+
+        def update(self, *_a, **_kw):
+            self._is_write = True
+            return self
+
+        def execute(self):
+            # Write-path execute is the embedding update — don't burn a page.
+            if self._is_write:
+                return type("R", (), {"data": None})()
+            return type("R", (), {"data": issued.pop(0) if issued else []})()
+
+    class _PagingSupabase:
+        def __init__(self):
+            self.recorded: Dict[str, Dict[str, Any]] = {}
+
+        def table(self, name):
+            q = _PagingQuery(name, self.recorded)
+            q.not_ = q  # type: ignore[assignment]
+            return q
+
+    fake = _PagingSupabase()
+
+    async def _ok(_text):
+        return [0.0] * 4
+
+    with patch.object(svc, "_embed_one", side_effect=_ok), patch.object(
+        svc, "get_embedding_deployment", return_value="test-model"
+    ):
+        counters = asyncio.run(
+            svc._process_table(
+                fake,
+                table="cards",
+                select_cols="id, name, summary, description",
+                text_builder=svc._build_card_text,
+                limit=10_000,
+                concurrency=3,
+                offset=0,
+            )
+        )
+
+    assert counters["total"] == 3050
+    assert counters["next_offset"] == 3050
+    assert counters["done"] is True
+    # Confirm the pager actually issued 4 ranges (3 full + 1 short tail)
+    assert len(fake.recorded["cards"]["ranges"]) == 4
+    assert fake.recorded["cards"]["ranges"][0] == (0, 999)
+    assert fake.recorded["cards"]["ranges"][3] == (3000, 3999)
 
 
 def test_include_null_default_skips_not_null_filter():
