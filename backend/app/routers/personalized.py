@@ -7,13 +7,15 @@ one place. The endpoint surfaces the score and a breakdown alongside each
 card so the UI can show a "why is this here" tooltip.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.deps import get_current_user, supabase
 from app.discovery_scoring import calculate_discovery_score
+from app.security import limiter
 
 router = APIRouter(prefix="/api/v1", tags=["personalized"])
 
@@ -30,7 +32,9 @@ _CANDIDATE_POOL = 500
 
 
 @router.get("/me/discovery/queue")
+@limiter.limit("60/minute")
 async def get_personalized_queue(
+    request: Request,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user),
@@ -45,26 +49,58 @@ async def get_personalized_queue(
     user_id = current_user["id"]
 
     # Workstreams: user-owned active rows + all org-owned active rows
-    # (org workstreams are visible to every user; see workstreams.py).
-    own_ws = (
-        supabase.table("workstreams")
-        .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
-        .eq("user_id", user_id)
-        .eq("is_active", True)
-        .execute()
+    # + workstreams shared with the user via workstream_members. /me/workstreams
+    # surfaces all three buckets, so the personalized ranker must score against
+    # the same set or it silently ignores collaborator-shared rows.
+    own_ws_resp, org_ws_resp, memberships_resp = await asyncio.gather(
+        asyncio.to_thread(
+            lambda: supabase.table("workstreams")
+            .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
+            .eq("user_id", user_id)
+            .eq("is_active", True)
+            .execute()
+        ),
+        asyncio.to_thread(
+            lambda: supabase.table("workstreams")
+            .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
+            .eq("owner_type", "org")
+            .eq("is_active", True)
+            .execute()
+        ),
+        asyncio.to_thread(
+            lambda: supabase.table("workstream_members")
+            .select("workstream_id")
+            .eq("user_id", user_id)
+            .execute()
+        ),
     )
-    org_ws = (
-        supabase.table("workstreams")
-        .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
-        .eq("owner_type", "org")
-        .eq("is_active", True)
-        .execute()
+    workstreams: List[Dict[str, Any]] = (own_ws_resp.data or []) + (
+        org_ws_resp.data or []
     )
-    workstreams: List[Dict[str, Any]] = (own_ws.data or []) + (org_ws.data or [])
+
+    shared_ids = [
+        row["workstream_id"]
+        for row in (memberships_resp.data or [])
+        if row.get("workstream_id")
+    ]
+    if shared_ids:
+        shared_ws_resp = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
+            .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
+            .in_("id", shared_ids)
+            .eq("is_active", True)
+            .execute()
+        )
+        # Dedupe — a workstream can hit two of own/org/shared in principle.
+        seen = {ws["id"] for ws in workstreams if ws.get("id")}
+        for ws in shared_ws_resp.data or []:
+            if ws.get("id") and ws["id"] not in seen:
+                workstreams.append(ws)
+                seen.add(ws["id"])
 
     # Followed cards: only the fields the scorer reads (pillar + goal).
-    follows = (
-        supabase.table("card_follows")
+    follows = await asyncio.to_thread(
+        lambda: supabase.table("card_follows")
         .select("card_id, cards(id, pillar_id, goal_id)")
         .eq("user_id", user_id)
         .execute()
@@ -74,8 +110,8 @@ async def get_personalized_queue(
     ]
 
     # Dismissals: hide from candidates *and* feed into the novelty boost.
-    dismissals = (
-        supabase.table("user_card_dismissals")
+    dismissals = await asyncio.to_thread(
+        lambda: supabase.table("user_card_dismissals")
         .select("card_id")
         .eq("user_id", user_id)
         .execute()
@@ -90,16 +126,16 @@ async def get_personalized_queue(
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=_CANDIDATE_WINDOW_DAYS)
     ).isoformat()
-    candidates_q = (
-        supabase.table("cards")
+    candidates_resp = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("*")
         .eq("status", "active")
         .neq("review_status", "rejected")
         .gte("created_at", cutoff)
         .order("created_at", desc=True)
         .limit(_CANDIDATE_POOL)
+        .execute()
     )
-    candidates_resp = candidates_q.execute()
     candidates: List[Dict[str, Any]] = candidates_resp.data or []
     if dismissed_ids:
         candidates = [c for c in candidates if c.get("id") not in dismissed_ids]

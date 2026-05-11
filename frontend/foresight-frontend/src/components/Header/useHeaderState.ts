@@ -79,10 +79,20 @@ export function useHeaderState(): UseHeaderStateReturn {
 
   useEffect(() => {
     const handleCmdK = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        navigate("/ask");
+      if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) return;
+      // Don't hijack the shortcut while the user is typing — Cmd+K is the
+      // chrome "open Ask Foresight" shortcut, but inside an input/textarea
+      // or contenteditable element the keystroke belongs to the field.
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
       }
+      e.preventDefault();
+      navigate("/ask");
     };
     document.addEventListener("keydown", handleCmdK);
     return () => document.removeEventListener("keydown", handleCmdK);
