@@ -127,20 +127,20 @@ export function useResearch(
   const pollTaskStatus = useCallback(
     async (taskId: string, cardId: string) => {
       const poll = async () => {
-        // Re-fetch the token on every poll. Deep research can run up to 45 min,
-        // but Supabase access tokens expire in ~1 hour; a token captured at
-        // poll start can go stale mid-loop and the backend will 401. Supabase's
-        // client auto-refreshes the session in the background, so calling
-        // getAuthToken() here returns a fresh token without an explicit refresh.
-        const token = await getAuthToken();
-        if (!token) {
-          setIsResearching(false);
-          setResearchError("Authentication lost");
-          cleanupPolling();
-          return;
-        }
-
         try {
+          // Re-fetch the token on every poll. Deep research can run up to 45 min,
+          // but Supabase access tokens expire in ~1 hour; a token captured at
+          // poll start can go stale mid-loop and the backend will 401. Supabase's
+          // client auto-refreshes the session in the background, so calling
+          // getAuthToken() here returns a fresh token without an explicit refresh.
+          const token = await getAuthToken();
+          if (!token) {
+            setIsResearching(false);
+            setResearchError("Authentication lost");
+            cleanupPolling();
+            return;
+          }
+
           const response = await fetch(
             `${API_BASE_URL}/api/v1/research/${taskId}`,
             {
