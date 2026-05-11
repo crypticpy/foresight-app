@@ -1673,7 +1673,15 @@ class EmbeddingBackfillRequest(BaseModel):
 # so the operator can see what the most recent button-press actually did
 # without tailing Railway logs. In-memory only — fine because the operator's
 # the only consumer and a redeploy resets state.
+#
+# Caveat: prod runs gunicorn with 4 Uvicorn workers (`backend/entrypoint.sh`),
+# so this dict + the lock below are *per-process*. The overlap guard prevents
+# two concurrent backfills on a single worker; two requests landing on
+# different workers can still race. A proper cross-worker lock (Postgres
+# advisory lock or Redis) is a follow-up. The 3/min rate limit narrows the
+# practical window further but is also per-worker.
 _LAST_EMBEDDING_BACKFILL: dict[str, Any] = {"state": "idle"}
+_EMBEDDING_BACKFILL_LOCK = asyncio.Lock()
 
 
 @router.post("/admin/embeddings/backfill")
@@ -1693,15 +1701,11 @@ async def trigger_embedding_backfill(
 
     Rate-limited to 3/min and rejects overlapping launches with 409 so a
     double-click can't run two concurrent backfills that race on the same
-    rows (wasted embedding spend + last-write-wins on the column).
+    rows (wasted embedding spend + last-write-wins on the column). See the
+    module-level note on `_LAST_EMBEDDING_BACKFILL` for the cross-worker
+    limitation.
     """
     require_admin(current_user)
-
-    if _LAST_EMBEDDING_BACKFILL.get("state") == "running":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An embedding backfill is already running",
-        )
 
     from app.embedding_backfill_service import run_embedding_backfill
     from app.openai_provider import get_embedding_deployment
@@ -1709,33 +1713,44 @@ async def trigger_embedding_backfill(
     capped_limit = max(1, min(body.limit, 10000))
     capped_concurrency = max(1, min(body.concurrency, 10))
 
-    # Auto-advance the per-table cursor from the previous run's `next_offset`
-    # so repeated button-presses walk the corpus instead of re-embedding the
-    # same prefix. `restart=true` resets both cursors back to 0.
-    offsets: dict[str, int] = {"cards": 0, "sources": 0}
-    if not body.restart:
-        prior_summary = _LAST_EMBEDDING_BACKFILL.get("summary") or {}
-        for table in ("cards", "sources"):
-            table_summary = prior_summary.get(table) or {}
-            next_offset = table_summary.get("next_offset")
-            if isinstance(next_offset, int) and next_offset > 0:
-                # If the prior run reported `done: true`, that table has been
-                # exhausted — wrap back to 0 so the next click starts a fresh
-                # pass rather than getting stuck past the tail.
-                offsets[table] = 0 if table_summary.get("done") else next_offset
+    # Hold the lock across the check-and-set so two concurrent requests on
+    # the same worker can't both pass the != "running" check before either
+    # transitions the state. The body of `_run` is launched as a background
+    # task and runs outside the lock.
+    async with _EMBEDDING_BACKFILL_LOCK:
+        if _LAST_EMBEDDING_BACKFILL.get("state") == "running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An embedding backfill is already running",
+            )
 
-    _LAST_EMBEDDING_BACKFILL.clear()
-    _LAST_EMBEDDING_BACKFILL.update(
-        {
-            "state": "running",
-            "target": body.target,
-            "limit": capped_limit,
-            "concurrency": capped_concurrency,
-            "model": get_embedding_deployment(),
-            "offsets": offsets,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+        # Auto-advance the per-table cursor from the previous run's `next_offset`
+        # so repeated button-presses walk the corpus instead of re-embedding the
+        # same prefix. `restart=true` resets both cursors back to 0.
+        offsets: dict[str, int] = {"cards": 0, "sources": 0}
+        if not body.restart:
+            prior_summary = _LAST_EMBEDDING_BACKFILL.get("summary") or {}
+            for table in ("cards", "sources"):
+                table_summary = prior_summary.get(table) or {}
+                next_offset = table_summary.get("next_offset")
+                if isinstance(next_offset, int) and next_offset > 0:
+                    # If the prior run reported `done: true`, that table has been
+                    # exhausted — wrap back to 0 so the next click starts a fresh
+                    # pass rather than getting stuck past the tail.
+                    offsets[table] = 0 if table_summary.get("done") else next_offset
+
+        _LAST_EMBEDDING_BACKFILL.clear()
+        _LAST_EMBEDDING_BACKFILL.update(
+            {
+                "state": "running",
+                "target": body.target,
+                "limit": capped_limit,
+                "concurrency": capped_concurrency,
+                "model": get_embedding_deployment(),
+                "offsets": offsets,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     async def _run():
         try:
