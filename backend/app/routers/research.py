@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -115,33 +116,35 @@ async def execute_research_task_background(
 
         # Background heartbeat to prevent the stale-task watchdog from killing
         # long-running research while it's still making progress.
-        # research_service makes many sync supabase.execute() calls inside
-        # async — those block the event loop, which can starve this 60s sleep
-        # and freeze the heartbeat while the task is still alive. Push the
-        # write off-loop via asyncio.to_thread so it survives event-loop
-        # contention.
-        async def _heartbeat():
-            while True:
-                await asyncio.sleep(60)
+        # research_service makes sync supabase.execute() calls inside async,
+        # which can block the event loop. An asyncio heartbeat coroutine
+        # can't fire its sleep() during that — even with to_thread inside —
+        # because the loop itself is starved. Use a real OS thread so the
+        # heartbeat survives loop contention. Status guard on the update
+        # prevents a late heartbeat write (in-flight when the task finished)
+        # from clobbering the final result_summary.
+        heartbeat_stop = threading.Event()
+
+        def _heartbeat_thread():
+            while not heartbeat_stop.wait(60):
                 try:
-                    await asyncio.to_thread(
-                        lambda: supabase.table("research_tasks").update(
-                            {
-                                "result_summary": {
-                                    "stage": f"running:{task_data.task_type}",
-                                    "heartbeat_at": datetime.now(
-                                        timezone.utc
-                                    ).isoformat(),
-                                }
+                    supabase.table("research_tasks").update(
+                        {
+                            "result_summary": {
+                                "stage": f"running:{task_data.task_type}",
+                                "heartbeat_at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(),
                             }
-                        ).eq("id", task_id).execute()
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Heartbeat write failed for task {task_id}: {e}"
+                        }
+                    ).eq("id", task_id).eq("status", "processing").execute()
+                except Exception:
+                    logger.exception(
+                        "Heartbeat write failed for task %s", task_id
                     )
 
-        heartbeat_task = asyncio.create_task(_heartbeat())
+        heartbeat = threading.Thread(target=_heartbeat_thread, daemon=True)
+        heartbeat.start()
 
         try:
             with llm_usage_context(
@@ -172,7 +175,8 @@ async def execute_research_task_background(
                 else:
                     raise ValueError(f"Unknown task type: {task_data.task_type}")
         finally:
-            heartbeat_task.cancel()
+            heartbeat_stop.set()
+            heartbeat.join(timeout=2)
 
         # Convert ResearchResult dataclass to dict for storage
         result_summary = {
