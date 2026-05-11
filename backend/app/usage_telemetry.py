@@ -13,10 +13,12 @@ import atexit
 import json
 import logging
 import os
+import queue
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from supabase import Client, create_client
 
@@ -24,7 +26,86 @@ from app.redaction import merge_flags, redact_and_truncate
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="usage-telemetry")
+# Bounded telemetry queue. Without this, a slow supabase PATCH wedges the 2
+# executor workers and `submit()` quietly grows the queue without limit —
+# observed in prod after the embedding backfill flooded telemetry: every LLM
+# event for the next 2 hours vanished into a queue that never drained. We
+# now hand-roll the queue + worker threads so we can both (a) drop on
+# overflow instead of leaking, and (b) bound how long any single insert can
+# block a worker.
+_TELEMETRY_QUEUE_MAX = int(os.getenv("FORESIGHT_TELEMETRY_QUEUE_MAX", "500"))
+_TELEMETRY_INSERT_TIMEOUT_S = float(
+    os.getenv("FORESIGHT_TELEMETRY_INSERT_TIMEOUT_S", "10")
+)
+_TELEMETRY_WORKER_COUNT = 2
+_telemetry_queue: queue.Queue[Callable[[], None] | None] = queue.Queue(
+    maxsize=_TELEMETRY_QUEUE_MAX
+)
+_telemetry_dropped_count = 0
+_telemetry_dropped_lock = threading.Lock()
+
+
+def _telemetry_worker_loop() -> None:
+    while True:
+        task = _telemetry_queue.get()
+        try:
+            if task is None:
+                return
+            task()
+        except Exception:  # pragma: no cover — never let a worker die silently
+            logger.debug("Telemetry worker task raised", exc_info=True)
+        finally:
+            _telemetry_queue.task_done()
+
+
+_telemetry_workers = [
+    threading.Thread(
+        target=_telemetry_worker_loop,
+        name=f"usage-telemetry-{i}",
+        daemon=True,
+    )
+    for i in range(_TELEMETRY_WORKER_COUNT)
+]
+for _t in _telemetry_workers:
+    _t.start()
+
+
+def _submit_telemetry(task: Callable[[], None]) -> None:
+    """Enqueue a telemetry task; drop on overflow rather than block.
+
+    Dropped events are counted and surfaced via DEBUG logs at most once per
+    100 drops so a flood doesn't spam the logs.
+    """
+    global _telemetry_dropped_count
+    try:
+        _telemetry_queue.put_nowait(task)
+    except queue.Full:
+        with _telemetry_dropped_lock:
+            _telemetry_dropped_count += 1
+            if _telemetry_dropped_count % 100 == 1:
+                logger.warning(
+                    "Telemetry queue full (cap=%d); dropped %d events total. "
+                    "Possible stuck telemetry worker.",
+                    _TELEMETRY_QUEUE_MAX,
+                    _telemetry_dropped_count,
+                )
+
+
+def _drain_telemetry_on_exit() -> None:
+    """Signal workers to stop on interpreter shutdown. Best-effort —
+    we don't wait, so in-flight inserts may be lost (same as before)."""
+    for _ in _telemetry_workers:
+        try:
+            _telemetry_queue.put_nowait(None)
+        except queue.Full:
+            return
+
+
+atexit.register(_drain_telemetry_on_exit)
+
+# Retained for backward compatibility with any code path that imports
+# ``_executor`` directly. New code should use ``_submit_telemetry``.
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="usage-telemetry-legacy")
 atexit.register(lambda: _executor.shutdown(wait=False, cancel_futures=True))
 _supabase_client: Client | None = None
 
@@ -386,14 +467,11 @@ def record_llm_usage_event(
         "metadata": {**(metadata or {}), **context.get("metadata", {})},
     }
     # Defer audit-payload building (and the cached admin_settings lookup it
-    # performs) to the executor so a cold cache never blocks the request path.
-    _executor.submit(
-        _insert_llm_usage_event,
-        event,
-        request_kind,
-        messages,
-        response_text,
-        tool_calls,
+    # performs) to a worker so a cold cache never blocks the request path.
+    _submit_telemetry(
+        lambda: _insert_llm_usage_event(
+            event, request_kind, messages, response_text, tool_calls
+        )
     )
 
 
@@ -427,16 +505,40 @@ def record_external_api_usage_event(
         "workstream_id": context.get("workstream_id"),
         "metadata": {**(metadata or {}), **context.get("metadata", {})},
     }
-    _executor.submit(_insert_event, "external_api_usage_events", event)
+    _submit_telemetry(lambda: _insert_event("external_api_usage_events", event))
 
 
 def _insert_event(table: str, event: dict[str, Any]) -> None:
     client = _get_supabase_client()
     if client is None:
         return
-    try:
-        client.table(table).insert(event).execute()
-    except Exception as exc:
+    # Bound how long the worker can block on a single insert. supabase-py
+    # uses httpx with no per-call timeout by default; without this guard, a
+    # hung PATCH can pin a telemetry worker forever, eventually stalling the
+    # whole queue. We can't pass a timeout through postgrest, so run the
+    # insert on a side thread and abandon it if it overruns.
+    done = threading.Event()
+    result_holder: dict[str, BaseException] = {}
+
+    def _do_insert() -> None:
+        try:
+            client.table(table).insert(event).execute()
+        except BaseException as exc:  # noqa: BLE001 — propagate via holder
+            result_holder["exc"] = exc
+        finally:
+            done.set()
+
+    side = threading.Thread(target=_do_insert, name="usage-telemetry-insert", daemon=True)
+    side.start()
+    if not done.wait(_TELEMETRY_INSERT_TIMEOUT_S):
+        logger.warning(
+            "Usage telemetry insert into %s exceeded %.1fs; abandoning",
+            table,
+            _TELEMETRY_INSERT_TIMEOUT_S,
+        )
+        return
+    exc = result_holder.get("exc")
+    if exc is not None:
         logger.debug("Usage telemetry insert failed for %s: %s", table, exc)
 
 
