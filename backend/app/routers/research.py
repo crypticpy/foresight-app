@@ -468,10 +468,20 @@ async def get_research_task(
             }
 
             try:
-                supabase.table("research_tasks").update(updates).eq(
-                    "id", task_id
-                ).eq("user_id", current_user["id"]).execute()
-                task_row.update(updates)
+                # Guard the update on the status we *read* — if the worker
+                # finished between SELECT and UPDATE, this no-ops instead of
+                # overwriting a completed task as failed. Same idea as the
+                # worker's claim pattern, just in reverse.
+                res = (
+                    supabase.table("research_tasks")
+                    .update(updates)
+                    .eq("id", task_id)
+                    .eq("user_id", current_user["id"])
+                    .eq("status", status_val)
+                    .execute()
+                )
+                if res.data:
+                    task_row.update(updates)
             except Exception:
                 return task_row
             return task_row
@@ -523,10 +533,17 @@ async def get_research_task(
         }
 
         try:
-            supabase.table("research_tasks").update(updates).eq("id", task_id).eq(
-                "user_id", current_user["id"]
-            ).execute()
-            task_row.update(updates)
+            # Same race guard as the heartbeat branch above.
+            res = (
+                supabase.table("research_tasks")
+                .update(updates)
+                .eq("id", task_id)
+                .eq("user_id", current_user["id"])
+                .eq("status", status_val)
+                .execute()
+            )
+            if res.data:
+                task_row.update(updates)
         except Exception:
             # If we can't update, return original task row.
             return task_row
