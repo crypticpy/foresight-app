@@ -5,6 +5,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -59,7 +60,10 @@ class EntityListResponse(BaseModel):
 
 
 class CardIdsRequest(BaseModel):
-    card_ids: List[str]
+    # Validated as UUIDs so non-UUID input (e.g. slugs leaking through from the
+    # frontend) fails with a clean 422 instead of bubbling to Postgres and
+    # surfacing as a 500 on the `cards.id` uuid column.
+    card_ids: List[UUID]
 
 
 # ============================================================================
@@ -399,7 +403,7 @@ async def get_card_followers(
     return await asyncio.to_thread(_card_follow_state, card_id, current_user["id"])
 
 
-def _check_batch_limit(card_ids: List[str]) -> None:
+def _check_batch_limit(card_ids: List[UUID]) -> None:
     if len(card_ids) > BATCH_CARD_ID_LIMIT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -416,7 +420,9 @@ async def get_cards_follower_status(
 ):
     """Batch follower count/status lookup for card lists."""
     _check_batch_limit(request.card_ids)
-    card_ids = request.card_ids
+    # Service helpers and Supabase keys are strings; return dict keys must be
+    # JSON-serializable strings as well.
+    card_ids = [str(cid) for cid in request.card_ids]
     counts, followed = await asyncio.gather(
         asyncio.to_thread(get_follower_counts, supabase, card_ids),
         asyncio.to_thread(get_followed_card_ids, supabase, current_user["id"], card_ids),
@@ -448,8 +454,9 @@ async def get_cards_artifact_summary(
 ):
     """Batch artifact indicator lookup for card lists."""
     _check_batch_limit(request.card_ids)
+    card_ids = [str(cid) for cid in request.card_ids]
     artifacts = await asyncio.to_thread(
-        get_card_artifacts, supabase, request.card_ids, current_user["id"]
+        get_card_artifacts, supabase, card_ids, current_user["id"]
     )
     return {card_id: artifact.dict() for card_id, artifact in artifacts.items()}
 
