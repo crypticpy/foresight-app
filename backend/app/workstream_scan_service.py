@@ -1260,8 +1260,10 @@ Example: ["query 1", "query 2", ...]"""
             if existing.data:
                 return False  # Already in workstream
 
-            # Column is `added_at`, not `created_at`. PGRST204 here was
-            # swallowed by the outer except → silent attach failure.
+            # `added_at` (not `created_at`) and `added_from` must be one of
+            # manual/auto/follow per the CHECK constraint. Both were wrong
+            # and the outer except hid PGRST204 + check-constraint errors,
+            # so scans completed with cards_created>0 but attached=0.
             result = (
                 self.supabase.table("workstream_cards")
                 .insert(
@@ -1271,7 +1273,7 @@ Example: ["query 1", "query 2", ...]"""
                         "added_by": user_id,
                         "status": "inbox",
                         "position": 0,
-                        "added_from": "workstream_scan",
+                        "added_from": "auto",
                         "added_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
