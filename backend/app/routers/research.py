@@ -390,7 +390,7 @@ async def get_research_task(
                 return defaults.get(task_type, 45 * 60)
         return defaults.get(task_type, 45 * 60)
 
-    def _maybe_fail_stale_task(task_row: Dict[str, Any]) -> Dict[str, Any]:
+    async def _maybe_fail_stale_task(task_row: Dict[str, Any]) -> Dict[str, Any]:
         status_val = task_row.get("status")
         if status_val not in ("queued", "processing"):
             return task_row
@@ -423,8 +423,8 @@ async def get_research_task(
             # check alone is enough.
             last_llm_at: Optional[str] = None
             try:
-                llm = (
-                    supabase.table("llm_usage_events")
+                llm = await asyncio.to_thread(
+                    lambda: supabase.table("llm_usage_events")
                     .select("created_at")
                     .eq("task_id", task_id)
                     .order("created_at", desc=True)
@@ -433,8 +433,10 @@ async def get_research_task(
                 )
                 if llm.data:
                     last_llm_at = llm.data[0].get("created_at")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"llm_usage_events lookup failed for task {task_id}: {e}"
+                )
 
             msg_parts = [
                 "Research task stopped making progress "
@@ -472,8 +474,8 @@ async def get_research_task(
                 # finished between SELECT and UPDATE, this no-ops instead of
                 # overwriting a completed task as failed. Same idea as the
                 # worker's claim pattern, just in reverse.
-                res = (
-                    supabase.table("research_tasks")
+                res = await asyncio.to_thread(
+                    lambda: supabase.table("research_tasks")
                     .update(updates)
                     .eq("id", task_id)
                     .eq("user_id", current_user["id"])
@@ -482,7 +484,10 @@ async def get_research_task(
                 )
                 if res.data:
                     task_row.update(updates)
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"Stale-heartbeat fail-update for task {task_id} errored: {e}"
+                )
                 return task_row
             return task_row
 
@@ -534,8 +539,8 @@ async def get_research_task(
 
         try:
             # Same race guard as the heartbeat branch above.
-            res = (
-                supabase.table("research_tasks")
+            res = await asyncio.to_thread(
+                lambda: supabase.table("research_tasks")
                 .update(updates)
                 .eq("id", task_id)
                 .eq("user_id", current_user["id"])
@@ -544,13 +549,15 @@ async def get_research_task(
             )
             if res.data:
                 task_row.update(updates)
-        except Exception:
-            # If we can't update, return original task row.
+        except Exception as e:
+            logger.warning(
+                f"Timeout fail-update for task {task_id} errored: {e}"
+            )
             return task_row
 
         return task_row
 
-    task = _maybe_fail_stale_task(task)
+    task = await _maybe_fail_stale_task(task)
 
     return ResearchTask(**task)
 
