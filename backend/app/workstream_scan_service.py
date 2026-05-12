@@ -932,7 +932,7 @@ Example: ["query 1", "query 2", ...]"""
             try:
                 # Pre-validation: content quality and freshness check
                 published_date = getattr(source, "published_at", None)
-                category = getattr(source, "source_type", "news")
+                category = getattr(source, "source_type", None) or "news"
                 validation_result = validator.validate_all(
                     content=source.content,
                     published_date=published_date,
