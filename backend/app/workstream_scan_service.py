@@ -24,6 +24,7 @@ Usage:
     result = await service.execute_scan(config)
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -1249,12 +1250,17 @@ Example: ["query 1", "query 2", ...]"""
         )
 
         if profile and len(profile) > 100:
-            self.supabase.table("cards").update(
-                {
-                    "description": profile,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", card_id).execute()
+            # Supabase sync client blocks the event loop; this helper is awaited
+            # inside the per-card creation flow, so run the write off-thread per
+            # CLAUDE.md's async DB-write rule.
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards").update(
+                    {
+                        "description": profile,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ).eq("id", card_id).execute()
+            )
 
             logger.info(
                 f"Workstream scan: profile generated for card {card_id} "
