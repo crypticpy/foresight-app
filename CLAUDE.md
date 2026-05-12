@@ -221,12 +221,13 @@ This repo prefers many small, targeted PRs over one big one. The pattern below i
 - **Chop work into targeted PRs.** Each PR should have one clear purpose ("delete dead alias layer", "centralize model defaults", "fix stale docstrings") and a small diff. If you find yourself making three unrelated changes in one branch, split before pushing. A 30-line PR ships faster than a 300-line PR every time.
 - **Commit often, PR often.** Don't accumulate work locally across a session before pushing — every coherent unit gets its own branch, commit, and PR. The cost of an extra branch is near-zero; the cost of a tangled diff is days of review churn.
 - **Branch naming.** `<type>/<short-slug>` matching the conventional-commit prefix: `refactor/remove-model-alias-table`, `fix/heartbeat-event-loop`, `docs/claude-md-model-stack`.
-- **After opening a PR, spawn a monitoring agent.** Don't sit and refresh the page. Kick off a background agent (typically `/loop` against a babysit-PR prompt, or a scheduled check) that:
-  1. Polls the PR for CodeRabbit, Codex, and any other reviewer-bot comments.
+- **After opening a PR, run `/babysit-pr <N>`.** That skill spawns the `pr-babysitter` agent on a self-paced `/loop` that:
+  1. Polls the PR for CodeRabbit, Codex, Greptile, and Sourcery review comments.
   2. Reads each comment as it lands.
-  3. Addresses the feedback (either by pushing a fix or replying with reasoning if we disagree).
-  4. Loops until every comment is resolved and the agent reports the PR is clean.
-- **You decide when to merge.** The monitoring agent's job is to drive the PR to "all feedback addressed," not to merge. Final merge stays with the maintainer.
+  3. Addresses the feedback (push a fix or reply with reasoning if we disagree).
+  4. Loops until every comment is resolved and CI is green for two consecutive quiet ticks.
+  5. **Auto-squash-merges** with `--delete-branch` once clean. Pass `--no-merge` if you want to gate merge on yourself instead.
+- **Babysit auto-merge is the default.** The `pr-babysitter` agent has explicit authorization to run `gh pr merge <N> --squash --delete-branch` once it observes two consecutive quiet ticks + green CI. This overrides the older "final merge stays with the maintainer" rule for that specific workflow. Use `--no-merge` for any PR where you want a manual final-look.
 - **One PR in flight per change.** Don't start the next targeted PR's work on top of an unmerged branch unless they genuinely depend on each other. Stack only when necessary; otherwise branch fresh from `main`.
 
 This workflow is why CLAUDE.md, `openai_provider.py`, `research_service.py`, and stale-docstring fixes ship as four separate PRs rather than one — even though they all touch the "model stack cleanup" theme.
