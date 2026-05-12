@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from app.job_events import JobEventEmitter
 
 from .ai_service import AIService, AnalysisResult, TriageResult
+from .openai_provider import (
+    get_chat_agent_deployment,
+    get_chat_mini_deployment,
+    get_embedding_deployment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +52,12 @@ def _configure_gpt_researcher_for_openai():
     The premium chat model (`OPENAI_CHAT_MODEL`) is reserved for the user-facing
     Ask Foresight chat. Backend research/synthesis runs on the agent tier.
     """
+    # Model names resolve through openai_provider so defaults live in one place
+    # and any admin override (via reload_config) is picked up here too.
     api_key = os.getenv("OPENAI_API_KEY", "")
-    chat_mini_model = os.getenv(
-        "OPENAI_CHAT_MINI_MODEL", "gpt-5.4-mini-2026-03-17"
-    )
-    chat_agent_model = os.getenv(
-        "OPENAI_CHAT_AGENT_MODEL", "gpt-5.4-2026-03-05"
-    )
-    embedding_model = os.getenv(
-        "OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"
-    )
+    chat_mini_model = get_chat_mini_deployment()
+    chat_agent_model = get_chat_agent_deployment()
+    embedding_model = get_embedding_deployment()
 
     gptr_config = {
         # GPT Researcher expects the openai:<model> prefix for commercial OpenAI.
