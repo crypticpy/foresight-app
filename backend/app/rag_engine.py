@@ -1101,8 +1101,8 @@ class RAGEngine:
     async def web_search(query: str, max_results: int = 5) -> list[dict]:
         """Search the web via the configured search provider (SearXNG → Serper).
 
-        Returns list of {title, url, content} dicts compatible with the
-        previous Tavily-shaped response.
+        Returns list of {title, url, content} dicts in the standard
+        search-result shape consumed by the chat tool loop.
         """
         from app import search_provider
 
