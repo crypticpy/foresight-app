@@ -346,28 +346,45 @@ class WorkstreamScanService:
             # cannot eat the scan timeout before cards land in the workstream.
             # Profile failures only warn — card + membership are already saved.
             #
-            # Per-card timeout caps each profile call so the loop as a whole
-            # stays within the worker's FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS
-            # budget (default 300s). Without this, generate_signal_profile's
-            # ~120s ceiling × 8 cards could blow past the scan timeout, and the
-            # worker's asyncio.wait_for would raise CancelledError (which is a
-            # BaseException — not caught below) so a successful card-creation
-            # run would be reported as "failed (timed out)".
-            for card_id, source in profile_targets:
-                if source.analysis is None:
-                    continue
-                try:
-                    await asyncio.wait_for(
-                        self._generate_card_profile(
-                            card_id, source, source.analysis
-                        ),
-                        timeout=30,
-                    )
-                except Exception as profile_err:
-                    logger.warning(
-                        f"Workstream scan: profile generation failed for card "
-                        f"{card_id}: {profile_err}"
-                    )
+            # Profiles run in parallel with bounded concurrency so a slow
+            # gpt-5.4 call doesn't serialize the whole loop. Per-card timeout
+            # is 90s (matching the underlying generate_signal_profile budget);
+            # at concurrency 4 the worst-case phase wall-clock for 8 cards is
+            # ~180s, safely inside the worker's
+            # FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS budget (default 1800s).
+            #
+            # The previous serial loop used a 30s wait_for, but the sync openai
+            # client blocks the event loop during the LLM call so the wait_for
+            # timer couldn't actually fire mid-call — half the cards landed
+            # with empty descriptions because the timeout cancelled after the
+            # LLM returned, before the DB write got to run.
+            profile_sem = asyncio.Semaphore(4)
+
+            async def _profile_one(
+                card_id: str, src: ProcessedSource
+            ) -> None:
+                if src.analysis is None:
+                    return
+                async with profile_sem:
+                    try:
+                        await asyncio.wait_for(
+                            self._generate_card_profile(
+                                card_id, src, src.analysis
+                            ),
+                            timeout=90,
+                        )
+                    except Exception as profile_err:
+                        logger.warning(
+                            "Workstream scan: profile generation failed for "
+                            "card %s: %s",
+                            card_id,
+                            profile_err,
+                        )
+
+            await asyncio.gather(
+                *(_profile_one(cid, src) for cid, src in profile_targets),
+                return_exceptions=True,
+            )
 
             result.status = "completed"
 
