@@ -2,11 +2,11 @@
 Research service using GPT Researcher + AI analysis pipeline.
 
 This service implements a hybrid research approach:
-1. GPT Researcher for source discovery (Tavily Extract scraping)
+1. GPT Researcher for source discovery (Serper + SearXNG retrievers)
 2. Serper + crawler for supplementary high-quality sources
 3. Unified crawler module for content backfill when sources lack content
-4. AI Triage for quick relevance filtering (gpt-4o-mini)
-5. AI Analysis for full classification and scoring (gpt-4o)
+4. AI Triage for quick relevance filtering (mini tier)
+5. AI Analysis for full classification and scoring (agent tier)
 6. Vector matching for card association
 7. Storage with proper schema and graph-ready entities
 
