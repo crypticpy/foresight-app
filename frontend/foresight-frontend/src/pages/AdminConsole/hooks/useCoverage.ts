@@ -14,6 +14,7 @@ import {
   fetchPillarCoverage,
   fetchWorkstreamCoverage,
   type CoverageWindowDays,
+  type PillarCoverageMode,
   type PillarCoverageResponse,
   type WorkstreamCoverageItem,
 } from "../../../lib/admin-api";
@@ -36,6 +37,11 @@ export function useCoverage({
     WorkstreamCoverageItem[]
   >([]);
   const [days, setDays] = useState<CoverageWindowDays>(7);
+  // ``primary`` matches the legacy aggregation; operators flip to
+  // ``primary_or_secondary`` or ``union`` to fold in ``secondary_pillars``
+  // and ``csp_goal_ids`` respectively. Mode lives in hook state because it
+  // affects the request and we want the UI to stay coherent on refresh.
+  const [mode, setMode] = useState<PillarCoverageMode>("primary");
   const [loading, setLoading] = useState(false);
   // True once we've attempted (success or fail) the lazy coverage load for
   // this session. Without this flag, a failed fetch would leave
@@ -52,13 +58,13 @@ export function useCoverage({
   // one shot. Pillar window changes refetch only the pillar payload to
   // avoid re-counting workstream scans for a UI-only knob.
   const loadAll = useCallback(
-    async (windowDays: CoverageWindowDays) => {
+    async (windowDays: CoverageWindowDays, m: PillarCoverageMode) => {
       setLoading(true);
       const gen = ++genRef.current;
       try {
         const token = await getToken();
         const [pillars, workstreams] = await Promise.all([
-          fetchPillarCoverage(token, windowDays),
+          fetchPillarCoverage(token, windowDays, m),
           fetchWorkstreamCoverage(token),
         ]);
         // Stale-overwrite guard: bail if the operator changed windows mid-flight.
@@ -78,11 +84,11 @@ export function useCoverage({
   );
 
   const loadPillarOnly = useCallback(
-    async (windowDays: CoverageWindowDays) => {
+    async (windowDays: CoverageWindowDays, m: PillarCoverageMode) => {
       const gen = ++genRef.current;
       try {
         const token = await getToken();
-        const pillars = await fetchPillarCoverage(token, windowDays);
+        const pillars = await fetchPillarCoverage(token, windowDays, m);
         if (gen !== genRef.current) return;
         setPillarCoverage(pillars);
       } catch (err) {
@@ -103,21 +109,30 @@ export function useCoverage({
   // fetch doesn't keep re-firing this effect.
   useEffect(() => {
     if (isAdmin && activeTab === "coverage" && !attempted && !loading) {
-      loadAll(days);
+      loadAll(days, mode);
     }
-  }, [isAdmin, activeTab, attempted, loading, days, loadAll]);
+  }, [isAdmin, activeTab, attempted, loading, days, mode, loadAll]);
 
   const changeWindow = useCallback(
     (next: CoverageWindowDays) => {
       setDays(next);
       // Refetch pillar payload only; WS freshness doesn't depend on the
       // pillar window.
-      loadPillarOnly(next);
+      loadPillarOnly(next, mode);
     },
-    [loadPillarOnly],
+    [loadPillarOnly, mode],
   );
 
-  const refresh = useCallback(() => loadAll(days), [days, loadAll]);
+  const changeMode = useCallback(
+    (next: PillarCoverageMode) => {
+      setMode(next);
+      // Mode only affects the pillar payload, so reuse loadPillarOnly.
+      loadPillarOnly(days, next);
+    },
+    [loadPillarOnly, days],
+  );
+
+  const refresh = useCallback(() => loadAll(days, mode), [days, mode, loadAll]);
 
   const forceScan = useCallback(
     async (workstreamId: string) => {
@@ -140,8 +155,10 @@ export function useCoverage({
     pillarCoverage,
     workstreamCoverage,
     days,
+    mode,
     loading,
     changeWindow,
+    changeMode,
     refresh,
     forceScan,
   };

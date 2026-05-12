@@ -620,10 +620,20 @@ PILLAR_DEFINITIONS: dict[str, str] = {
 # set small so the cache key is tight and so the UI radio buttons map 1:1.
 ALLOWED_COVERAGE_DAYS = (7, 30, 90)
 
+# Aggregation modes for ``get_pillar_coverage``. ``primary`` is the original
+# behavior (count ``cards.pillar_id`` only). ``primary_or_secondary`` adds
+# ``secondary_pillars``. ``union`` additionally counts cards whose
+# ``csp_goal_ids`` resolve to a goal under each pillar — this is the same
+# notion of coverage the lens-overview endpoint uses, so the two views can
+# finally agree on direction (see analytics.py:1856-2006).
+ALLOWED_COVERAGE_MODES = ("primary", "primary_or_secondary", "union")
+CoverageMode = Literal["primary", "primary_or_secondary", "union"]
+
 
 @router.get("/admin/coverage/pillars")
 async def get_pillar_coverage(
     days: int = 7,
+    mode: CoverageMode = "primary",
     current_user: dict = Depends(get_current_user),
 ):
     """Cards-created-by-pillar histogram over the requested window.
@@ -631,6 +641,19 @@ async def get_pillar_coverage(
     Used by the Coverage tab to spot pillar starvation. The expected share
     in the response is uniform across the six pillars (1/6 each). The UI
     can compare actual share vs expected share to flag drift.
+
+    The ``mode`` selector decides which links count toward each pillar:
+
+    - ``primary`` (default): only the primary ``cards.pillar_id``. Preserves
+      the original behavior so cached clients keep working.
+    - ``primary_or_secondary``: union of ``pillar_id`` and ``secondary_pillars``.
+    - ``union``: also includes any pillar reachable via ``csp_goal_ids``
+      (mapped through ``csp_goals.pillar_code``). This matches what the
+      lens-overview endpoint counts, so the two views agree on direction.
+
+    Regardless of mode, every bucket reports ``primary_cards``,
+    ``secondary_cards`` and ``csp_linked_cards`` so the UI can show all
+    three at once without re-fetching.
     """
     require_admin(current_user)
     if days not in ALLOWED_COVERAGE_DAYS:
@@ -638,13 +661,21 @@ async def get_pillar_coverage(
             status_code=400,
             detail=f"days must be one of {sorted(ALLOWED_COVERAGE_DAYS)}",
         )
+    if mode not in ALLOWED_COVERAGE_MODES:
+        # FastAPI's Literal coercion catches this for query params, but the
+        # explicit check guards against in-process callers (tests, the
+        # gap-detector in PR-C) that pass through directly.
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode must be one of {list(ALLOWED_COVERAGE_MODES)}",
+        )
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     def load() -> dict[str, Any]:
         rows = (
             supabase.table("cards")
-            .select("pillar_id,created_at")
+            .select("pillar_id,secondary_pillars,csp_goal_ids,created_at")
             .gte("created_at", cutoff)
             .eq("status", "active")
             .limit(10_000)
@@ -652,14 +683,70 @@ async def get_pillar_coverage(
             .data
             or []
         )
-        counts: dict[str, int] = {code: 0 for code in PILLAR_DEFINITIONS}
+
+        # Build a goal_id -> pillar_code map once. csp_goals is small (~23
+        # rows) so a single full scan is cheaper than a per-card join.
+        goal_rows = (
+            supabase.table("csp_goals")
+            .select("id,pillar_code")
+            .limit(1_000)
+            .execute()
+            .data
+            or []
+        )
+        goal_pillar: dict[str, str] = {}
+        for g in goal_rows:
+            gid = g.get("id")
+            pc = g.get("pillar_code")
+            if gid and pc in PILLAR_DEFINITIONS:
+                goal_pillar[str(gid)] = pc
+
+        primary_counts: dict[str, int] = {c: 0 for c in PILLAR_DEFINITIONS}
+        secondary_counts: dict[str, int] = {c: 0 for c in PILLAR_DEFINITIONS}
+        csp_counts: dict[str, int] = {c: 0 for c in PILLAR_DEFINITIONS}
+        mode_counts: dict[str, int] = {c: 0 for c in PILLAR_DEFINITIONS}
         unassigned = 0
+
         for row in rows:
-            pillar = row.get("pillar_id")
-            if pillar in counts:
-                counts[pillar] += 1
+            primary = row.get("pillar_id")
+            secondary = row.get("secondary_pillars") or []
+            goal_ids = row.get("csp_goal_ids") or []
+
+            primary_set: set[str] = set()
+            if primary in PILLAR_DEFINITIONS:
+                primary_set.add(primary)
+                primary_counts[primary] += 1
+
+            # A pillar listed in both primary and secondary still only counts
+            # once toward ``secondary_cards`` for that pillar — the bucket
+            # answers "is this pillar mentioned secondarily on any card",
+            # not "how many secondary slots reference it."
+            secondary_set: set[str] = set()
+            for s in secondary:
+                if s in PILLAR_DEFINITIONS and s not in secondary_set:
+                    secondary_set.add(s)
+                    secondary_counts[s] += 1
+
+            csp_set: set[str] = set()
+            for gid in goal_ids:
+                pc = goal_pillar.get(str(gid))
+                if pc and pc not in csp_set:
+                    csp_set.add(pc)
+                    csp_counts[pc] += 1
+
+            if mode == "primary":
+                touched = primary_set
+            elif mode == "primary_or_secondary":
+                touched = primary_set | secondary_set
+            else:  # union
+                touched = primary_set | secondary_set | csp_set
+
+            if touched:
+                for code in touched:
+                    mode_counts[code] += 1
             else:
                 unassigned += 1
+
         total = len(rows)
         # Expected share is uniform — six pillars, 1/6 each. Recorded so the
         # frontend can render a baseline line without re-deriving the
@@ -667,11 +754,17 @@ async def get_pillar_coverage(
         expected_share = round(1.0 / len(PILLAR_DEFINITIONS), 4)
         by_pillar: dict[str, dict[str, Any]] = {}
         for code, name in PILLAR_DEFINITIONS.items():
-            cards = counts[code]
+            cards = mode_counts[code]
             share = round(cards / total, 4) if total else 0.0
             by_pillar[code] = {
                 "name": name,
+                # ``cards`` reflects the selected mode so the UI can size
+                # bars without branching on mode. The per-channel counts
+                # below let the UI annotate the same bar with badges.
                 "cards": cards,
+                "primary_cards": primary_counts[code],
+                "secondary_cards": secondary_counts[code],
+                "csp_linked_cards": csp_counts[code],
                 "share": share,
                 "expected_share": expected_share,
                 # Positive drift = over-represented; negative = starved. Lets
@@ -680,6 +773,7 @@ async def get_pillar_coverage(
             }
         return {
             "window_days": days,
+            "mode": mode,
             "since": cutoff,
             "total": total,
             "unassigned": unassigned,
