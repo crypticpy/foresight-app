@@ -91,47 +91,6 @@ class OpenAIConfig:
         logger.info(f"  Embedding Model: {self.model_embedding}")
 
 
-# Map legacy / alternate model name aliases to our configured model IDs.
-_MODEL_ALIASES: dict = {}
-
-
-def _initialize_model_mapping(config: OpenAIConfig):
-    global _MODEL_ALIASES
-    _MODEL_ALIASES = {
-        # Legacy chat aliases that older code may still pass in
-        "gpt-4o": config.model_chat,
-        "gpt-4o-mini": config.model_chat_mini,
-        "gpt-4": config.model_chat,
-        "gpt-4-turbo": config.model_chat,
-        "gpt-4.1": config.model_chat,
-        "gpt-4.1-mini": config.model_chat_mini,
-        # Embedding aliases
-        "text-embedding-ada-002": config.model_embedding,
-        "text-embedding-3-small": config.model_embedding,
-        "text-embedding-3-large": config.model_embedding,
-    }
-
-
-def get_deployment_name(model_name: str) -> str:
-    """Resolve a model alias to the configured OpenAI model ID.
-
-    Kept under the legacy 'deployment' name so existing callers compile.
-    """
-    if model_name in _MODEL_ALIASES:
-        return _MODEL_ALIASES[model_name]
-    # Already a valid configured model? Pass through.
-    if model_name in {
-        _config.model_chat,
-        _config.model_chat_agent,
-        _config.model_chat_mini,
-        _config.model_chat_nano,
-        _config.model_embedding,
-    }:
-        return model_name
-    # Unknown — pass through; OpenAI will reject if truly invalid.
-    return model_name
-
-
 def get_chat_deployment() -> str:
     """Premium chat model (user-facing chat, briefs)."""
     return _config.model_chat
@@ -408,14 +367,11 @@ def reload_config() -> None:
     OPENAI_API_KEY / OPENAI_BASE_URL are not admin-controlled.
     """
     global _config
-    new_config = OpenAIConfig()
-    _initialize_model_mapping(new_config)
-    _config = new_config
+    _config = OpenAIConfig()
 
 
 try:
     _config = OpenAIConfig()
-    _initialize_model_mapping(_config)
 
     # Single client per (sync/async) — commercial OpenAI does not need a
     # separate embedding client (no per-resource api_version).
@@ -487,7 +443,6 @@ __all__ = [
     "openai_client",
     "openai_async_client",
     # Model name helpers
-    "get_deployment_name",
     "get_chat_deployment",
     "get_chat_agent_deployment",
     "get_chat_mini_deployment",
