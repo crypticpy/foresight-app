@@ -264,8 +264,14 @@ async def derive_queries(
             ``app.deps.openai_client`` (async) singleton in production.
 
     Raises:
-        QueryDerivationError: if the goal is missing or the LLM response
-            is unusable. Cache misses caused by network errors propagate
+        GoalNotFoundError: if the ``goal_id`` has no row in ``csp_goals``.
+            Subclass of ``QueryDerivationError`` so existing broad
+            ``except QueryDerivationError`` clauses still work; callers
+            that need to distinguish a typo'd UUID from a parse failure
+            (e.g. the refresh-queries handler, which maps to 404 vs 422)
+            should catch this first.
+        QueryDerivationError: if the goal exists but the LLM response is
+            unusable. Cache misses caused by network errors propagate
             their original exceptions (so callers can retry) — only
             *parse* failures surface as ``QueryDerivationError``.
     """
