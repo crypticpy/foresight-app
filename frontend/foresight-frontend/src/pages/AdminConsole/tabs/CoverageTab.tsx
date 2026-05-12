@@ -6,7 +6,13 @@
  * @module pages/AdminConsole/tabs/CoverageTab
  */
 
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -160,30 +166,7 @@ function PillarBalanceWidget({
         }
       />
       <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-dark-surface">
-        <div
-          className="mb-3 inline-flex rounded-md border border-gray-300 bg-white p-0.5 text-xs dark:border-gray-600 dark:bg-dark-surface-deep"
-          role="radiogroup"
-          aria-label="Pillar coverage mode"
-        >
-          {COVERAGE_MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              role="radio"
-              aria-checked={mode === m.value}
-              title={m.description}
-              onClick={() => onModeChange(m.value)}
-              className={cn(
-                "rounded px-2.5 py-1 font-medium transition-colors",
-                mode === m.value
-                  ? "bg-brand-blue text-white"
-                  : "text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-surface",
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        <CoverageModeRadioGroup mode={mode} onModeChange={onModeChange} />
         {loading && !data ? (
           <div className="flex items-center justify-center py-8 text-sm text-gray-500">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -308,6 +291,85 @@ function ChannelBadges({ bucket }: { bucket: Bucket }) {
         </span>
       ))}
     </span>
+  );
+}
+
+function CoverageModeRadioGroup({
+  mode,
+  onModeChange,
+}: {
+  mode: PillarCoverageMode;
+  onModeChange: (mode: PillarCoverageMode) => void;
+}) {
+  // Roving-tabindex + arrow-key handling so the radio group is keyboard
+  // accessible the way a native <input type="radio"> set would be. Without
+  // these, only the focused button is reachable and arrow keys do nothing —
+  // breaking expectations for screen-reader and keyboard-only operators.
+  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const handleKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    let nextIndex: number | null = null;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        nextIndex = (index + 1) % COVERAGE_MODES.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        nextIndex = (index - 1 + COVERAGE_MODES.length) % COVERAGE_MODES.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = COVERAGE_MODES.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const target = COVERAGE_MODES[nextIndex];
+    if (!target) return;
+    onModeChange(target.value);
+    buttonRefs.current[nextIndex]?.focus();
+  };
+
+  return (
+    <div
+      className="mb-3 inline-flex rounded-md border border-gray-300 bg-white p-0.5 text-xs dark:border-gray-600 dark:bg-dark-surface-deep"
+      role="radiogroup"
+      aria-label="Pillar coverage mode"
+    >
+      {COVERAGE_MODES.map((m, idx) => {
+        const selected = mode === m.value;
+        return (
+          <button
+            key={m.value}
+            ref={(el) => {
+              buttonRefs.current[idx] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            title={m.description}
+            onClick={() => onModeChange(m.value)}
+            onKeyDown={(event) => handleKeyDown(event, idx)}
+            className={cn(
+              "rounded px-2.5 py-1 font-medium transition-colors",
+              selected
+                ? "bg-brand-blue text-white"
+                : "text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-surface",
+            )}
+          >
+            {m.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

@@ -654,6 +654,15 @@ async def get_pillar_coverage(
     Regardless of mode, every bucket reports ``primary_cards``,
     ``secondary_cards`` and ``csp_linked_cards`` so the UI can show all
     three at once without re-fetching.
+
+    Share semantics: ``share = bucket.cards / total`` where ``total`` is
+    the count of distinct cards in the window. In ``primary_or_secondary``
+    and ``union`` modes a single card can credit multiple pillars (one
+    primary plus any number of secondary/CSP-linked pillars), so the
+    pillar shares may sum to more than 1.0. This is intentional — the
+    union shares answer "what fraction of cards touch each pillar" rather
+    than "how are cards distributed across pillars." Drift is computed
+    against the same uniform 1/6 baseline in every mode.
     """
     require_admin(current_user)
     if days not in ALLOWED_COVERAGE_DAYS:

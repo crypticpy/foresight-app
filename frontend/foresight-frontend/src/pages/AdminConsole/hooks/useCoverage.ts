@@ -125,11 +125,14 @@ export function useCoverage({
 
   const changeMode = useCallback(
     (next: PillarCoverageMode) => {
+      // Clicking the active option shouldn't fire another fetch — the
+      // radiogroup re-emits onClick even when the value doesn't change.
+      if (next === mode) return;
       setMode(next);
       // Mode only affects the pillar payload, so reuse loadPillarOnly.
       loadPillarOnly(days, next);
     },
-    [loadPillarOnly, days],
+    [loadPillarOnly, days, mode],
   );
 
   const refresh = useCallback(() => loadAll(days, mode), [days, mode, loadAll]);
