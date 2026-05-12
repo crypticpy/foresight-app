@@ -738,13 +738,31 @@ class SignalAgentService:
             # ran) instead of a stale hardcoded constant. Cached input tokens
             # are forwarded so prompt-cache hits get the discounted rate
             # instead of the full input rate.
+            deployment = get_chat_agent_deployment()
             cost_decimal = estimate_openai_cost_usd(
-                get_chat_agent_deployment(),
+                deployment,
                 total_input_tokens,
                 total_output_tokens,
                 total_cached_input_tokens,
             )
-            result.cost_estimate = float(cost_decimal) if cost_decimal is not None else 0.0
+            if cost_decimal is None:
+                logger.warning(
+                    "Signal agent: no pricing configured for deployment %s; "
+                    "cost_estimate falling back to 0.0",
+                    deployment,
+                )
+                result.cost_estimate = 0.0
+            else:
+                result.cost_estimate = float(cost_decimal)
+            if total_only_tokens:
+                # We counted these in total_tokens_used but cannot price them
+                # (no in/out split available). Surface it so a zero/low cost
+                # line is distinguishable from a genuinely cheap run.
+                logger.warning(
+                    "Signal agent: cost_estimate excludes %s token(s) reported "
+                    "only as total_tokens (no input/output split)",
+                    total_only_tokens,
+                )
 
             logger.info(
                 f"Signal agent: Complete. "
