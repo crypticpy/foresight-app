@@ -286,6 +286,12 @@ class WorkstreamScanService:
             )
             cards_created_count = 0
             sources_without_analysis = 0
+            # Keep (card_id, source) pairs so profile generation can run AFTER
+            # the workstream inbox-add phase. Profile generation is slow
+            # (generate_signal_profile can wait up to 120s per card per
+            # ai_service.py); doing it inline in _create_card risked the
+            # 300s scan timeout firing before Step 7 ever ran.
+            profile_targets: List[Tuple[str, ProcessedSource]] = []
             for source in unique_sources:
                 if cards_created_count >= config.max_new_cards:
                     logger.info(f"Reached max cards limit ({config.max_new_cards})")
@@ -302,6 +308,7 @@ class WorkstreamScanService:
                     card_id = await self._create_card(source, config)
                     if card_id:
                         result.cards_created.append(card_id)
+                        profile_targets.append((card_id, source))
                         cards_created_count += 1
                         logger.info(
                             f"Created card {card_id}: {source.analysis.suggested_card_name}"
@@ -333,6 +340,23 @@ class WorkstreamScanService:
                         logger.warning(
                             f"Failed to add card {card_id} to workstream: {e}"
                         )
+
+            # Step 8: Best-effort profile generation for newly created cards.
+            # Runs AFTER inbox-add so a slow generate_signal_profile call
+            # cannot eat the scan timeout before cards land in the workstream.
+            # Profile failures only warn — card + membership are already saved.
+            for card_id, source in profile_targets:
+                if source.analysis is None:
+                    continue
+                try:
+                    await self._generate_card_profile(
+                        card_id, source, source.analysis
+                    )
+                except Exception as profile_err:
+                    logger.warning(
+                        f"Workstream scan: profile generation failed for card "
+                        f"{card_id}: {profile_err}"
+                    )
 
             result.status = "completed"
 
@@ -1179,20 +1203,11 @@ Example: ["query 1", "query 2", ...]"""
                 # Store source
                 await self._store_source_to_card(source, card_id)
 
-                # Generate rich profile for the card description. Workstream
-                # scans previously skipped this step entirely (the broad
-                # signal-agent path runs it after _execute_create_signal),
-                # which is why workstream-scan cards landed with empty
-                # `description` columns while signal-agent cards had rich
-                # markdown profiles.
-                try:
-                    await self._generate_card_profile(card_id, source, analysis)
-                except Exception as profile_err:
-                    logger.warning(
-                        f"Workstream scan: profile generation failed for card "
-                        f"{card_id}: {profile_err}"
-                    )
-
+                # Profile generation (cards.description backfill) runs in a
+                # later best-effort phase in execute_scan, AFTER the workstream
+                # inbox-add step. Keeping it out of _create_card prevents the
+                # 5-min scan timeout from firing before cards are recorded in
+                # the result or added to the workstream inbox.
                 return card_id
         except Exception as e:
             logger.error(f"Card creation failed: {e}")
