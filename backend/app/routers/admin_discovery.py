@@ -944,6 +944,49 @@ async def get_workstream_coverage(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/admin/csp-goals/{goal_id}/refresh-queries")
+async def admin_refresh_goal_queries(
+    goal_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Force-rederive cached ``query_aliases`` for a CSP goal.
+
+    Used by the operator when a goal's name/description changes mid-cycle
+    and they want the next coverage-balance dispatch to use fresh queries
+    instead of waiting for the cache-version stamp to roll. The handler is
+    intentionally narrow: it triggers the same service the PR-E
+    dispatcher will use, so there's exactly one code path that writes
+    ``query_aliases``.
+    """
+    require_admin(current_user)
+    # Local import: csp_goal_query_service pulls in the async OpenAI
+    # client at import time, and we don't want to pay that cost on every
+    # admin_discovery import (most admin endpoints don't touch the LLM).
+    from uuid import UUID as _UUID
+
+    from app import csp_goal_query_service
+
+    try:
+        parsed = _UUID(goal_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="goal_id must be a UUID"
+        ) from exc
+
+    try:
+        queries = await csp_goal_query_service.derive_queries(parsed, force=True)
+    except csp_goal_query_service.QueryDerivationError as exc:
+        # 422 — the goal exists (or doesn't) but the LLM didn't yield a
+        # usable result. The detail string makes the failure mode visible
+        # so the operator knows whether to retry or fix the goal text.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to refresh queries for goal %s", goal_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"goal_id": goal_id, "queries": queries, "count": len(queries)}
+
+
 @router.post(
     "/admin/workstreams/{workstream_id}/scan", status_code=status.HTTP_201_CREATED
 )
