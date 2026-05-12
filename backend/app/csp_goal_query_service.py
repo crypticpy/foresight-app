@@ -71,6 +71,16 @@ class QueryDerivationError(RuntimeError):
     """
 
 
+class GoalNotFoundError(QueryDerivationError):
+    """Raised when the requested goal_id has no row in ``csp_goals``.
+
+    Subclasses ``QueryDerivationError`` so existing callers that catch the
+    parent still work, but lets the admin refresh handler map this to 404
+    (rather than 422) so a typo is distinguishable from an LLM parse
+    failure.
+    """
+
+
 def _system_prompt() -> str:
     return (
         "You generate concise web-search queries for a municipal-government "
@@ -147,8 +157,10 @@ def _parse_query_list(raw: str | None) -> list[str]:
         if len(out) >= MAX_QUERIES:
             break
 
-    if not out:
-        raise QueryDerivationError("no usable queries in response")
+    if len(out) < MIN_QUERIES:
+        raise QueryDerivationError(
+            f"too few usable queries in response ({len(out)} < {MIN_QUERIES})"
+        )
     return out
 
 
@@ -177,7 +189,7 @@ async def _load_goal(goal_id: UUID, *, supabase: Any) -> dict[str, Any]:
 
     row = await asyncio.to_thread(fetch)
     if not row:
-        raise QueryDerivationError(f"goal {goal_id} not found")
+        raise GoalNotFoundError(f"goal {goal_id} not found")
     return row
 
 
@@ -252,8 +264,14 @@ async def derive_queries(
             ``app.deps.openai_client`` (async) singleton in production.
 
     Raises:
-        QueryDerivationError: if the goal is missing or the LLM response
-            is unusable. Cache misses caused by network errors propagate
+        GoalNotFoundError: if the ``goal_id`` has no row in ``csp_goals``.
+            Subclass of ``QueryDerivationError`` so existing broad
+            ``except QueryDerivationError`` clauses still work; callers
+            that need to distinguish a typo'd UUID from a parse failure
+            (e.g. the refresh-queries handler, which maps to 404 vs 422)
+            should catch this first.
+        QueryDerivationError: if the goal exists but the LLM response is
+            unusable. Cache misses caused by network errors propagate
             their original exceptions (so callers can retry) — only
             *parse* failures surface as ``QueryDerivationError``.
     """
@@ -264,10 +282,15 @@ async def derive_queries(
 
     cached = goal.get("query_aliases") or []
     current_version = _cache_version()
+    # Cache-hit guard also enforces ``MIN_QUERIES`` on the stored list:
+    # an old persistence written before the parser-side guard could carry
+    # a single-query payload at the current version stamp, and returning
+    # it here would route around the new minimum. Treat under-minimum
+    # caches as misses so the next LLM call refreshes them.
     if (
         not force
         and isinstance(cached, list)
-        and cached
+        and len(cached) >= MIN_QUERIES
         and goal.get("query_aliases_version") == current_version
     ):
         return list(cached)

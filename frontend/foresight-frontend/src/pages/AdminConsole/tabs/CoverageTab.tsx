@@ -125,7 +125,7 @@ function CoverageGapsSection({
   loading: boolean;
 }) {
   const description = gaps
-    ? `Each CSP goal vs a uniform-distribution baseline of ${gaps.totals.expected_per_cell.toFixed(1)} cards. Goals more than 25% short of expected are amber; more than 50% short are red. ${gaps.totals.underrepresented_cells} of ${gaps.totals.goals} goals are currently underrepresented.`
+    ? `Each CSP goal vs a uniform-distribution baseline of ${gaps.totals.expected_per_cell.toFixed(1)} cards. Goals 25% or more short of expected are amber; 50% or more short are red. ${gaps.totals.underrepresented_cells} of ${gaps.totals.goals} goals are currently underrepresented.`
     : "Each CSP goal vs a uniform-distribution baseline. Goals starved relative to peers are highlighted.";
 
   return (

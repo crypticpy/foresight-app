@@ -47,10 +47,12 @@ def test_parser_dedupes_case_insensitively():
 
 
 def test_parser_trims_oversized_queries():
-    long = "x" * (svc.MAX_QUERY_LENGTH + 50)
-    out = svc._parse_query_list(f'["{long}"]')
-    assert len(out) == 1
-    assert len(out[0]) <= svc.MAX_QUERY_LENGTH
+    long_a = "a" * (svc.MAX_QUERY_LENGTH + 50)
+    long_b = "b" * (svc.MAX_QUERY_LENGTH + 50)
+    out = svc._parse_query_list(f'["{long_a}", "{long_b}"]')
+    assert len(out) == 2
+    for q in out:
+        assert len(q) <= svc.MAX_QUERY_LENGTH
 
 
 def test_parser_caps_at_max_queries():
@@ -232,24 +234,67 @@ def test_force_bypasses_matching_cache():
             "query_aliases_version": svc._cache_version(),
         }
     ])
-    oc = _make_oc(_make_llm_response('["new"]'))
+    oc = _make_oc(_make_llm_response('["new one", "new two"]'))
 
     out = asyncio.run(
         svc.derive_queries(
             uuid.UUID(gid), force=True, supabase=sb, openai_client=oc
         )
     )
-    assert out == ["new"]
+    assert out == ["new one", "new two"]
     oc.chat.completions.create.assert_awaited_once()
 
 
 def test_missing_goal_raises():
     sb = _FakeSupabase([])
     oc = _make_oc(_make_llm_response('["never called"]'))
+    # GoalNotFoundError is the specific subclass; both should match.
+    with pytest.raises(svc.GoalNotFoundError):
+        asyncio.run(
+            svc.derive_queries(uuid.uuid4(), supabase=sb, openai_client=oc)
+        )
+    # And the parent class still catches it — existing callers still work.
     with pytest.raises(svc.QueryDerivationError):
         asyncio.run(
             svc.derive_queries(uuid.uuid4(), supabase=sb, openai_client=oc)
         )
+
+
+def test_parser_rejects_below_min_queries():
+    """A single-element response is too few — must raise so dispatcher falls back."""
+    with pytest.raises(svc.QueryDerivationError):
+        svc._parse_query_list('["only one"]')
+
+
+def test_under_minimum_cached_aliases_are_treated_as_miss():
+    """An old cache row with only one query (written before MIN_QUERIES
+    landed) must not bypass the parser guard via the cache-hit short
+    circuit. Regression for the Codex P2 on PR #81: PROMPT_VERSION didn't
+    change, so an existing one-query alias at the current version stamp
+    would slip through and underfeed the dispatcher's per-goal budget.
+    """
+    gid = str(uuid.uuid4())
+    sb = _FakeSupabase([
+        {
+            "id": gid,
+            "code": "PS.1",
+            "name": "Reduce violent crime",
+            "description": "Lower the violent crime rate.",
+            # One-query cache at the CURRENT version stamp — should be
+            # treated as a miss, not returned.
+            "query_aliases": ["legacy single"],
+            "query_aliases_version": svc._cache_version(),
+        }
+    ])
+    oc = _make_oc(_make_llm_response('["fresh one", "fresh two"]'))
+
+    out = asyncio.run(
+        svc.derive_queries(uuid.UUID(gid), supabase=sb, openai_client=oc)
+    )
+    assert out == ["fresh one", "fresh two"]
+    oc.chat.completions.create.assert_awaited_once()
+    # Cache was overwritten with the fresh (compliant) list.
+    assert sb.store[gid]["query_aliases"] == out
 
 
 def test_llm_returns_garbage_surfaces_derivation_error():
