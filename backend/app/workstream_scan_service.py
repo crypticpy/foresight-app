@@ -1178,12 +1178,88 @@ Example: ["query 1", "query 2", ...]"""
                 # Store source
                 await self._store_source_to_card(source, card_id)
 
+                # Generate rich profile for the card description. Workstream
+                # scans previously skipped this step entirely (the broad
+                # signal-agent path runs it after _execute_create_signal),
+                # which is why workstream-scan cards landed with empty
+                # `description` columns while signal-agent cards had rich
+                # markdown profiles.
+                try:
+                    await self._generate_card_profile(card_id, source, analysis)
+                except Exception as profile_err:
+                    logger.warning(
+                        f"Workstream scan: profile generation failed for card "
+                        f"{card_id}: {profile_err}"
+                    )
+
                 return card_id
         except Exception as e:
             logger.error(f"Card creation failed: {e}")
             raise
 
         return None
+
+    async def _generate_card_profile(
+        self,
+        card_id: str,
+        source: ProcessedSource,
+        analysis,
+    ) -> None:
+        """Synthesize a rich markdown profile from the source and persist it
+        on cards.description. Mirrors signal_agent_service._generate_card_profile
+        but adapted for the workstream-scan one-source-per-card shape.
+        """
+        content = source.raw.content or ""
+
+        # Backfill thin content from URL (matches signal-agent behavior).
+        if len(content) < 200 and source.raw.url:
+            try:
+                from app.content_enricher import extract_content
+
+                text, _ = await extract_content(source.raw.url)
+                if text and len(text) > len(content):
+                    content = text[:10000]
+            except Exception:
+                pass
+
+        source_analyses = [
+            {
+                "title": source.raw.title or "Untitled",
+                "url": source.raw.url or "",
+                "summary": analysis.summary or "",
+                "key_excerpts": (
+                    analysis.key_excerpts[:3]
+                    if getattr(analysis, "key_excerpts", None)
+                    else []
+                ),
+                "content": content[:500],
+            }
+        ]
+
+        pillar_id = (
+            convert_pillar_id(analysis.pillars[0]) if analysis.pillars else ""
+        )
+
+        profile = await self.ai_service.generate_signal_profile(
+            signal_name=analysis.suggested_card_name,
+            signal_summary=analysis.summary or "",
+            pillar_id=pillar_id,
+            horizon=analysis.horizon or "H2",
+            source_analyses=source_analyses,
+        )
+
+        if profile and len(profile) > 100:
+            self.supabase.table("cards").update(
+                {
+                    "description": profile,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", card_id).execute()
+
+            logger.info(
+                f"Workstream scan: profile generated for card {card_id} "
+                f"({len(profile)} chars)"
+            )
 
     async def _store_source_to_card(
         self, source: ProcessedSource, card_id: str
