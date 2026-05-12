@@ -294,7 +294,9 @@ const AdminConsole: React.FC = () => {
               workstreams={coverage.workstreamCoverage}
               loading={coverage.loading}
               windowDays={coverage.days}
+              mode={coverage.mode}
               onWindowChange={coverage.changeWindow}
+              onModeChange={coverage.changeMode}
               onRefresh={coverage.refresh}
               onForceScan={coverage.forceScan}
             />

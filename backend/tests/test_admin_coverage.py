@@ -186,12 +186,15 @@ def test_pillar_coverage_aggregates_by_pillar(monkeypatch):
     # Window cuts off the 120-day-old card → 6 in-window total.
     assert result["total"] == 6
     assert result["unassigned"] == 1
+    # mode_total excludes the unassigned card so share denominators reflect
+    # cards that actually got pillared.
+    assert result["mode_total"] == 5
     ch = result["by_pillar"]["CH"]
     assert ch["cards"] == 3
-    # share = 3/6 = 0.5; expected = 1/6 ≈ 0.1667; drift ≈ +0.3333.
-    assert ch["share"] == 0.5
+    # share = 3/5 = 0.6 (mode_total); expected = 1/6 ≈ 0.1667.
+    assert ch["share"] == 0.6
     assert ch["expected_share"] == round(1 / 6, 4)
-    assert ch["drift"] == round(0.5 - 1 / 6, 4)
+    assert ch["drift"] == round(0.6 - 1 / 6, 4)
     # Pillar with zero cards is still present (zero, not missing).
     assert result["by_pillar"]["EW"]["cards"] == 0
     assert result["by_pillar"]["EW"]["share"] == 0.0
@@ -226,6 +229,224 @@ def test_pillar_coverage_handles_zero_cards(monkeypatch):
     for code in ("CH", "EW", "HG", "HH", "MC", "PS"):
         assert result["by_pillar"][code]["cards"] == 0
         assert result["by_pillar"][code]["share"] == 0.0
+
+
+def test_pillar_coverage_primary_mode_preserves_legacy_shape(monkeypatch):
+    """``mode=primary`` (the default) must keep the field layout that older
+    UI clients depend on: ``cards`` reflects primary count, and the new
+    channel counters are present but never collapse the primary semantics.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    cards = [
+        {
+            "pillar_id": "CH",
+            "secondary_pillars": ["PS"],
+            "csp_goal_ids": [],
+            "created_at": today,
+            "status": "active",
+        },
+        {
+            "pillar_id": "MC",
+            "secondary_pillars": [],
+            "csp_goal_ids": [],
+            "created_at": today,
+            "status": "active",
+        },
+    ]
+    mock_sb = _MockSupabase({"cards": cards})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_pillar_coverage(days=7, current_user=actor)
+    )
+    assert result["mode"] == "primary"
+    # CH card had a secondary PS — but primary mode must not credit PS for it.
+    assert result["by_pillar"]["PS"]["cards"] == 0
+    assert result["by_pillar"]["PS"]["secondary_cards"] == 1
+    assert result["by_pillar"]["CH"]["cards"] == 1
+    assert result["by_pillar"]["CH"]["primary_cards"] == 1
+
+
+def test_pillar_coverage_primary_or_secondary_mode(monkeypatch):
+    """``primary_or_secondary`` credits a pillar that only appears in
+    ``secondary_pillars``. Same card may contribute to multiple buckets.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    cards = [
+        # CH primary, PS secondary → counts for both in this mode.
+        {
+            "pillar_id": "CH",
+            "secondary_pillars": ["PS"],
+            "csp_goal_ids": [],
+            "created_at": today,
+            "status": "active",
+        },
+        # HG primary, no secondaries.
+        {
+            "pillar_id": "HG",
+            "secondary_pillars": [],
+            "csp_goal_ids": [],
+            "created_at": today,
+            "status": "active",
+        },
+        # No primary, MC secondary only — still counted toward MC and not
+        # toward unassigned because this mode considers secondaries.
+        {
+            "pillar_id": None,
+            "secondary_pillars": ["MC"],
+            "csp_goal_ids": [],
+            "created_at": today,
+            "status": "active",
+        },
+    ]
+    mock_sb = _MockSupabase({"cards": cards})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_pillar_coverage(
+            days=7, mode="primary_or_secondary", current_user=actor
+        )
+    )
+    assert result["mode"] == "primary_or_secondary"
+    assert result["unassigned"] == 0
+    assert result["by_pillar"]["CH"]["cards"] == 1
+    assert result["by_pillar"]["PS"]["cards"] == 1  # via secondary
+    assert result["by_pillar"]["MC"]["cards"] == 1  # via secondary only
+    assert result["by_pillar"]["HG"]["cards"] == 1
+    # Per-channel counts are still exposed.
+    assert result["by_pillar"]["PS"]["secondary_cards"] == 1
+    assert result["by_pillar"]["PS"]["primary_cards"] == 0
+
+
+def test_pillar_coverage_union_mode_uses_csp_goal_pillar(monkeypatch):
+    """``union`` mode must additionally credit pillars reachable through
+    ``csp_goal_ids``. This is the behavior that lets the pillar view agree
+    with the lens-overview / CSP heatmap.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    ps_goal_id = str(uuid.uuid4())
+    cards = [
+        # HG primary with a PS-pillar goal linked. union → both HG and PS.
+        {
+            "pillar_id": "HG",
+            "secondary_pillars": [],
+            "csp_goal_ids": [ps_goal_id],
+            "created_at": today,
+            "status": "active",
+        },
+    ]
+    goals = [
+        {"id": ps_goal_id, "pillar_code": "PS"},
+    ]
+    mock_sb = _MockSupabase({"cards": cards, "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_pillar_coverage(
+            days=7, mode="union", current_user=actor
+        )
+    )
+    assert result["mode"] == "union"
+    assert result["by_pillar"]["HG"]["cards"] == 1
+    assert result["by_pillar"]["PS"]["cards"] == 1  # via csp_goal_ids
+    assert result["by_pillar"]["PS"]["csp_linked_cards"] == 1
+    assert result["by_pillar"]["PS"]["primary_cards"] == 0
+    assert result["by_pillar"]["PS"]["secondary_cards"] == 0
+
+
+def test_pillar_coverage_union_mode_share_denominator_keeps_drift_signal(monkeypatch):
+    """In ``union`` mode a card can credit multiple pillars. Without a
+    mode-aware ``share`` denominator, every pillar's drift could go
+    positive at once (sum(share) > 1.0) and the UI's amber starvation
+    signal would silently break. Verify ``share`` is normalized against
+    ``mode_total`` so genuinely starved pillars still surface negative
+    drift even when union credits inflate the touch counts.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    ps_goal_id = str(uuid.uuid4())
+    hg_goal_id = str(uuid.uuid4())
+    # Four cards, all primary HG. Three also CSP-link to a PS goal, one
+    # CSP-links only to an HG goal. No card primary-or-secondary on PS.
+    cards = []
+    for _ in range(3):
+        cards.append({
+            "pillar_id": "HG",
+            "secondary_pillars": [],
+            "csp_goal_ids": [ps_goal_id],
+            "created_at": today,
+            "status": "active",
+        })
+    cards.append({
+        "pillar_id": "HG",
+        "secondary_pillars": [],
+        "csp_goal_ids": [hg_goal_id],
+        "created_at": today,
+        "status": "active",
+    })
+    goals = [
+        {"id": ps_goal_id, "pillar_code": "PS"},
+        {"id": hg_goal_id, "pillar_code": "HG"},
+    ]
+    mock_sb = _MockSupabase({"cards": cards, "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_pillar_coverage(
+            days=7, mode="union", current_user=actor
+        )
+    )
+    # 4 HG touches + 3 PS touches = 7 mode_total over 4 raw cards.
+    assert result["total"] == 4
+    assert result["mode_total"] == 7
+    # HG share = 4/7 ≈ 0.5714, drift ≈ +0.4047 (over-represented).
+    hg = result["by_pillar"]["HG"]
+    assert hg["cards"] == 4
+    assert hg["share"] == round(4 / 7, 4)
+    assert hg["drift"] > 0
+    # PS share = 3/7 ≈ 0.4286, drift ≈ +0.262 (also over).
+    ps = result["by_pillar"]["PS"]
+    assert ps["cards"] == 3
+    assert ps["share"] == round(3 / 7, 4)
+    # The other four pillars have zero touches and must still show as
+    # starved (negative drift) — that's the signal the bug would have
+    # silenced if ``share`` were computed against raw card count.
+    for code in ("CH", "EW", "HH", "MC"):
+        bucket = result["by_pillar"][code]
+        assert bucket["cards"] == 0
+        assert bucket["share"] == 0.0
+        assert bucket["drift"] < 0
+
+
+def test_pillar_coverage_rejects_invalid_mode(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    _bypass_admin(monkeypatch)
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.get_pillar_coverage(
+                days=7, mode="bogus", current_user=actor
+            )
+        )
+    assert exc.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------

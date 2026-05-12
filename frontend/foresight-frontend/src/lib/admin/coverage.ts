@@ -13,16 +13,35 @@ import { apiRequest } from "./shared";
 
 export interface PillarCoverageBucket {
   name: string;
+  /** Count for the selected ``mode`` — drives the bar height. */
   cards: number;
+  /** Cards where this pillar is ``cards.pillar_id`` (always populated). */
+  primary_cards: number;
+  /** Cards where this pillar appears in ``cards.secondary_pillars``. */
+  secondary_cards: number;
+  /** Cards whose ``csp_goal_ids`` resolve to a goal under this pillar. */
+  csp_linked_cards: number;
   share: number;
   expected_share: number;
   drift: number;
 }
 
+export type PillarCoverageMode = "primary" | "primary_or_secondary" | "union";
+
 export interface PillarCoverageResponse {
   window_days: number;
+  /** Echoes the mode the response was computed under. */
+  mode: PillarCoverageMode;
   since: string;
+  /** Raw card count in the window. Drives the "N cards in window" label. */
   total: number;
+  /**
+   * Sum of pillar-touches under the selected ``mode`` — the denominator
+   * the backend uses for each bucket's ``share``. Equals ``total`` in
+   * ``primary`` minus any unassigned cards; can exceed ``total`` in the
+   * union modes when cards credit multiple pillars.
+   */
+  mode_total: number;
   unassigned: number;
   by_pillar: Record<string, PillarCoverageBucket>;
 }
@@ -32,9 +51,11 @@ export type CoverageWindowDays = 7 | 30 | 90;
 export function fetchPillarCoverage(
   token: string,
   days: CoverageWindowDays,
+  mode: PillarCoverageMode = "primary",
 ): Promise<PillarCoverageResponse> {
+  const params = new URLSearchParams({ days: String(days), mode });
   return apiRequest<PillarCoverageResponse>(
-    `/api/v1/admin/coverage/pillars?days=${days}`,
+    `/api/v1/admin/coverage/pillars?${params.toString()}`,
     token,
   );
 }
