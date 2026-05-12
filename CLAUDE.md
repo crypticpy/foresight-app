@@ -11,7 +11,14 @@ Foresight is an AI-powered strategic horizon scanning system for the City of Aus
 - **Frontend**: React 18 + TypeScript + Vite + TailwindCSS + Radix UI
 - **Backend**: FastAPI (Python 3.11+) with Pydantic
 - **Database**: Supabase (PostgreSQL + pgvector for vector search)
-- **AI/ML**: Azure OpenAI (GPT-4.1 / GPT-4.1-mini, embeddings), gpt-researcher for deep research
+- **AI/ML**: OpenAI (commercial API, not Azure — `openai_provider.py` retains Azure-prefixed symbols only for caller compatibility). Live model tiers (defaults; configurable via env vars `OPENAI_CHAT_*_MODEL`):
+  - `model_chat` / `model_chat_agent` — `gpt-5.4` (user-facing chat, briefs; signal agent + agentic tool use)
+  - `model_chat_mini` — `gpt-5.4-mini` (cascade dimensions, query expansion, RAG reranking)
+  - `model_chat_nano` — falls back to mini; only override after sampling
+  - `model_embedding` — `text-embedding-ada-002` (kept on ada-002 for pgvector compatibility with existing 1536-dim card embeddings)
+  - gpt-researcher for deep research, routed through the agent + mini tiers
+  - **GPT-5.5 is retired** — do not route to it. GPT-4.1 references in older comments/docstrings are stale.
+- **Web search providers**: SearXNG (self-hosted aggregator) + Serper (Google API) only. **Tavily and Firecrawl are decommissioned** — their API keys are off and no code path may call them. gpt-researcher and chat `web_search` both go through the Serper/SearXNG providers.
 - **Auth**: Supabase Auth (JWT-based)
 
 ## Development Commands
@@ -40,7 +47,8 @@ pnpm test                   # Vitest unit tests (watch mode)
 pnpm test:run               # Vitest unit tests, single run
 pnpm test:e2e               # Playwright E2E tests
 pnpm test:e2e:headed        # E2E with browser visible
-npx tsc --noEmit            # Strict type-check (always run after edits — TS strict mode is on)
+npx tsc -b --noEmit         # Strict type-check. Use `-b` (build mode) — the frontend uses TS project references,
+                            # so plain `tsc --noEmit` silently passes while real errors hide. Always use `-b`.
 ```
 
 ### Database
@@ -78,7 +86,8 @@ The backend was decomposed from an 11K-line `main.py` monolith into a slim app f
   - `research_service.py` — gpt-researcher integration
   - `brief_service.py` — executive brief generation + portfolio synthesis
   - `chat_service.py` + `rag_engine.py` — SSE chat orchestrator and hybrid RAG (FTS + pgvector via RRF)
-  - `chat_tools.py` — Tavily-backed `web_search` tool for chat
+  - `chat_tools.py` — `web_search` tool for chat, backed by Serper / SearXNG (Tavily path removed)
+  - `signal_agent_service.py` — production card-creation path (`_execute_create_signal`). The lens hook (CSP/PPP enrichment) lives here, **not** on `discovery_service._create_card`. Maintain lens logic on the signal_agent path.
   - `gamma_service.py` — Gamma API integration for AI-generated decks (with local PPTX/PDF fallback)
   - `export_service.py` — PDF/PPTX/CSV export
   - `portfolio_export.py` — shared portfolio render pipeline used by both `/bulk-brief-export` and `/portfolios/{id}/export`
@@ -121,7 +130,7 @@ The backend was decomposed from an 11K-line `main.py` monolith into a slim app f
 - `rag_engine.py` runs hybrid FTS + vector search via Reciprocal Rank Fusion. SQL functions: `hybrid_search_cards()` and `hybrid_search_sources()` (require `SET search_path = extensions, public` for pgvector operators).
 - Pipeline: query expansion → embedding → hybrid search → scope enrichment → LLM reranking → context assembly. Context budget ~120K chars, max_tokens 8192, conversation history 20 messages.
 - All three scopes (signal / workstream / global) use the same engine with scope-specific enrichment.
-- `web_search` is offered to the model only when `TAVILY_API_KEY` is set. Max 2 searches/msg, 10s timeout. The streaming loop must return a tool response for **every** tool_call, including unknown tools or limit-reached cases.
+- `web_search` is offered to the model only when a Serper/SearXNG provider is configured (see `chat_tools.py`). Max 2 searches/msg, 10s timeout. The streaming loop must return a tool response for **every** tool_call, including unknown tools or limit-reached cases. **Do not reintroduce Tavily.**
 - Citation indices use `max(source_map.keys(), default=0) + 1` — **never** `len(source_map)`, since keys can be non-contiguous.
 
 ## Environment & Feature Flags
@@ -136,15 +145,19 @@ AZURE_OPENAI_ENDPOINT=
 AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_DEPLOYMENT=
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=
-TAVILY_API_KEY=                 # Powers gpt-researcher and chat web_search tool
-FIRECRAWL_API_KEY=              # gpt-researcher
+SERPER_API_KEY=                 # Google search via Serper (chat web_search + gpt-researcher)
+SEARXNG_URL=                    # Self-hosted SearXNG aggregator (chat web_search + gpt-researcher)
+# NOTE: Tavily and Firecrawl are decommissioned. Do not set TAVILY_API_KEY / FIRECRAWL_API_KEY,
+# and do not re-add code paths that read them.
 
 # Runtime flags (read in main.py lifespan)
 FORESIGHT_EMBED_WORKER=true     # Default: embed the worker in the API process. Set false to run the worker separately.
-                                # PRODUCTION: must be false on foresight-api when foresight-worker is deployed —
-                                # gunicorn runs 4 worker procs with a 120s silence timeout (entrypoint.sh), and a
-                                # long-running deep-research task pins its gunicorn worker long enough that the
-                                # arbiter SIGTERMs it, killing the asyncio task and the heartbeat.
+                                # PRODUCTION: must be false on foresight-api when foresight-worker is deployed.
+                                # Historical reason: gunicorn (4 procs, 120s silence timeout in entrypoint.sh) used to
+                                # SIGTERM gunicorn workers pinned by long deep-research tasks, killing the asyncio task
+                                # and its heartbeat. PR #62 replaced the heartbeat thread with the job_events substrate
+                                # (see Worker Jobs below) which is more resilient, but the split-service deployment is
+                                # still the supported topology.
 FORESIGHT_ENABLE_SCHEDULER=false # Default: APScheduler off. Production web service sets this true.
 FORESIGHT_DEMO_FREEZE=false     # When true, suppresses scheduler + embedded worker auto-fires (RSS triage, scheduled discovery). User-initiated jobs still run. Use this to keep API spend at zero during demos.
 ENVIRONMENT=development|production # Controls strict CORS validation
@@ -172,10 +185,23 @@ VITE_API_URL=http://localhost:8000
 - `websearch_to_tsquery` breaks on `():<>!|&` chars — sanitize via `_sanitize_fts_query()` before passing user input.
 - Supabase `.ilike()` does **not** escape `%`/`_` metacharacters; sanitize first.
 - Always use timezone-aware datetimes: `datetime.now(timezone.utc)`. Don't strip tzinfo from DB timestamps.
+- **Telemetry cost column is `estimated_cost_usd`** — not `cost_usd`. Writing the wrong name silently returns $0 with no error.
+- **Model selection goes through `openai_provider.py` — never hardcode model names.** Use the tier helpers (`get_chat_deployment`, `get_chat_agent_deployment`, `get_chat_mini_deployment`, `get_chat_nano_deployment`, `get_embedding_deployment`) or the `_config.model_*` attributes. Do not pass literal strings like `"gpt-5.4"` or `"gpt-4.1"` to the client. Changing a model should be a single env-var / config edit.
+- **The `usage_telemetry.py` pricing table is intentionally broader than the live model set.** It powers the cost-waterfall projection feature (forecasting per-user spend if we hypothetically routed to other tiers). Adding/removing entries there is a forecasting decision, not a cleanup target — leave retired-but-priced models in unless explicitly asked to prune.
 
 ## Worker Jobs
 
 The worker handles discovery pipeline runs (fetching, triage, classification), deep research (gpt-researcher), executive brief generation, and workstream scans. Jobs time out after a configured duration and are marked failed. The worker imports from `app.deps`, `app.models.*`, `app.routers.*`, and `app.scheduler` — keep those import paths stable.
+
+### `job_events` observability substrate (PRs #58, #61, #62)
+
+Long-running jobs no longer rely on the legacy heartbeat thread. They emit structured records into the `job_events` table:
+
+- **What writes to it**: research_service, signal_agent, discovery pipeline phases, brief generation. Each phase logs a `started` / `progress` / `completed` / `failed` event with a payload (status, counts, cost, error).
+- **Who reads it**: status endpoints, the worker health probe, and any UI that surfaces job progress. Prefer querying `job_events` over scraping logs for job state.
+- **Heartbeat rule (PR #58)**: heartbeats must be written off the event loop — wrap the Supabase insert in `asyncio.to_thread(...)`. A heartbeat written inline inside a blocking call (e.g. a sync HTTP request) will skip and trip the "no heartbeat" failure path.
+- **No race-condition status flips (PR #61)**: terminal status writes (`completed` / `failed`) must check the current status before overwriting, otherwise a late heartbeat can revert a failed job back to `running`.
+- **Direct-invocation timeout**: scripts that call discovery/signal_agent outside the worker must wrap the call in `asyncio.wait_for(..., timeout=1800)` — anything tighter cuts off signal_agent + card creation mid-flight.
 
 ## Testing
 
@@ -187,6 +213,23 @@ Test user credentials for local development live in `backend/.env` (gitignored) 
 
 - **Railway** runs two services: web (FastAPI + embedded worker by default) and an optional standalone worker. Auto-deploys on push to `main`. Health checks: `/api/v1/health` (web), `/api/v1/worker/health` (worker).
 - **Vercel** auto-deploys the frontend from `main`. The Vercel project is `foresight-frontend` (not `foresight-app`).
+
+## PR workflow
+
+This repo prefers many small, targeted PRs over one big one. The pattern below is the default for any non-trivial change.
+
+- **Chop work into targeted PRs.** Each PR should have one clear purpose ("delete dead alias layer", "centralize model defaults", "fix stale docstrings") and a small diff. If you find yourself making three unrelated changes in one branch, split before pushing. A 30-line PR ships faster than a 300-line PR every time.
+- **Commit often, PR often.** Don't accumulate work locally across a session before pushing — every coherent unit gets its own branch, commit, and PR. The cost of an extra branch is near-zero; the cost of a tangled diff is days of review churn.
+- **Branch naming.** `<type>/<short-slug>` matching the conventional-commit prefix: `refactor/remove-model-alias-table`, `fix/heartbeat-event-loop`, `docs/claude-md-model-stack`.
+- **After opening a PR, spawn a monitoring agent.** Don't sit and refresh the page. Kick off a background agent (typically `/loop` against a babysit-PR prompt, or a scheduled check) that:
+  1. Polls the PR for CodeRabbit, Codex, and any other reviewer-bot comments.
+  2. Reads each comment as it lands.
+  3. Addresses the feedback (either by pushing a fix or replying with reasoning if we disagree).
+  4. Loops until every comment is resolved and the agent reports the PR is clean.
+- **You decide when to merge.** The monitoring agent's job is to drive the PR to "all feedback addressed," not to merge. Final merge stays with the maintainer.
+- **One PR in flight per change.** Don't start the next targeted PR's work on top of an unmerged branch unless they genuinely depend on each other. Stack only when necessary; otherwise branch fresh from `main`.
+
+This workflow is why CLAUDE.md, `openai_provider.py`, `research_service.py`, and stale-docstring fixes ship as four separate PRs rather than one — even though they all touch the "model stack cleanup" theme.
 
 ## Code hygiene: fix-as-you-go
 
