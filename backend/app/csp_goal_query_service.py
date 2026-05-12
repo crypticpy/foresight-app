@@ -71,6 +71,16 @@ class QueryDerivationError(RuntimeError):
     """
 
 
+class GoalNotFoundError(QueryDerivationError):
+    """Raised when the requested goal_id has no row in ``csp_goals``.
+
+    Subclasses ``QueryDerivationError`` so existing callers that catch the
+    parent still work, but lets the admin refresh handler map this to 404
+    (rather than 422) so a typo is distinguishable from an LLM parse
+    failure.
+    """
+
+
 def _system_prompt() -> str:
     return (
         "You generate concise web-search queries for a municipal-government "
@@ -147,8 +157,10 @@ def _parse_query_list(raw: str | None) -> list[str]:
         if len(out) >= MAX_QUERIES:
             break
 
-    if not out:
-        raise QueryDerivationError("no usable queries in response")
+    if len(out) < MIN_QUERIES:
+        raise QueryDerivationError(
+            f"too few usable queries in response ({len(out)} < {MIN_QUERIES})"
+        )
     return out
 
 
@@ -177,7 +189,7 @@ async def _load_goal(goal_id: UUID, *, supabase: Any) -> dict[str, Any]:
 
     row = await asyncio.to_thread(fetch)
     if not row:
-        raise QueryDerivationError(f"goal {goal_id} not found")
+        raise GoalNotFoundError(f"goal {goal_id} not found")
     return row
 
 

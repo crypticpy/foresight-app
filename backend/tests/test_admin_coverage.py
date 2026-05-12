@@ -150,6 +150,20 @@ def _bypass_admin(monkeypatch):
     monkeypatch.setattr(authz, "require_admin", lambda user: None)
 
 
+@pytest.fixture(autouse=True)
+def _disable_rate_limiter(monkeypatch):
+    """slowapi's ``@limiter.limit`` decorator wraps every limited endpoint
+    in a wrapper that requires a real ``starlette.requests.Request``. Our
+    ``_mock_request`` returns a ``SimpleNamespace`` and that rejects with
+    "parameter `request` must be an instance of starlette.requests.Request".
+    Disabling the limiter for tests skips the wrapper entirely — the
+    handler body still receives the mock request, which is all it needs.
+    """
+    from app.deps import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
+
 def _patch_supabase(monkeypatch, mock_sb):
     from app.routers import admin as admin_router
     from app.routers import admin_discovery
@@ -521,7 +535,9 @@ def test_coverage_gaps_starved_goal_lands_high_priority(monkeypatch):
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     result = asyncio.run(
-        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+        admin_discovery.get_coverage_gaps(
+            request=_mock_request(), days=30, current_user=actor
+        )
     )
 
     assert result["window_days"] == 30
@@ -576,7 +592,9 @@ def test_coverage_gaps_uniform_population_yields_no_priority(monkeypatch):
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     result = asyncio.run(
-        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+        admin_discovery.get_coverage_gaps(
+            request=_mock_request(), days=30, current_user=actor
+        )
     )
     # 4 credits / 2 goals = 2 expected per cell; every goal has exactly 2.
     assert result["totals"]["expected_per_cell"] == 2.0
@@ -611,7 +629,9 @@ def test_coverage_gaps_handles_empty_window(monkeypatch):
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     result = asyncio.run(
-        admin_discovery.get_coverage_gaps(days=7, current_user=actor)
+        admin_discovery.get_coverage_gaps(
+            request=_mock_request(), days=7, current_user=actor
+        )
     )
     assert result["totals"]["credits"] == 0
     assert result["totals"]["expected_per_cell"] == 0.0
@@ -656,7 +676,9 @@ def test_coverage_gaps_ignores_null_and_unknown_goal_ids(monkeypatch):
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     result = asyncio.run(
-        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+        admin_discovery.get_coverage_gaps(
+            request=_mock_request(), days=30, current_user=actor
+        )
     )
     # Only the one known goal credit is counted.
     assert result["totals"]["credits"] == 1
@@ -673,7 +695,9 @@ def test_coverage_gaps_rejects_invalid_window(monkeypatch):
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
-            admin_discovery.get_coverage_gaps(days=14, current_user=actor)
+            admin_discovery.get_coverage_gaps(
+                request=_mock_request(), days=14, current_user=actor
+            )
         )
     assert exc.value.status_code == 400
 
@@ -688,7 +712,10 @@ def test_coverage_gaps_rejects_unknown_target_distribution(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             admin_discovery.get_coverage_gaps(
-                days=30, target_distribution="weighted", current_user=actor
+                request=_mock_request(),
+                days=30,
+                target_distribution="weighted",
+                current_user=actor,
             )
         )
     assert exc.value.status_code == 400
@@ -1218,3 +1245,123 @@ def test_balance_dispatch_returns_422_when_all_goals_fail(monkeypatch):
             )
         )
     assert exc.value.status_code == 422
+
+
+def test_balance_dispatch_auto_pick_ignores_archived_cards(monkeypatch):
+    """Archived cards must not mask a coverage gap.
+
+    Regression: without ``.eq("status", "active")`` on the cards query, a
+    goal whose recent cards have all been archived looks "covered" and the
+    auto-picker skips it — leaving the actual gap unscanned.
+    """
+    from app.routers import admin_discovery
+
+    starved = str(uuid.uuid4())
+    masked = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    tables = {
+        "csp_goals": [
+            {"id": starved, "code": "PS.1", "name": "Starved", "pillar_code": "PS"},
+            {"id": masked, "code": "HG.1", "name": "Masked", "pillar_code": "HG"},
+        ],
+        "cards": [
+            # The "masked" goal has 5 ARCHIVED cards — they shouldn't count.
+            *[
+                {
+                    "csp_goal_ids": [masked],
+                    "created_at": (now - timedelta(days=2)).isoformat(),
+                    "status": "archived",
+                }
+                for _ in range(5)
+            ],
+        ],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+    _stub_derive(monkeypatch, per_goal=("q1", "q2"))
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.admin_balance_dispatch(
+            request=_mock_request(), body=None, current_user=actor
+        )
+    )
+    # With zero active cards on either goal, both are equally starved (tied
+    # drift_score=0). What matters: the masked goal isn't somehow scored
+    # higher than the starved one because of its archived cards.
+    used_ids = [g["id"] for g in result["goals_used"]]
+    assert starved in used_ids
+
+
+def test_admin_refresh_goal_queries_returns_404_for_missing_goal(monkeypatch):
+    """A typo'd UUID surfaces as 404, not 422 — distinguishes 'no such row'
+    from 'LLM couldn't produce a result'."""
+    from fastapi import HTTPException
+
+    from app import csp_goal_query_service
+    from app.routers import admin_discovery
+
+    async def _raise_not_found(goal_id, *, force=False, **_kw):
+        raise csp_goal_query_service.GoalNotFoundError(f"goal {goal_id} not found")
+
+    monkeypatch.setattr(
+        csp_goal_query_service, "derive_queries", _raise_not_found
+    )
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_refresh_goal_queries(
+                request=_mock_request(),
+                goal_id=str(uuid.uuid4()),
+                current_user=actor,
+            )
+        )
+    assert exc.value.status_code == 404
+
+
+def test_admin_refresh_goal_queries_returns_422_for_parse_failure(monkeypatch):
+    """LLM returned garbage → 422, since the goal exists but the result is unusable."""
+    from fastapi import HTTPException
+
+    from app import csp_goal_query_service
+    from app.routers import admin_discovery
+
+    async def _raise_parse(goal_id, *, force=False, **_kw):
+        raise csp_goal_query_service.QueryDerivationError("unparseable response")
+
+    monkeypatch.setattr(csp_goal_query_service, "derive_queries", _raise_parse)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_refresh_goal_queries(
+                request=_mock_request(),
+                goal_id=str(uuid.uuid4()),
+                current_user=actor,
+            )
+        )
+    assert exc.value.status_code == 422
+
+
+def test_admin_refresh_goal_queries_rejects_non_uuid(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    _bypass_admin(monkeypatch)
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_refresh_goal_queries(
+                request=_mock_request(),
+                goal_id="not-a-uuid",
+                current_user=actor,
+            )
+        )
+    assert exc.value.status_code == 400

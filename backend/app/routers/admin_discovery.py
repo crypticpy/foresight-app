@@ -832,7 +832,9 @@ def _gap_priority(drift_score: float) -> str:
 
 
 @router.get("/admin/coverage/gaps")
+@limiter.limit("30/minute")
 async def get_coverage_gaps(
+    request: Request,
     days: int = 30,
     target_distribution: TargetDistribution = "uniform",
     current_user: dict = Depends(get_current_user),
@@ -878,20 +880,30 @@ async def get_coverage_gaps(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     def load() -> dict[str, Any]:
+        # Explicit newest-first ordering on the card scan so that, if the
+        # 10k cap ever bites (90d window on a very active tenant), the
+        # truncation is deterministic and biased toward the most recent
+        # cards — the ones the operator cares about for "what's starved
+        # right now" decisions. Without an ORDER BY, Supabase's row order
+        # is undefined.
         rows = (
             supabase.table("cards")
             .select("csp_goal_ids,created_at")
             .gte("created_at", cutoff)
             .eq("status", "active")
+            .order("created_at", desc=True)
             .limit(10_000)
             .execute()
             .data
             or []
         )
 
+        # The csp_goals table is small (~23 rows) but order by display_order
+        # so any future truncation behaves like the rest of the UI.
         goal_rows = (
             supabase.table("csp_goals")
             .select("id,code,name,pillar_code,display_order")
+            .order("display_order", desc=False)
             .limit(1_000)
             .execute()
             .data
@@ -960,12 +972,15 @@ async def get_coverage_gaps(
             )
 
         # Starvation-first, then by pillar/goal code so the order is stable
-        # across refreshes (no jitter from equal drift_scores).
+        # across refreshes (no jitter from equal drift_scores). ``goal_id``
+        # is the final tie-breaker because ``goal_code`` can be empty or
+        # duplicated for seed rows and would otherwise allow row jitter.
         cells.sort(
             key=lambda c: (
                 c["drift_score"],
                 c["pillar_code"],
                 c["goal_code"],
+                c["goal_id"],
             )
         )
 
@@ -1126,7 +1141,9 @@ async def get_workstream_coverage(
 
 
 @router.post("/admin/csp-goals/{goal_id}/refresh-queries")
+@limiter.limit("10/minute")
 async def admin_refresh_goal_queries(
+    request: Request,
     goal_id: str,
     current_user: dict = Depends(get_current_user),
 ):
@@ -1156,10 +1173,15 @@ async def admin_refresh_goal_queries(
 
     try:
         queries = await csp_goal_query_service.derive_queries(parsed, force=True)
+    except csp_goal_query_service.GoalNotFoundError as exc:
+        # 404 — the goal_id doesn't resolve to a row. Distinct from 422
+        # below so a typo'd UUID surfaces as "not found" rather than
+        # "server couldn't produce a result" (which would prompt retries).
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except csp_goal_query_service.QueryDerivationError as exc:
-        # 422 — the goal exists (or doesn't) but the LLM didn't yield a
-        # usable result. The detail string makes the failure mode visible
-        # so the operator knows whether to retry or fix the goal text.
+        # 422 — goal exists but the LLM didn't yield a usable result. The
+        # detail string makes the failure mode visible so the operator
+        # knows whether to retry or fix the goal text.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to refresh queries for goal %s", goal_id)
@@ -1245,6 +1267,10 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
             supabase.table("cards")
             .select("csp_goal_ids,created_at")
             .gte("created_at", since_dt.isoformat())
+            # Match the coverage widget: archived/deleted cards shouldn't
+            # mask a gap. Without this, a goal whose recent cards were all
+            # archived would look "covered" and skip the dispatcher.
+            .eq("status", "active")
             .execute()
         )
         return goals_resp.data or [], cards_resp.data or []
@@ -1262,10 +1288,9 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
                 counts[gid] += 1
                 total_links += 1
 
-    if not counts:
-        return []
-
-    expected = (total_links / len(counts)) if counts else 0.0
+    # ``counts`` is keyed off ``goals`` (guarded non-empty above), so it
+    # can never be empty here.
+    expected = total_links / len(counts)
     # Drift score: (actual - expected) / max(expected, 1) so a 0-count goal
     # against expected=12 yields -1.0 and sorts to the top.
     scored: list[tuple[float, dict[str, Any]]] = []
@@ -1277,6 +1302,7 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
 
 
 @router.post("/admin/discovery/balance", status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def admin_balance_dispatch(
     request: Request,
     body: BalanceDispatchRequest | None = None,
