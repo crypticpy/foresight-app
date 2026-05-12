@@ -173,6 +173,7 @@ from .workstream import (
 )
 
 from .discovery_models import (
+    CustomQuerySpec,
     DiscoveryConfigRequest,
     DiscoveryRun,
     get_discovery_max_queries,
@@ -425,6 +426,7 @@ __all__ = [
     "WorkstreamScanStatusResponse",
     "WorkstreamScanHistoryResponse",
     # discovery_models
+    "CustomQuerySpec",
     "DiscoveryConfigRequest",
     "DiscoveryRun",
     "get_discovery_max_queries",

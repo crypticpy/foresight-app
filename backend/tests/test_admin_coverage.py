@@ -80,6 +80,10 @@ class _MockTable:
         self._gte[key] = value
         return self
 
+    def in_(self, key, values):
+        self._filters[key] = ("__in__", set(values))
+        return self
+
     def order(self, key, desc=False):
         self._order.append((key, desc))
         return self
@@ -96,9 +100,18 @@ class _MockTable:
             return _MockResponse([payload])
 
         # select
+        def _filter_match(row: Dict[str, Any]) -> bool:
+            for k, v in self._filters.items():
+                if isinstance(v, tuple) and len(v) == 2 and v[0] == "__in__":
+                    if row.get(k) not in v[1]:
+                        return False
+                elif row.get(k) != v:
+                    return False
+            return True
+
         out = []
         for row in self._rows:
-            if all(row.get(k) == v for k, v in self._filters.items()):
+            if _filter_match(row):
                 if all(
                     (row.get(k) or "") >= v for k, v in self._gte.items()
                 ):
@@ -931,3 +944,277 @@ def test_admin_force_scan_rejects_empty_workstream(monkeypatch):
             )
         )
     assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Coverage-balance dispatcher (PR-E)
+# ---------------------------------------------------------------------------
+
+
+def _bypass_budget(monkeypatch):
+    """Defang the cost guardrail so dispatcher tests don't touch real spend tables."""
+    from app import cost_guardrail
+    from app.routers import admin_discovery
+
+    async def _ok():
+        return SimpleNamespace(tripped=False, alerting=False)
+
+    monkeypatch.setattr(cost_guardrail, "check_budget_or_raise", _ok)
+    # admin_discovery imports the symbol lazily inside the handler, so
+    # patching the module attribute alone isn't enough — patch the lookup
+    # path too. The handler does ``from app.cost_guardrail import
+    # check_budget_or_raise`` so the module-level binding above suffices.
+    _ = admin_discovery
+
+
+def _stub_derive(monkeypatch, *, per_goal=("alpha", "beta", "gamma", "delta")):
+    """Stub csp_goal_query_service.derive_queries to return a fixed list."""
+    from app import csp_goal_query_service
+
+    async def _fake(goal_id, *, force=False, **_kw):
+        return list(per_goal)
+
+    monkeypatch.setattr(csp_goal_query_service, "derive_queries", _fake)
+
+
+def test_balance_dispatch_with_explicit_goal_ids(monkeypatch):
+    from app.routers import admin_discovery
+
+    goal_id = str(uuid.uuid4())
+    tables = {
+        "csp_goals": [
+            {
+                "id": goal_id,
+                "code": "PS.1",
+                "name": "Reduce violent crime",
+                "pillar_code": "PS",
+            }
+        ],
+        "cards": [],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+    _stub_derive(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(
+        goal_ids=[goal_id], max_queries_per_goal=3
+    )
+    result = asyncio.run(
+        admin_discovery.admin_balance_dispatch(
+            request=_mock_request(), body=body, current_user=actor
+        )
+    )
+
+    assert result["run_id"]
+    assert [g["id"] for g in result["goals_used"]] == [goal_id]
+    assert result["goals_used"][0]["query_count"] == 3
+    assert len(result["queued_queries"]) == 3
+    assert all(q["pillar_code"] == "PS" for q in result["queued_queries"])
+    # discovery_runs row landed and carries the balancer config.
+    rows = tables["discovery_runs"]
+    assert len(rows) == 1
+    config = rows[0]["summary_report"]["config"]
+    assert config["enable_multi_source"] is False
+    assert config["custom_queries"] and len(config["custom_queries"]) == 3
+    assert config["pillars_filter"] == ["PS"]
+
+
+def test_balance_dispatch_auto_picks_starved_goals(monkeypatch):
+    """No goal_ids -> auto-pick goals with the lowest coverage."""
+    from app.routers import admin_discovery
+
+    starved = str(uuid.uuid4())
+    healthy = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    tables = {
+        "csp_goals": [
+            {"id": starved, "code": "PS.1", "name": "Starved", "pillar_code": "PS"},
+            {"id": healthy, "code": "HG.1", "name": "Healthy", "pillar_code": "HG"},
+        ],
+        "cards": [
+            # 5 cards link to the healthy goal, 0 link to the starved goal.
+            *[
+                {
+                    "csp_goal_ids": [healthy],
+                    "created_at": (now - timedelta(days=2)).isoformat(),
+                }
+                for _ in range(5)
+            ],
+        ],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+    _stub_derive(monkeypatch, per_goal=("q1", "q2"))
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.admin_balance_dispatch(
+            request=_mock_request(),
+            body=None,
+            current_user=actor,
+        )
+    )
+    # Starved goal must lead the goals_used list.
+    assert result["goals_used"][0]["id"] == starved
+
+
+def test_balance_dispatch_rejects_unknown_goal_ids(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    tables = {"csp_goals": [], "cards": [], "discovery_runs": []}
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(goal_ids=[str(uuid.uuid4())])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_balance_dispatch(
+                request=_mock_request(), body=body, current_user=actor
+            )
+        )
+    assert exc.value.status_code == 404
+
+
+def test_balance_dispatch_rejects_non_uuid_goal_ids(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    tables = {"csp_goals": [], "cards": [], "discovery_runs": []}
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(goal_ids=["not-a-uuid"])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_balance_dispatch(
+                request=_mock_request(), body=body, current_user=actor
+            )
+        )
+    assert exc.value.status_code == 400
+
+
+def test_balance_dispatch_caps_total_queries(monkeypatch):
+    """20-query global cap holds even if many goals are requested with high per-goal limits."""
+    from app.routers import admin_discovery
+
+    goal_ids = [str(uuid.uuid4()) for _ in range(admin_discovery.BALANCE_MAX_GOALS)]
+    tables = {
+        "csp_goals": [
+            {"id": gid, "code": f"PS.{i}", "name": f"g{i}", "pillar_code": "PS"}
+            for i, gid in enumerate(goal_ids)
+        ],
+        "cards": [],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+    # Each goal returns 6 queries. 5 * 6 = 30 — must be trimmed to 20.
+    _stub_derive(monkeypatch, per_goal=tuple(f"q{i}" for i in range(6)))
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(
+        goal_ids=goal_ids, max_queries_per_goal=6
+    )
+    result = asyncio.run(
+        admin_discovery.admin_balance_dispatch(
+            request=_mock_request(), body=body, current_user=actor
+        )
+    )
+    assert len(result["queued_queries"]) == admin_discovery.BALANCE_GLOBAL_QUERY_CAP
+    # Sum of per-goal query_count should equal the global cap.
+    total = sum(g["query_count"] for g in result["goals_used"])
+    assert total == admin_discovery.BALANCE_GLOBAL_QUERY_CAP
+
+
+def test_balance_dispatch_skips_derivation_failures(monkeypatch):
+    """When derive_queries raises for one goal, the dispatcher records the
+    error and continues with the others — never aborts the whole batch."""
+    from app import csp_goal_query_service
+    from app.routers import admin_discovery
+
+    bad_goal = str(uuid.uuid4())
+    good_goal = str(uuid.uuid4())
+    tables = {
+        "csp_goals": [
+            {"id": bad_goal, "code": "BAD", "name": "broken", "pillar_code": "PS"},
+            {"id": good_goal, "code": "OK", "name": "good", "pillar_code": "MC"},
+        ],
+        "cards": [],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+
+    async def _selective(goal_id, *, force=False, **_kw):
+        if str(goal_id) == bad_goal:
+            raise csp_goal_query_service.QueryDerivationError("nope")
+        return ["a", "b"]
+
+    monkeypatch.setattr(csp_goal_query_service, "derive_queries", _selective)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(
+        goal_ids=[bad_goal, good_goal], max_queries_per_goal=2
+    )
+    result = asyncio.run(
+        admin_discovery.admin_balance_dispatch(
+            request=_mock_request(), body=body, current_user=actor
+        )
+    )
+    assert [g["id"] for g in result["goals_used"]] == [good_goal]
+    assert [e["goal_id"] for e in result["derivation_errors"]] == [bad_goal]
+
+
+def test_balance_dispatch_returns_422_when_all_goals_fail(monkeypatch):
+    from fastapi import HTTPException
+
+    from app import csp_goal_query_service
+    from app.routers import admin_discovery
+
+    goal_id = str(uuid.uuid4())
+    tables = {
+        "csp_goals": [
+            {"id": goal_id, "code": "PS.1", "name": "x", "pillar_code": "PS"},
+        ],
+        "cards": [],
+        "discovery_runs": [],
+    }
+    mock_sb = _MockSupabase(tables)
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+    _bypass_budget(monkeypatch)
+
+    async def _always_fail(goal_id, *, force=False, **_kw):
+        raise csp_goal_query_service.QueryDerivationError("nope")
+
+    monkeypatch.setattr(csp_goal_query_service, "derive_queries", _always_fail)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    body = admin_discovery.BalanceDispatchRequest(goal_ids=[goal_id])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.admin_balance_dispatch(
+                request=_mock_request(), body=body, current_user=actor
+            )
+        )
+    assert exc.value.status_code == 422
