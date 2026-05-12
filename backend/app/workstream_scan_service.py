@@ -290,7 +290,7 @@ class WorkstreamScanService:
             # the workstream inbox-add phase. Profile generation is slow
             # (generate_signal_profile can wait up to 120s per card per
             # ai_service.py); doing it inline in _create_card risked the
-            # 300s scan timeout firing before Step 7 ever ran.
+            # scan timeout firing before Step 7 ever ran.
             profile_targets: List[Tuple[str, ProcessedSource]] = []
             for source in unique_sources:
                 if cards_created_count >= config.max_new_cards:
@@ -1294,7 +1294,7 @@ Example: ["query 1", "query 2", ...]"""
                 # Profile generation (cards.description backfill) runs in a
                 # later best-effort phase in execute_scan, AFTER the workstream
                 # inbox-add step. Keeping it out of _create_card prevents the
-                # 5-min scan timeout from firing before cards are recorded in
+                # scan timeout from firing before cards are recorded in
                 # the result or added to the workstream inbox.
                 return card_id
         except Exception as e:
