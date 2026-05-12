@@ -45,6 +45,7 @@ gh pr view <N> --json statusCheckRollup,state,mergeable,headRefName,baseRefName,
 ```
 
 - If `state != "OPEN"`: PR closed or already merged. Mark state, exit.
+- Record `mergeable` — values are `MERGEABLE`, `CONFLICTING`, or `UNKNOWN`. If `CONFLICTING`, the PR's head branch has drifted from base; merging it via `gh pr merge` will hard-error. The merge gate in Step 5 must check this — see below.
 - If `baseRefName` is `main` or `master`: standard feature-branch → main squash-merge, safe to proceed. Anything non-standard (`production`, `release/*`, etc.) falls under the guardrail at the bottom of this doc — refuse to merge and report. Either way, you only push commits to the PR's head branch; you never touch the base branch directly.
 - Record CI status. `gh pr view` returns each check with a `conclusion` (e.g. `SUCCESS`, `FAILURE`, `NEUTRAL`, `SKIPPED`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`) or a `status` (`PENDING`, `IN_PROGRESS`) while still running. Apply these deterministic rules:
   - **Non-blocking (count as green)**: `SUCCESS`, `NEUTRAL`, `SKIPPED`.
@@ -107,8 +108,8 @@ Run only the verification commands relevant to the files you touched — full-su
 
 ### 5. Decide: merge, report, or schedule another tick
 
-- `quiet_ticks < 2` OR CI not green → write state, return "still watching" with quiet_ticks and what you addressed this tick.
-- `quiet_ticks >= 2` AND CI green AND `auto_merge=true` AND `baseRefName` is the PR's declared base target (typically `main` or `master` — defers to the bottom-of-doc guardrail for anything else) → run:
+- `quiet_ticks < 2` OR CI not green OR `mergeable != "MERGEABLE"` → write state, return "still watching" with quiet_ticks and what you addressed this tick. If `mergeable == "CONFLICTING"`, note that the head branch needs to be brought up to date with base (merge base into branch — never force-push) before the merge can proceed.
+- `quiet_ticks >= 2` AND CI green AND `mergeable == "MERGEABLE"` AND `auto_merge=true` AND `baseRefName` is the PR's declared base target (typically `main` or `master` — defers to the bottom-of-doc guardrail for anything else) → run:
 
   ```bash
   gh pr merge <N> --squash --delete-branch
@@ -116,7 +117,7 @@ Run only the verification commands relevant to the files you touched — full-su
 
   Set `merged: true` in state. Return "merged".
 
-- `quiet_ticks >= 2` AND CI green AND `auto_merge=false` → return "ready for merge" with the maintainer reminder.
+- `quiet_ticks >= 2` AND CI green AND `mergeable == "MERGEABLE"` AND `auto_merge=false` → return "ready for merge" with the maintainer reminder.
 
 ## Hard guardrails — never violate
 
