@@ -24,6 +24,7 @@ Usage:
     result = await service.execute_scan(config)
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ from typing import List, Optional, Dict, Tuple
 from supabase import Client
 import openai
 
-from .ai_service import AIService, TriageResult
+from .ai_service import AIService, AnalysisResult, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from . import domain_reputation_service
@@ -285,6 +286,12 @@ class WorkstreamScanService:
             )
             cards_created_count = 0
             sources_without_analysis = 0
+            # Keep (card_id, source) pairs so profile generation can run AFTER
+            # the workstream inbox-add phase. Profile generation is slow
+            # (generate_signal_profile can wait up to 120s per card per
+            # ai_service.py); doing it inline in _create_card risked the
+            # 300s scan timeout firing before Step 7 ever ran.
+            profile_targets: List[Tuple[str, ProcessedSource]] = []
             for source in unique_sources:
                 if cards_created_count >= config.max_new_cards:
                     logger.info(f"Reached max cards limit ({config.max_new_cards})")
@@ -301,6 +308,7 @@ class WorkstreamScanService:
                     card_id = await self._create_card(source, config)
                     if card_id:
                         result.cards_created.append(card_id)
+                        profile_targets.append((card_id, source))
                         cards_created_count += 1
                         logger.info(
                             f"Created card {card_id}: {source.analysis.suggested_card_name}"
@@ -332,6 +340,34 @@ class WorkstreamScanService:
                         logger.warning(
                             f"Failed to add card {card_id} to workstream: {e}"
                         )
+
+            # Step 8: Best-effort profile generation for newly created cards.
+            # Runs AFTER inbox-add so a slow generate_signal_profile call
+            # cannot eat the scan timeout before cards land in the workstream.
+            # Profile failures only warn — card + membership are already saved.
+            #
+            # Per-card timeout caps each profile call so the loop as a whole
+            # stays within the worker's FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS
+            # budget (default 300s). Without this, generate_signal_profile's
+            # ~120s ceiling × 8 cards could blow past the scan timeout, and the
+            # worker's asyncio.wait_for would raise CancelledError (which is a
+            # BaseException — not caught below) so a successful card-creation
+            # run would be reported as "failed (timed out)".
+            for card_id, source in profile_targets:
+                if source.analysis is None:
+                    continue
+                try:
+                    await asyncio.wait_for(
+                        self._generate_card_profile(
+                            card_id, source, source.analysis
+                        ),
+                        timeout=30,
+                    )
+                except Exception as profile_err:
+                    logger.warning(
+                        f"Workstream scan: profile generation failed for card "
+                        f"{card_id}: {profile_err}"
+                    )
 
             result.status = "completed"
 
@@ -1178,12 +1214,84 @@ Example: ["query 1", "query 2", ...]"""
                 # Store source
                 await self._store_source_to_card(source, card_id)
 
+                # Profile generation (cards.description backfill) runs in a
+                # later best-effort phase in execute_scan, AFTER the workstream
+                # inbox-add step. Keeping it out of _create_card prevents the
+                # 5-min scan timeout from firing before cards are recorded in
+                # the result or added to the workstream inbox.
                 return card_id
         except Exception as e:
             logger.error(f"Card creation failed: {e}")
             raise
 
         return None
+
+    async def _generate_card_profile(
+        self,
+        card_id: str,
+        source: ProcessedSource,
+        analysis: AnalysisResult,
+    ) -> None:
+        """Synthesize a rich markdown profile from the source and persist it
+        on cards.description. Mirrors signal_agent_service._generate_card_profile
+        but adapted for the workstream-scan one-source-per-card shape.
+        """
+        content = source.raw.content or ""
+
+        # Backfill thin content from URL (matches signal-agent behavior).
+        if len(content) < 200 and source.raw.url:
+            try:
+                from app.content_enricher import extract_content
+
+                text, _ = await extract_content(source.raw.url)
+                if text and len(text) > len(content):
+                    content = text[:10000]
+            except Exception:
+                pass
+
+        source_analyses = [
+            {
+                "title": source.raw.title or "Untitled",
+                "url": source.raw.url or "",
+                "summary": analysis.summary or "",
+                "key_excerpts": (
+                    analysis.key_excerpts[:3]
+                    if getattr(analysis, "key_excerpts", None)
+                    else []
+                ),
+                "content": content[:500],
+            }
+        ]
+
+        pillar_id = (
+            convert_pillar_id(analysis.pillars[0]) if analysis.pillars else ""
+        )
+
+        profile = await self.ai_service.generate_signal_profile(
+            signal_name=analysis.suggested_card_name,
+            signal_summary=analysis.summary or "",
+            pillar_id=pillar_id,
+            horizon=analysis.horizon or "H2",
+            source_analyses=source_analyses,
+        )
+
+        if profile and len(profile) > 100:
+            # Supabase sync client blocks the event loop; this helper is awaited
+            # inside the per-card creation flow, so run the write off-thread per
+            # CLAUDE.md's async DB-write rule.
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards").update(
+                    {
+                        "description": profile,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ).eq("id", card_id).execute()
+            )
+
+            logger.info(
+                f"Workstream scan: profile generated for card {card_id} "
+                f"({len(profile)} chars)"
+            )
 
     async def _store_source_to_card(
         self, source: ProcessedSource, card_id: str
