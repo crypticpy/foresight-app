@@ -398,6 +398,13 @@ class ResearchService:
         Returns:
             Tuple of (sources, report_text_or_none, cost)
         """
+        # Refresh GPT Researcher env mapping so runtime admin model overrides
+        # (applied via reload_openai_config) are picked up for this run. The
+        # initial import-time call is not sufficient because admin PATCHes to
+        # OPENAI_* settings mutate os.environ and reload the provider's
+        # in-memory config, but do not re-write SMART_LLM / FAST_LLM / EMBEDDING.
+        _configure_gpt_researcher_for_openai()
+
         sources: List[RawSource] = []
         # Seed dedupe from the caller's existing-source list so the Serper-first
         # phase doesn't re-add URLs already on the card (deep-research /
