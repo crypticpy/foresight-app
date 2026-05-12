@@ -1,37 +1,37 @@
 -- Migration: discovery_seed_public_safety_feeds
--- Created at: 2026-05-12
 --
 -- PURPOSE:
 --   Seed the discovery_sources_registry with RSS feeds that cover the
 --   Public Safety pillar, animal services, and municipal-government topics.
---   The original seed (20260509000001_discovery_sources_registry.sql) is
---   tech-skewed (Hacker News, Ars Technica, GovTech, StateScoop) so the
---   discovery pipeline can't surface PS or animal-services signals via RSS
---   even when the balancer asks for them.
+--   The original seed (20260509000001_discovery_sources_registry.sql) only
+--   ships tech feeds (Hacker News, Ars Technica, GovTech, StateScoop) so
+--   the discovery pipeline can't surface PS or animal-services signals via
+--   RSS even when the balancer asks for them.
 --
 -- VERIFICATION:
---   Each URL was probed with `curl -sLI` on 2026-05-12 and returns
---   200 OK with `content-type: application/rss+xml` (or application/xml
---   for govtech). Probe logs live in the PR-B description on PR #76.
+--   Each URL was HEAD-probed before this migration was written and returned
+--   200 OK with an RSS/XML content-type. Re-probe before re-running if
+--   you suspect a feed has moved.
 --
 -- IDEMPOTENCY:
 --   ON CONFLICT (category, url) DO NOTHING — running this migration twice
 --   leaves the registry unchanged. The unique index lives in
---   20260509000001_discovery_sources_registry.sql:74.
+--   20260509000001_discovery_sources_registry.sql.
 --
 -- ROLLBACK:
 --   DELETE FROM public.discovery_sources_registry
---   WHERE url IN (
---     'https://police1.com/news.rss',
---     'https://firerescue1.com/news.rss',
---     'https://ems1.com/news.rss',
---     'https://www.govtech.com/security.rss',
---     'https://www.aspca.org/rss.xml',
---     'https://www.nacanet.org/feed/',
---     'https://icma.org/rss.xml',
---     'https://www.nlc.org/feed/',
---     'https://www.route-fifty.com/rss/all/'
---   );
+--   WHERE category = 'rss'
+--     AND url IN (
+--       'https://police1.com/news.rss',
+--       'https://firerescue1.com/news.rss',
+--       'https://ems1.com/news.rss',
+--       'https://www.govtech.com/security.rss',
+--       'https://www.aspca.org/rss.xml',
+--       'https://www.nacanet.org/feed/',
+--       'https://icma.org/rss.xml',
+--       'https://www.nlc.org/feed/',
+--       'https://www.route-fifty.com/rss/all/'
+--     );
 -- ============================================================================
 
 INSERT INTO public.discovery_sources_registry (category, name, url, enabled, notes)
