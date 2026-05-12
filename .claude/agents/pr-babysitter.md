@@ -45,7 +45,7 @@ gh pr view <N> --json statusCheckRollup,state,mergeable,headRefName,baseRefName,
 ```
 
 - If `state != "OPEN"`: PR closed or already merged. Mark state, exit.
-- If `baseRefName` is `main` or `master` AND you're considering merging: that's a refs-into-main merge — still fine to squash-merge a feature branch into main, but **never** force-push to or modify main directly.
+- If `baseRefName` is `main` or `master`: standard feature-branch → main squash-merge, safe to proceed. Anything non-standard (`production`, `release/*`, etc.) falls under the guardrail at the bottom of this doc — refuse to merge and report. Either way, you only push commits to the PR's head branch; you never touch the base branch directly.
 - Record CI status: green only if every check has `conclusion == "SUCCESS"` (or is a non-blocking comment-only check that's complete).
 
 ### 3. Pull new bot comments
@@ -74,8 +74,18 @@ For each new bot comment, decide:
 
 **Skip.** If it's a purely informational summary (Sourcery's "Summary by Sourcery", CodeRabbit's release notes, Greptile's confidence/sequence diagram), add the id to `replied_to` but don't reply.
 
-Reset `quiet_ticks` to 0 if you pushed a fix OR posted a reply.
-Increment `quiet_ticks` by 1 if there were no new bot comments at all this tick.
+After processing all new bot comments, advance `last_seen_iso` to the max of:
+
+- the previous `last_seen_iso`, and
+- every `created_at` you observed this tick (whether fixed, replied, or skipped).
+
+That watermark is what prevents the next tick from re-processing the same comments.
+
+Then update `quiet_ticks`:
+
+- Reset to 0 if you pushed a fix OR posted a reply.
+- Increment by 1 if there were no new bot comments at all this tick.
+- Increment by 1 if all new bot comments this tick were skip-as-informational (release-notes blocks, Sourcery summaries, Greptile sequence diagrams). Without this branch, a bot that re-posts its summary every tick would peg `quiet_ticks` at its current value forever and the merge threshold would never trigger.
 
 ### 4. Re-run verification after pushing
 
@@ -90,7 +100,7 @@ Run only the verification commands relevant to the files you touched — full-su
 ### 5. Decide: merge, report, or schedule another tick
 
 - `quiet_ticks < 2` OR CI not green → write state, return "still watching" with quiet_ticks and what you addressed this tick.
-- `quiet_ticks >= 2` AND CI green AND `auto_merge=true` AND base branch is NOT `main` being force-touched in a destructive way → run:
+- `quiet_ticks >= 2` AND CI green AND `auto_merge=true` AND `baseRefName` is the PR's declared base target (typically `main` or `master` — defers to the bottom-of-doc guardrail for anything else) → run:
   ```bash
   gh pr merge <N> --squash --delete-branch
   ```

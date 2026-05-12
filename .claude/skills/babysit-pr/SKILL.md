@@ -39,27 +39,28 @@ If the user passed only `--no-merge` without a number, stop and ask which PR.
 ### 2. Sanity check the PR exists and is open
 
 ```bash
-gh pr view <N> --json state,baseRefName,headRefName -q '.state'
+gh pr view <N> --json state,baseRefName,headRefName,createdAt
 ```
 
-If `state != "OPEN"`, tell the user and stop. Don't try to re-open or revive.
+If `state != "OPEN"`, tell the user and stop. Don't try to re-open or revive. Keep `createdAt` from this call — Step 3 uses it for the initial watermark.
 
 ### 3. Initialize the state file
 
-If `.claude/state/pr-<N>.json` doesn't exist, write a fresh one:
+If `.claude/state/pr-<N>.json` doesn't exist, write a fresh one (use the `createdAt` from Step 2 for `last_seen_iso`):
 
 ```json
 {
   "pr_number": <N>,
   "auto_merge": true,
   "quiet_ticks": 0,
-  "last_seen_iso": "<PR created_at, RFC3339>",
+  "last_seen_iso": "<createdAt from gh pr view, RFC3339>",
   "replied_to": [],
-  "merged": false
+  "merged": false,
+  "last_tick_at": "<current ISO timestamp>"
 }
 ```
 
-If it exists from a previous /babysit-pr run on the same PR, leave it alone — the agent will pick up where it left off.
+If it exists from a previous /babysit-pr run on the same PR, leave it alone — the agent will pick up where it left off. Update `last_tick_at` to the current time before invoking the agent (Step 4) so the duplicate-babysitter guard at the bottom of this skill can detect a stuck loop.
 
 ### 4. Run the first tick now
 
@@ -82,10 +83,10 @@ The agent will do one full cycle, write back to the state file, and return a sho
 Briefly summarize what the agent did this tick. Then call `ScheduleWakeup` as the final action with:
 
 - `prompt`: `/babysit-pr <N>` (verbatim, plus `--no-merge` if it was passed in). When the loop re-fires, this skill runs again and the next tick happens.
-- `delaySeconds`: pick based on bot timing:
-  - Bots typically post within 2-10 min of a push. If you pushed a fix this tick, use **270s** (4.5 min) — long enough to catch the first re-comment, short enough to stay in cache.
-  - If this was a quiet tick (no new comments, no pushes), use **600s** (10 min). Less churn.
-  - Never below 120s; never above 1800s. Anything past 30 min is excessive for active PRs.
+- `delaySeconds`: inspect the agent's status report from Step 4 to decide:
+  - If the report shows a `pushed fix in <sha>` line under "addressed this tick", use **270s** (4.5 min) — long enough to catch the first re-comment, short enough to stay in cache. Bots typically post within 2–10 min of a push.
+  - Otherwise (quiet tick — no comments, no pushes, or only `replied`/`skipped` entries with no fix this tick), use **600s** (10 min). Less churn.
+  - Clamp the final value to `[120, 1800]`. Never below 120s; never above 1800s — anything past 30 min is excessive for active PRs.
 - `reason`: one short sentence — "watching for re-comments after pushing fix" or "second quiet tick before merge."
 
 That's it. The wake fires, /babysit-pr runs again, the agent does another tick.
@@ -99,7 +100,7 @@ That's it. The wake fires, /babysit-pr runs again, the agent does another tick.
 
 ## Guardrails this skill enforces
 
-- **One babysitter per PR.** If `.claude/state/pr-<N>.json` shows another loop is active for this PR (timestamp within last 30 min), warn the user before starting a duplicate.
+- **One babysitter per PR.** If `.claude/state/pr-<N>.json` exists and `last_tick_at` is within the last 30 minutes, another loop is likely still active — warn the user before starting a duplicate.
 - **Don't invoke on main/master directly.** This skill is for feature-branch PRs targeting `main`, not for watching `main` itself.
 - **No agent recursion.** The `pr-babysitter` agent must not spawn another `pr-babysitter`.
 
