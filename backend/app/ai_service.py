@@ -1138,11 +1138,21 @@ Respond with JSON:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=get_chat_agent_deployment(),
-                messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=2000,
-                timeout=REQUEST_TIMEOUT * 2,
+            # The sync openai client blocks the event loop for the duration of
+            # the HTTP call. Callers wrap this coroutine in `asyncio.wait_for`
+            # (e.g. workstream_scan_service step 8), and a blocked event loop
+            # cannot deliver the wait_for cancellation mid-call — the timer
+            # only fires on the next await, after the call has returned, which
+            # then raises TimeoutError before the downstream supabase write
+            # runs. Pushing the blocking call onto a worker thread keeps the
+            # event loop responsive so timers can actually fire on time.
+            response = await asyncio.to_thread(
+                lambda: self.client.chat.completions.create(
+                    model=get_chat_agent_deployment(),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=2000,
+                    timeout=REQUEST_TIMEOUT * 2,
+                )
             )
             profile = response.choices[0].message.content.strip()
             logger.info(

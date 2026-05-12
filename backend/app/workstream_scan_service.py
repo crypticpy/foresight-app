@@ -354,10 +354,12 @@ class WorkstreamScanService:
             # FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS budget (default 1800s).
             #
             # The previous serial loop used a 30s wait_for, but the sync openai
-            # client blocks the event loop during the LLM call so the wait_for
-            # timer couldn't actually fire mid-call — half the cards landed
-            # with empty descriptions because the timeout cancelled after the
-            # LLM returned, before the DB write got to run.
+            # client blocked the event loop during the LLM call so the wait_for
+            # timer couldn't fire mid-call — half the cards landed with empty
+            # descriptions because the timeout cancelled after the LLM returned,
+            # before the DB write got to run. generate_signal_profile now wraps
+            # its OpenAI call in asyncio.to_thread (see ai_service.py), so
+            # wait_for can actually interrupt a stuck call here.
             profile_sem = asyncio.Semaphore(4)
 
             async def _profile_one(
