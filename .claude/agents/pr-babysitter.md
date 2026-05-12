@@ -32,7 +32,7 @@ You run ONE tick of work, then return. The /loop skill calls you again on a sche
 
 ```bash
 # State file holds:
-#   { "pr_number": N, "quiet_ticks": 0|1|2, "last_seen_iso": "<RFC3339>",
+#   { "pr_number": N, "quiet_ticks": <0..2, capped — see §3>, "last_seen_iso": "<RFC3339>",
 #     "replied_to": ["<comment_id>", ...], "merged": false }
 ```
 
@@ -88,8 +88,10 @@ That watermark is what prevents the next tick from re-processing the same commen
 Then update `quiet_ticks` (these rules are mutually exclusive — apply the first matching branch):
 
 - **If** you pushed a fix OR posted a reply this tick → reset to 0.
-- **Else if** there were no new bot comments at all this tick → increment by 1.
-- **Else if** every new bot comment this tick was skip-as-informational (release-notes blocks, Sourcery summaries, Greptile sequence diagrams) → increment by 1. Without this branch, a bot that re-posts its summary every tick would peg `quiet_ticks` at its current value forever and the merge threshold would never trigger.
+- **Else if** there were no new bot comments at all this tick → set to `min(2, quiet_ticks + 1)`.
+- **Else if** every new bot comment this tick was skip-as-informational (release-notes blocks, Sourcery summaries, Greptile sequence diagrams) → set to `min(2, quiet_ticks + 1)`. Without this branch, a bot that re-posts its summary every tick would peg `quiet_ticks` at its current value forever and the merge threshold would never trigger.
+
+The cap at 2 keeps the state file's `quiet_ticks` field bounded to `{0, 1, 2}` — the merge gate fires at 2, and there's no value in counting higher.
 
 ### 4. Re-run verification after pushing
 
@@ -107,10 +109,13 @@ Run only the verification commands relevant to the files you touched — full-su
 
 - `quiet_ticks < 2` OR CI not green → write state, return "still watching" with quiet_ticks and what you addressed this tick.
 - `quiet_ticks >= 2` AND CI green AND `auto_merge=true` AND `baseRefName` is the PR's declared base target (typically `main` or `master` — defers to the bottom-of-doc guardrail for anything else) → run:
+
   ```bash
   gh pr merge <N> --squash --delete-branch
   ```
+
   Set `merged: true` in state. Return "merged".
+
 - `quiet_ticks >= 2` AND CI green AND `auto_merge=false` → return "ready for merge" with the maintainer reminder.
 
 ## Hard guardrails — never violate
@@ -126,7 +131,7 @@ Run only the verification commands relevant to the files you touched — full-su
 
 Return a short structured report to your caller:
 
-```
+```text
 status: still watching | ready for merge | merged | error
 pr: #<N>
 ci: green | failing | pending
