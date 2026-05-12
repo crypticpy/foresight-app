@@ -1255,14 +1255,16 @@ def test_balance_dispatch_auto_pick_ignores_archived_cards(monkeypatch):
     auto-picker drops it from the top-N starved slice — leaving the actual
     gap unscanned.
 
-    Setup chosen to make the test *falsifiable*. With 7 goals against
-    ``BALANCE_MAX_GOALS=5``, the slice actually matters:
+    Setup chosen to make the test *falsifiable*. We keep total goals at
+    ``BALANCE_MAX_GOALS + 2`` so the slice boundary always matters even if
+    the cap changes:
 
     - ``starved`` has 0 cards (active or archived) → drift = -1 either way.
     - ``masked`` has 10 ARCHIVED cards →
-        - WITH the fix: counts as 0 active → tied with ``starved`` → IN top-5.
-        - WITHOUT the fix: counts as 10 → highest count → OUT of top-5.
-    - 5 ``satisfied_*`` goals each have 2 active cards → middle of the pack.
+        - WITH the fix: counts as 0 active → tied with ``starved`` → IN top-N.
+        - WITHOUT the fix: counts as 10 → highest count → OUT of top-N.
+    - ``BALANCE_MAX_GOALS`` ``satisfied_*`` goals each have 2 active cards
+      → middle of the pack.
 
     The assertion ``masked in used_ids`` flips with the production fix, so
     removing the ``.eq("status", "active")`` filter would fail this test.
@@ -1271,7 +1273,9 @@ def test_balance_dispatch_auto_pick_ignores_archived_cards(monkeypatch):
 
     starved = str(uuid.uuid4())
     masked = str(uuid.uuid4())
-    satisfied = [str(uuid.uuid4()) for _ in range(5)]
+    satisfied = [
+        str(uuid.uuid4()) for _ in range(admin_discovery.BALANCE_MAX_GOALS)
+    ]
     now = datetime.now(timezone.utc)
     tables = {
         "csp_goals": [
