@@ -450,6 +450,238 @@ def test_pillar_coverage_rejects_invalid_mode(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Coverage gap detector
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_gaps_starved_goal_lands_high_priority(monkeypatch):
+    """A goal with zero coverage while peers are populated must surface as
+    ``priority='high'`` with ``drift_score == -1.0`` so the UI paints it red.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    ps_goal_id = str(uuid.uuid4())
+    hg_goal_id = str(uuid.uuid4())
+    starved_id = str(uuid.uuid4())
+
+    # 10 cards credit the populated goals; the starved goal gets 0 cards.
+    cards: list[dict[str, Any]] = []
+    for _ in range(5):
+        cards.append({
+            "csp_goal_ids": [ps_goal_id],
+            "created_at": today,
+            "status": "active",
+        })
+    for _ in range(5):
+        cards.append({
+            "csp_goal_ids": [hg_goal_id],
+            "created_at": today,
+            "status": "active",
+        })
+    goals = [
+        {
+            "id": ps_goal_id,
+            "code": "PS.1",
+            "name": "PS goal",
+            "pillar_code": "PS",
+            "display_order": 1,
+        },
+        {
+            "id": hg_goal_id,
+            "code": "HG.1",
+            "name": "HG goal",
+            "pillar_code": "HG",
+            "display_order": 1,
+        },
+        {
+            "id": starved_id,
+            "code": "MC.1",
+            "name": "Starved goal",
+            "pillar_code": "MC",
+            "display_order": 1,
+        },
+    ]
+    mock_sb = _MockSupabase({"cards": cards, "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+    )
+
+    assert result["window_days"] == 30
+    assert result["totals"]["credits"] == 10
+    assert result["totals"]["goals"] == 3
+    # Uniform expected = 10 / 3 ≈ 3.33; starved cell drift = -3.33,
+    # drift_score = -1.0 (clamped).
+    cells_by_id = {c["goal_id"]: c for c in result["cells"]}
+    starved = cells_by_id[starved_id]
+    assert starved["cards_in_window"] == 0
+    assert starved["drift_score"] == -1.0
+    assert starved["priority"] == "high"
+    # Starvation-first sort: the starved cell comes before any populated one.
+    assert result["cells"][0]["goal_id"] == starved_id
+    # The underrepresented counter should include the starved cell.
+    assert result["totals"]["underrepresented_cells"] >= 1
+
+
+def test_coverage_gaps_uniform_population_yields_no_priority(monkeypatch):
+    """When every goal has exactly the expected share, all priorities are
+    ``none`` and the underrepresented counter is zero.
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    g1, g2 = str(uuid.uuid4()), str(uuid.uuid4())
+    cards = [
+        {"csp_goal_ids": [g1], "created_at": today, "status": "active"},
+        {"csp_goal_ids": [g1], "created_at": today, "status": "active"},
+        {"csp_goal_ids": [g2], "created_at": today, "status": "active"},
+        {"csp_goal_ids": [g2], "created_at": today, "status": "active"},
+    ]
+    goals = [
+        {
+            "id": g1,
+            "code": "CH.1",
+            "name": "CH goal",
+            "pillar_code": "CH",
+            "display_order": 1,
+        },
+        {
+            "id": g2,
+            "code": "MC.1",
+            "name": "MC goal",
+            "pillar_code": "MC",
+            "display_order": 1,
+        },
+    ]
+    mock_sb = _MockSupabase({"cards": cards, "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+    )
+    # 4 credits / 2 goals = 2 expected per cell; every goal has exactly 2.
+    assert result["totals"]["expected_per_cell"] == 2.0
+    for cell in result["cells"]:
+        assert cell["cards_in_window"] == 2
+        assert cell["drift"] == 0
+        assert cell["drift_score"] == 0
+        assert cell["priority"] == "none"
+    assert result["totals"]["underrepresented_cells"] == 0
+
+
+def test_coverage_gaps_handles_empty_window(monkeypatch):
+    """No cards in window → drift_score is 0 (not NaN) and nothing flags
+    high priority. Otherwise a fresh install would scream coverage gaps at
+    operators on day one before any discovery has run.
+    """
+    from app.routers import admin_discovery
+
+    g_id = str(uuid.uuid4())
+    goals = [
+        {
+            "id": g_id,
+            "code": "CH.1",
+            "name": "CH goal",
+            "pillar_code": "CH",
+            "display_order": 1,
+        }
+    ]
+    mock_sb = _MockSupabase({"cards": [], "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_coverage_gaps(days=7, current_user=actor)
+    )
+    assert result["totals"]["credits"] == 0
+    assert result["totals"]["expected_per_cell"] == 0.0
+    assert result["totals"]["underrepresented_cells"] == 0
+    cell = result["cells"][0]
+    assert cell["cards_in_window"] == 0
+    assert cell["drift_score"] == 0
+    assert cell["priority"] == "none"
+
+
+def test_coverage_gaps_ignores_null_and_unknown_goal_ids(monkeypatch):
+    """Cards with ``None``/missing ``csp_goal_ids`` must not crash the
+    aggregator, and a goal_id that doesn't resolve to a known goal must be
+    silently dropped (stale references shouldn't blow up the admin view).
+    """
+    from app.routers import admin_discovery
+
+    today = datetime.now(timezone.utc).isoformat()
+    g_id = str(uuid.uuid4())
+    cards = [
+        {"csp_goal_ids": None, "created_at": today, "status": "active"},
+        {"csp_goal_ids": [], "created_at": today, "status": "active"},
+        # One known goal credit + one stale UUID that's no longer in csp_goals.
+        {
+            "csp_goal_ids": [g_id, str(uuid.uuid4())],
+            "created_at": today,
+            "status": "active",
+        },
+    ]
+    goals = [
+        {
+            "id": g_id,
+            "code": "HG.1",
+            "name": "HG goal",
+            "pillar_code": "HG",
+            "display_order": 1,
+        }
+    ]
+    mock_sb = _MockSupabase({"cards": cards, "csp_goals": goals})
+    _patch_supabase(monkeypatch, mock_sb)
+    _bypass_admin(monkeypatch)
+
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    result = asyncio.run(
+        admin_discovery.get_coverage_gaps(days=30, current_user=actor)
+    )
+    # Only the one known goal credit is counted.
+    assert result["totals"]["credits"] == 1
+    assert result["cells"][0]["goal_id"] == g_id
+    assert result["cells"][0]["cards_in_window"] == 1
+
+
+def test_coverage_gaps_rejects_invalid_window(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    _bypass_admin(monkeypatch)
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.get_coverage_gaps(days=14, current_user=actor)
+        )
+    assert exc.value.status_code == 400
+
+
+def test_coverage_gaps_rejects_unknown_target_distribution(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers import admin_discovery
+
+    _bypass_admin(monkeypatch)
+    actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            admin_discovery.get_coverage_gaps(
+                days=30, target_distribution="weighted", current_user=actor
+            )
+        )
+    assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # Workstream freshness
 # ---------------------------------------------------------------------------
 

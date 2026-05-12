@@ -11,8 +11,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   adminForceWorkstreamScan,
+  fetchCoverageGaps,
   fetchPillarCoverage,
   fetchWorkstreamCoverage,
+  type CoverageGapsResponse,
   type CoverageWindowDays,
   type PillarCoverageMode,
   type PillarCoverageResponse,
@@ -36,6 +38,9 @@ export function useCoverage({
   const [workstreamCoverage, setWorkstreamCoverage] = useState<
     WorkstreamCoverageItem[]
   >([]);
+  // Gap heatmap data. Loaded alongside pillar coverage and re-fetched on
+  // the same window/mode changes so the two widgets stay in sync.
+  const [gaps, setGaps] = useState<CoverageGapsResponse | null>(null);
   const [days, setDays] = useState<CoverageWindowDays>(7);
   // ``primary`` matches the legacy aggregation; operators flip to
   // ``primary_or_secondary`` or ``union`` to fold in ``secondary_pillars``
@@ -63,14 +68,16 @@ export function useCoverage({
       const gen = ++genRef.current;
       try {
         const token = await getToken();
-        const [pillars, workstreams] = await Promise.all([
+        const [pillars, workstreams, gapPayload] = await Promise.all([
           fetchPillarCoverage(token, windowDays, m),
           fetchWorkstreamCoverage(token),
+          fetchCoverageGaps(token, windowDays),
         ]);
         // Stale-overwrite guard: bail if the operator changed windows mid-flight.
         if (gen !== genRef.current) return;
         setPillarCoverage(pillars);
         setWorkstreamCoverage(workstreams.items);
+        setGaps(gapPayload);
       } catch (err) {
         if (gen !== genRef.current) return;
         onError(err instanceof Error ? err.message : "Failed to load coverage");
@@ -88,9 +95,15 @@ export function useCoverage({
       const gen = ++genRef.current;
       try {
         const token = await getToken();
-        const pillars = await fetchPillarCoverage(token, windowDays, m);
+        // Window changes affect the gap heatmap too — re-fetch both so the
+        // two widgets agree on the window. The WS table is unaffected.
+        const [pillars, gapPayload] = await Promise.all([
+          fetchPillarCoverage(token, windowDays, m),
+          fetchCoverageGaps(token, windowDays),
+        ]);
         if (gen !== genRef.current) return;
         setPillarCoverage(pillars);
+        setGaps(gapPayload);
       } catch (err) {
         if (gen !== genRef.current) return;
         onError(
@@ -157,6 +170,7 @@ export function useCoverage({
   return {
     pillarCoverage,
     workstreamCoverage,
+    gaps,
     days,
     mode,
     loading,

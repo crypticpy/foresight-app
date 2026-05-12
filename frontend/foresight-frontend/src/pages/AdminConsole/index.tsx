@@ -292,6 +292,7 @@ const AdminConsole: React.FC = () => {
             <CoverageTab
               pillarData={coverage.pillarCoverage}
               workstreams={coverage.workstreamCoverage}
+              gaps={coverage.gaps}
               loading={coverage.loading}
               windowDays={coverage.days}
               mode={coverage.mode}

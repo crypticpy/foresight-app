@@ -812,6 +812,187 @@ async def get_pillar_coverage(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Drift-score thresholds for the gap detector. A drift_score of -1.0 means
+# zero cards under that goal; -0.5 means "half the expected volume." We keep
+# the bands wide enough that one short window doesn't flap a goal between
+# bands every refresh.
+GAP_PRIORITY_HIGH_THRESHOLD = -0.5
+GAP_PRIORITY_MEDIUM_THRESHOLD = -0.25
+TargetDistribution = Literal["uniform"]
+ALLOWED_GAP_TARGETS = ("uniform",)
+
+
+def _gap_priority(drift_score: float) -> str:
+    """Bucket a goal's drift_score into the priority bands the UI colors."""
+    if drift_score <= GAP_PRIORITY_HIGH_THRESHOLD:
+        return "high"
+    if drift_score <= GAP_PRIORITY_MEDIUM_THRESHOLD:
+        return "medium"
+    return "none"
+
+
+@router.get("/admin/coverage/gaps")
+async def get_coverage_gaps(
+    days: int = 30,
+    target_distribution: TargetDistribution = "uniform",
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-(pillar, csp_goal) coverage heatmap with drift scores.
+
+    The pillar-balance widget (``/admin/coverage/pillars``) tells operators
+    *which pillar* is starved. This endpoint zooms one level in and tells
+    them *which strategic goal* under that pillar is starved, so a balance
+    run can target the specific gap rather than carpet-bombing the pillar.
+
+    Aggregation: for each active card created within ``days``, every entry
+    in its ``csp_goal_ids`` array contributes one credit to that goal's
+    cell. The cell's ``pillar_code`` comes from ``csp_goals.pillar_code``.
+
+    ``target_distribution=uniform`` (only mode for v1) sets the expected
+    number of cards per goal to ``total_credits / total_goals``. ``drift``
+    is ``cards_in_window - expected``; ``drift_score`` is ``drift / expected``
+    clamped to ``[-1.0, +inf)``. ``priority`` is bucketed by ``drift_score``:
+
+    - ``high``:   drift_score ≤ -0.5 (more than half short of expected)
+    - ``medium``: drift_score ≤ -0.25
+    - ``none``:   otherwise
+
+    The cells list is sorted starvation-first (drift_score ascending) so
+    the UI can render the heatmap with the worst-off goals on top.
+    """
+    require_admin(current_user)
+    if days not in ALLOWED_COVERAGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"days must be one of {sorted(ALLOWED_COVERAGE_DAYS)}",
+        )
+    if target_distribution not in ALLOWED_GAP_TARGETS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "target_distribution must be one of "
+                f"{list(ALLOWED_GAP_TARGETS)}"
+            ),
+        )
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    def load() -> dict[str, Any]:
+        rows = (
+            supabase.table("cards")
+            .select("csp_goal_ids,created_at")
+            .gte("created_at", cutoff)
+            .eq("status", "active")
+            .limit(10_000)
+            .execute()
+            .data
+            or []
+        )
+
+        goal_rows = (
+            supabase.table("csp_goals")
+            .select("id,code,name,pillar_code,display_order")
+            .limit(1_000)
+            .execute()
+            .data
+            or []
+        )
+
+        # Normalize the goal rows up-front: drop any with a missing id or an
+        # unknown pillar_code so we never produce a cell the UI can't render.
+        goals: list[dict[str, Any]] = []
+        for g in goal_rows:
+            gid = g.get("id")
+            pc = g.get("pillar_code")
+            if not gid or pc not in PILLAR_DEFINITIONS:
+                continue
+            goals.append(
+                {
+                    "id": str(gid),
+                    "code": g.get("code") or "",
+                    "name": g.get("name") or "",
+                    "pillar_code": pc,
+                    "display_order": g.get("display_order") or 0,
+                }
+            )
+
+        goal_counts: dict[str, int] = {g["id"]: 0 for g in goals}
+        total_credits = 0
+        for row in rows:
+            for gid in row.get("csp_goal_ids") or []:
+                key = str(gid)
+                if key in goal_counts:
+                    goal_counts[key] += 1
+                    total_credits += 1
+
+        # Expected: uniform distribution across all goals. Falls back to 0
+        # when there are no goals at all (empty seed DB) so the math never
+        # divides by zero.
+        expected_per_cell = (
+            total_credits / len(goals) if goals else 0.0
+        )
+
+        cells: list[dict[str, Any]] = []
+        for g in goals:
+            cards_in_window = goal_counts[g["id"]]
+            drift = cards_in_window - expected_per_cell
+            if expected_per_cell > 0:
+                # Clamp the negative tail to -1.0 — "zero coverage" is the
+                # worst we can express, and a smaller denominator would let
+                # the score balloon below -1 misleadingly.
+                drift_score = max(-1.0, drift / expected_per_cell)
+            else:
+                # No data anywhere — flat 0 so the UI doesn't paint
+                # everything as "high priority" on a fresh install.
+                drift_score = 0.0
+            cells.append(
+                {
+                    "pillar_code": g["pillar_code"],
+                    "goal_id": g["id"],
+                    "goal_code": g["code"],
+                    "goal_name": g["name"],
+                    "cards_in_window": cards_in_window,
+                    "expected": round(expected_per_cell, 2),
+                    "drift": round(drift, 2),
+                    "drift_score": round(drift_score, 4),
+                    "priority": _gap_priority(drift_score),
+                }
+            )
+
+        # Starvation-first, then by pillar/goal code so the order is stable
+        # across refreshes (no jitter from equal drift_scores).
+        cells.sort(
+            key=lambda c: (
+                c["drift_score"],
+                c["pillar_code"],
+                c["goal_code"],
+            )
+        )
+
+        underrepresented = sum(1 for c in cells if c["priority"] != "none")
+
+        return {
+            "window_days": days,
+            "target_distribution": target_distribution,
+            "since": cutoff,
+            "cells": cells,
+            "totals": {
+                # Raw card count credited under at least one goal in window.
+                # A card linked to multiple goals contributes once per goal.
+                "credits": total_credits,
+                "goals": len(goals),
+                "expected_per_cell": round(expected_per_cell, 2),
+                "underrepresented_cells": underrepresented,
+            },
+        }
+
+    try:
+        return await asyncio.to_thread(load)
+    except Exception as e:
+        logger.exception("Failed to compute coverage gaps")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _aggregate_workstream_freshness(
     workstreams: list[dict[str, Any]],
     completed_scans: list[dict[str, Any]],
