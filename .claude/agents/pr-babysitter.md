@@ -48,7 +48,7 @@ gh pr view <N> --json statusCheckRollup,state,mergeable,headRefName,baseRefName,
 - If `baseRefName` is `main` or `master`: standard feature-branch → main squash-merge, safe to proceed. Anything non-standard (`production`, `release/*`, etc.) falls under the guardrail at the bottom of this doc — refuse to merge and report. Either way, you only push commits to the PR's head branch; you never touch the base branch directly.
 - Record CI status. `gh pr view` returns each check with a `conclusion` (e.g. `SUCCESS`, `FAILURE`, `NEUTRAL`, `SKIPPED`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`) or a `status` (`PENDING`, `IN_PROGRESS`) while still running. Apply these deterministic rules:
   - **Non-blocking (count as green)**: `SUCCESS`, `NEUTRAL`, `SKIPPED`.
-  - **Blocking (fail the gate)**: `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE`.
+  - **Blocking (fail the gate)**: `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STALE`.
   - **Pending (fail the gate this tick, retry next)**: any check still in `PENDING`/`IN_PROGRESS`/`QUEUED`/`WAITING` or with a missing `conclusion`.
   - CI is green only when every check is in the non-blocking set. A single blocking check stops the merge even if review is otherwise clean.
 
@@ -85,11 +85,11 @@ After processing all new bot comments, advance `last_seen_iso` to the max of:
 
 That watermark is what prevents the next tick from re-processing the same comments.
 
-Then update `quiet_ticks`:
+Then update `quiet_ticks` (these rules are mutually exclusive — apply the first matching branch):
 
-- Reset to 0 if you pushed a fix OR posted a reply.
-- Increment by 1 if there were no new bot comments at all this tick.
-- Increment by 1 if all new bot comments this tick were skip-as-informational (release-notes blocks, Sourcery summaries, Greptile sequence diagrams). Without this branch, a bot that re-posts its summary every tick would peg `quiet_ticks` at its current value forever and the merge threshold would never trigger.
+- **If** you pushed a fix OR posted a reply this tick → reset to 0.
+- **Else if** there were no new bot comments at all this tick → increment by 1.
+- **Else if** every new bot comment this tick was skip-as-informational (release-notes blocks, Sourcery summaries, Greptile sequence diagrams) → increment by 1. Without this branch, a bot that re-posts its summary every tick would peg `quiet_ticks` at its current value forever and the merge threshold would never trigger.
 
 ### 4. Re-run verification after pushing
 
@@ -100,6 +100,8 @@ If you pushed a fix this tick, re-run the verification commands the repo's `CLAU
 - Mixed/other: best-effort run of the project's documented test entrypoint.
 
 Run only the verification commands relevant to the files you touched — full-suite runs are out of scope for a babysit tick. If they fail, fix the failure in the same tick and push the additional commit; don't ship a broken state.
+
+**Bound at one fix-verify cycle per tick.** If the recovery commit _itself_ fails verification (the fix introduced a new failure), do NOT keep iterating in this tick. Report the failure in your return shape and let the next tick handle it — that keeps a single tick bounded and avoids an unbounded fix-verify loop.
 
 ### 5. Decide: merge, report, or schedule another tick
 
