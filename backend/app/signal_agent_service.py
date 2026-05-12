@@ -37,6 +37,7 @@ from app.openai_provider import (
     get_embedding_deployment,
 )
 from app.research_service import ProcessedSource
+from app.usage_telemetry import estimate_openai_cost_usd, extract_openai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,6 @@ VALID_PILLAR_IDS = {"CH", "EW", "HG", "HH", "MC", "PS"}
 VALID_HORIZONS = {"H1", "H2", "H3"}
 
 MAX_AGENT_ITERATIONS = 25
-
-# Approximate token costs (USD) for gpt-4.1
-COST_PER_INPUT_TOKEN = 0.002 / 1000
-COST_PER_OUTPUT_TOKEN = 0.008 / 1000
 
 # =============================================================================
 # System Prompt
@@ -570,7 +567,8 @@ class SignalAgentService:
 
             # Phase 2: Run agent loops per pillar batch — IN PARALLEL
             all_actions: List[SignalAction] = []
-            total_tokens = 0
+            total_input_tokens = 0
+            total_output_tokens = 0
             total_agent_calls = 0
 
             max_new_cards = getattr(config, "max_new_cards_per_run", 15)
@@ -578,7 +576,10 @@ class SignalAgentService:
             async def _process_pillar_batch(
                 pillar_id: str, batch_sources: List[ProcessedSource]
             ) -> tuple:
-                """Process a single pillar batch. Returns (actions, tokens, stats)."""
+                """Process a single pillar batch.
+
+                Returns (actions, input_tokens, output_tokens, pillar_id, stats).
+                """
                 pillar_name = PILLAR_NAMES.get(pillar_id, pillar_id)
                 logger.info(
                     f"Signal agent: Processing pillar {pillar_id} ({pillar_name}) "
@@ -628,7 +629,7 @@ class SignalAgentService:
                     ]
 
                     # Run the agent loop
-                    actions, tokens = await self._run_agent_loop(
+                    actions, input_tokens, output_tokens = await self._run_agent_loop(
                         messages, self.tools, batch_sources
                     )
 
@@ -641,9 +642,11 @@ class SignalAgentService:
                         "actions": len(actions),
                         "creates": new_creates,
                         "attaches": len(actions) - new_creates,
-                        "tokens": tokens,
+                        "tokens": input_tokens + output_tokens,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
                     }
-                    return actions, tokens, pillar_id, stats
+                    return actions, input_tokens, output_tokens, pillar_id, stats
 
                 except Exception as e:
                     logger.error(
@@ -654,7 +657,7 @@ class SignalAgentService:
                         "sources": len(batch_sources),
                         "error": str(e),
                     }
-                    return [], 0, pillar_id, stats
+                    return [], 0, 0, pillar_id, stats
 
             # Launch all pillar batches in parallel
             import asyncio
@@ -666,12 +669,15 @@ class SignalAgentService:
             ]
             pillar_results = await asyncio.gather(*pillar_tasks)
 
-            for actions, tokens, pillar_id, stats in pillar_results:
+            for actions, input_tokens, output_tokens, pillar_id, stats in pillar_results:
                 all_actions.extend(actions)
-                total_tokens += tokens
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
                 if actions:
                     total_agent_calls += 1
                 result.pillar_stats[pillar_id] = stats
+
+            total_tokens = total_input_tokens + total_output_tokens
 
             # Phase 3: Execute all accumulated actions
             logger.info(
@@ -692,9 +698,15 @@ class SignalAgentService:
             result.auto_approved_count = execution_result.get("auto_approved", 0)
             result.agent_calls_made = total_agent_calls
             result.total_tokens_used = total_tokens
-            result.cost_estimate = total_tokens * (
-                (COST_PER_INPUT_TOKEN + COST_PER_OUTPUT_TOKEN) / 2
+            # Route through usage_telemetry so the agent's cost line uses the
+            # canonical pricing table (matches the per-tier model that actually
+            # ran) instead of a stale hardcoded constant.
+            cost_decimal = estimate_openai_cost_usd(
+                get_chat_agent_deployment(),
+                total_input_tokens,
+                total_output_tokens,
             )
+            result.cost_estimate = float(cost_decimal) if cost_decimal is not None else 0.0
 
             logger.info(
                 f"Signal agent: Complete. "
@@ -894,15 +906,16 @@ class SignalAgentService:
         messages: List[Dict],
         tools: List[Dict],
         batch_sources: List[ProcessedSource],
-    ) -> Tuple[List[SignalAction], int]:
+    ) -> Tuple[List[SignalAction], int, int]:
         """
         Non-streaming tool-calling loop. Runs up to MAX_AGENT_ITERATIONS.
 
         Returns:
-            Tuple of (accumulated actions, total tokens used).
+            Tuple of (accumulated actions, input tokens, output tokens).
         """
         actions: List[SignalAction] = []
-        tokens_used = 0
+        input_tokens_used = 0
+        output_tokens_used = 0
 
         for iteration in range(MAX_AGENT_ITERATIONS):
             try:
@@ -921,7 +934,9 @@ class SignalAgentService:
 
             choice = response.choices[0]
             if response.usage:
-                tokens_used += response.usage.total_tokens
+                usage = extract_openai_usage(response)
+                input_tokens_used += int(usage.get("input_tokens") or 0)
+                output_tokens_used += int(usage.get("output_tokens") or 0)
 
             # If the model finished (no more tool calls), we are done
             if choice.finish_reason == "stop":
@@ -987,12 +1002,14 @@ class SignalAgentService:
                 )
                 break
 
+        total_tokens = input_tokens_used + output_tokens_used
         logger.info(
             f"Signal agent: Agent loop completed after {min(iteration + 1, MAX_AGENT_ITERATIONS)} "
-            f"iterations, {len(actions)} actions, {tokens_used} tokens"
+            f"iterations, {len(actions)} actions, {total_tokens} tokens "
+            f"(in: {input_tokens_used}, out: {output_tokens_used})"
         )
 
-        return actions, tokens_used
+        return actions, input_tokens_used, output_tokens_used
 
     # =========================================================================
     # Tool Call Handler
