@@ -1,3 +1,14 @@
+-- ⚠ NO-OP MIGRATION. Kept for migration-history continuity only.
+-- The effective fix is 20260512000004_revoke_security_definer_from_public.sql.
+--
+-- Why this didn't do anything: Postgres auto-grants EXECUTE on every new
+-- function to PUBLIC. PUBLIC includes anon and authenticated, so revoking
+-- from those roles alone leaves the implicit PUBLIC grant intact and the
+-- functions remain callable from PostgREST. The corrective migration
+-- (…000004) revokes from PUBLIC instead.
+--
+-- Original (incorrect) intent below — preserved as the historical record:
+-- ---------------------------------------------------------------------------
 -- Lock down SECURITY DEFINER functions to least-privilege EXECUTE.
 --
 -- These functions are SECURITY DEFINER (they bypass the caller's RLS by
