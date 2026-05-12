@@ -75,6 +75,8 @@ export function CoverageTab({
   onModeChange,
   onRefresh,
   onForceScan,
+  onBalanceNow,
+  balancing,
 }: {
   pillarData: PillarCoverageResponse | null;
   workstreams: WorkstreamCoverageItem[];
@@ -86,6 +88,8 @@ export function CoverageTab({
   onModeChange: (mode: PillarCoverageMode) => void;
   onRefresh: () => Promise<void>;
   onForceScan: (workstreamId: string) => Promise<void>;
+  onBalanceNow: () => Promise<void>;
+  balancing: boolean;
 }) {
   return (
     <div className="space-y-8">
@@ -98,6 +102,11 @@ export function CoverageTab({
         loading={loading}
       />
       <CoverageGapsSection gaps={gaps} loading={loading} />
+      <BalanceDispatcherWidget
+        onBalanceNow={onBalanceNow}
+        balancing={balancing}
+        windowDays={windowDays}
+      />
       <WorkstreamFreshnessTable
         items={workstreams}
         loading={loading}
@@ -142,6 +151,56 @@ function CoverageGapsSection({
             expectedPerCell={gaps.totals.expected_per_cell}
           />
         )}
+      </div>
+    </section>
+  );
+}
+
+function BalanceDispatcherWidget({
+  onBalanceNow,
+  balancing,
+  windowDays,
+}: {
+  onBalanceNow: () => Promise<void>;
+  balancing: boolean;
+  windowDays: CoverageWindowDays;
+}) {
+  return (
+    <section>
+      <SectionHeader
+        title="Coverage balance"
+        description={`Queue a targeted discovery run against the most-starved CSP goals in the last ${windowDays} days. The dispatcher derives ~4 search queries per goal via the mini model and runs them through the same pipeline as a scheduled scan.`}
+      />
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-dark-surface">
+        <button
+          type="button"
+          onClick={() => {
+            void onBalanceNow();
+          }}
+          disabled={balancing}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+            balancing
+              ? "cursor-not-allowed border-gray-300 bg-gray-100 text-gray-500 dark:border-gray-600 dark:bg-dark-surface-hover"
+              : "border-brand-blue bg-brand-blue text-white hover:bg-brand-blue/90",
+          )}
+        >
+          {balancing ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Queueing balance run…
+            </>
+          ) : (
+            <>
+              <Zap className="h-4 w-4" />
+              Balance now
+            </>
+          )}
+        </button>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Auto-picks up to 5 starved goals. Watch progress in the Operations
+          tab.
+        </p>
       </div>
     </section>
   );

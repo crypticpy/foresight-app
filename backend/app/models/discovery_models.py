@@ -21,6 +21,24 @@ def get_discovery_max_sources():
     return int(os.getenv("DISCOVERY_MAX_SOURCES_TOTAL", "500"))
 
 
+class CustomQuerySpec(BaseModel):
+    """A pre-built search query injected into a discovery run.
+
+    Used by the coverage balancer dispatcher (`POST /admin/discovery/balance`)
+    to seed runs with LLM-derived goal queries instead of the hardcoded
+    pillar/priority generator. When the discovery service receives a non-empty
+    list of these, ``_generate_queries`` returns them verbatim and the rest of
+    the pipeline (search, triage, classification, signal-agent) is unchanged.
+    """
+
+    query_text: str = Field(..., min_length=1, max_length=200)
+    pillar_code: str = Field(..., min_length=1, max_length=8)
+    source_context: str = Field(
+        default="balance",
+        description="Tag for telemetry / debugging — usually 'balance'.",
+    )
+
+
 class DiscoveryConfigRequest(BaseModel):
     """Request model for discovery run configuration."""
 
@@ -58,6 +76,23 @@ class DiscoveryConfigRequest(BaseModel):
         description=(
             "Restrict the run to these discovery_sources_registry row IDs. "
             "Only URLs from these rows are scanned."
+        ),
+    )
+    # Coverage-balancer overrides. When set, the discovery service skips the
+    # pillar/priority generator and runs only these queries.
+    custom_queries: Optional[List[CustomQuerySpec]] = Field(
+        None,
+        description=(
+            "Replace the auto-generated query list with these pre-built queries. "
+            "Used by the coverage balancer to target starved CSP goals."
+        ),
+    )
+    enable_multi_source: Optional[bool] = Field(
+        None,
+        description=(
+            "Override the RSS / news / academic / gov / tech-blog multi-source "
+            "fetcher. Defaults to True. Balance runs pass False so they don't "
+            "dilute targeted queries with the general RSS firehose."
         ),
     )
 

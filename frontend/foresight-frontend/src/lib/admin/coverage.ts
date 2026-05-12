@@ -155,3 +155,61 @@ export function adminForceWorkstreamScan(
     { method: "POST" },
   );
 }
+
+// ----------------------------------------------------------------------------
+// Coverage balance dispatcher (PR-E)
+// ----------------------------------------------------------------------------
+
+export interface BalanceDispatchRequest {
+  /** When omitted, the server auto-picks the most-starved goals. */
+  goal_ids?: string[];
+  /** Default 4. Hard cap is the service's MAX_QUERIES (6). */
+  max_queries_per_goal?: number;
+  /** Defaults to ["rss", "web_search"]. */
+  categories?: string[];
+  /** Window for the auto-pick gap calculation (ignored when goal_ids given). */
+  window_days?: 7 | 30 | 90;
+}
+
+export interface BalanceDispatchGoal {
+  id: string;
+  code: string | null;
+  name: string | null;
+  pillar_code: string;
+  query_count: number;
+}
+
+export interface BalanceDispatchQuery {
+  query_text: string;
+  pillar_code: string;
+  source_context: string;
+}
+
+export interface BalanceDispatchError {
+  goal_id: string;
+  code: string | null;
+  error: string;
+}
+
+export interface BalanceDispatchResponse {
+  run_id: string;
+  goals_used: BalanceDispatchGoal[];
+  queued_queries: BalanceDispatchQuery[];
+  derivation_errors: BalanceDispatchError[];
+  categories: string[];
+}
+
+export function adminBalanceDispatch(
+  token: string,
+  body: BalanceDispatchRequest = {},
+): Promise<BalanceDispatchResponse> {
+  return apiRequest<BalanceDispatchResponse>(
+    "/api/v1/admin/discovery/balance",
+    token,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}

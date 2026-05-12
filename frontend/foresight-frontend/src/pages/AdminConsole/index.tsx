@@ -300,6 +300,8 @@ const AdminConsole: React.FC = () => {
               onModeChange={coverage.changeMode}
               onRefresh={coverage.refresh}
               onForceScan={coverage.forceScan}
+              onBalanceNow={coverage.balanceNow}
+              balancing={coverage.balancing}
             />
           )}
           {activeTab === "usage" && (

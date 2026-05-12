@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  adminBalanceDispatch,
   adminForceWorkstreamScan,
   fetchCoverageGaps,
   fetchPillarCoverage,
@@ -167,6 +168,35 @@ export function useCoverage({
     [onError, onNotice],
   );
 
+  const [balancing, setBalancing] = useState(false);
+
+  // "Balance now": kick the coverage-balance dispatcher (PR-E). With no
+  // explicit goal_ids the backend auto-picks the most-starved goals in
+  // the active window. We surface the run_id via toast — the Operations
+  // tab is where the operator watches it land.
+  const balanceNow = useCallback(async () => {
+    setBalancing(true);
+    try {
+      const token = await getToken();
+      const result = await adminBalanceDispatch(token, {
+        window_days: days,
+      });
+      const goals = result.goals_used
+        .map((g) => g.code ?? g.id.slice(0, 8))
+        .join(", ");
+      onNotice(
+        `Balance run ${result.run_id.slice(0, 8)} queued — ` +
+          `${result.queued_queries.length} queries across ${result.goals_used.length} goals (${goals || "none"})`,
+      );
+    } catch (err) {
+      onError(
+        err instanceof Error ? err.message : "Failed to balance coverage",
+      );
+    } finally {
+      setBalancing(false);
+    }
+  }, [days, onError, onNotice]);
+
   return {
     pillarCoverage,
     workstreamCoverage,
@@ -178,5 +208,7 @@ export function useCoverage({
     changeMode,
     refresh,
     forceScan,
+    balanceNow,
+    balancing,
   };
 }

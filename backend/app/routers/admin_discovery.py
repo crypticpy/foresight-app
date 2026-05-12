@@ -1168,6 +1168,317 @@ async def admin_refresh_goal_queries(
     return {"goal_id": goal_id, "queries": queries, "count": len(queries)}
 
 
+# ---------------------------------------------------------------------------
+# PR-E: Coverage-balance dispatcher
+# ---------------------------------------------------------------------------
+#
+# Hands the operator one button that says "fill the gap": pick the starved
+# CSP goals (auto or by id), translate each to web-search queries via the
+# PR-D service, queue a discovery_runs row carrying those queries plus a
+# pillar filter, and return the run_id so the UI can link to Operations.
+#
+# Why this lives in admin_discovery.py: the discovery router already owns
+# the discovery_runs insert pattern (see `trigger_discovery_run`), and this
+# endpoint is fundamentally an admin shortcut around that same row insert
+# with a balancer-shaped config. Keeping it next to the gap detector keeps
+# the coverage-balancer surface in one file.
+
+# Cap the number of goals one balance dispatch will target. Each goal can
+# produce up to MAX_QUERIES_PER_GOAL_CAP queries, so 5 * 4 = 20 — that's
+# the discovery service's global per-run query budget. Going above this
+# risks the run silently dropping queries past the cap.
+BALANCE_MAX_GOALS = 5
+BALANCE_DEFAULT_QUERIES_PER_GOAL = 4
+BALANCE_MAX_QUERIES_PER_GOAL = 6  # Mirrors csp_goal_query_service.MAX_QUERIES.
+BALANCE_GLOBAL_QUERY_CAP = 20
+BALANCE_DEFAULT_CATEGORIES = ("rss", "web_search")
+
+
+class BalanceDispatchRequest(BaseModel):
+    """Payload for the coverage-balance dispatcher.
+
+    All fields optional. When ``goal_ids`` is empty / omitted the dispatcher
+    auto-picks the highest-drift CSP goals from the same data the gap
+    detector surfaces.
+    """
+
+    goal_ids: list[str] | None = Field(
+        default=None,
+        description="UUIDs of csp_goals to target. When omitted, auto-derive from gaps.",
+    )
+    max_queries_per_goal: int = Field(
+        default=BALANCE_DEFAULT_QUERIES_PER_GOAL,
+        ge=1,
+        le=BALANCE_MAX_QUERIES_PER_GOAL,
+        description="Cap on queries kept per goal. Hard cap is the service's MAX_QUERIES.",
+    )
+    categories: list[str] | None = Field(
+        default=None,
+        description=(
+            "Source categories to enable for this run. Defaults to "
+            "['rss', 'web_search']. Pass an explicit list to override."
+        ),
+    )
+    window_days: int = Field(
+        default=30,
+        description="Lookback window for the auto-pick gap query. Ignored when goal_ids is set.",
+    )
+
+
+async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
+    """Return the most-starved goals in the window, capped at ``BALANCE_MAX_GOALS``.
+
+    Reads the same data the gap detector uses (cards.csp_goal_ids + csp_goals)
+    but skips the priority-band bookkeeping — for dispatch we only need the
+    ordering. Inlined here so this endpoint doesn't depend on PR-C's gap
+    endpoint being merged.
+    """
+    since_dt = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+    def fetch() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        goals_resp = (
+            supabase.table("csp_goals")
+            .select("id,code,name,pillar_code")
+            .execute()
+        )
+        cards_resp = (
+            supabase.table("cards")
+            .select("csp_goal_ids,created_at")
+            .gte("created_at", since_dt.isoformat())
+            .execute()
+        )
+        return goals_resp.data or [], cards_resp.data or []
+
+    goals, cards = await asyncio.to_thread(fetch)
+    if not goals:
+        return []
+
+    goal_index = {g["id"]: g for g in goals}
+    counts: dict[str, int] = {g["id"]: 0 for g in goals}
+    total_links = 0
+    for card in cards:
+        for gid in card.get("csp_goal_ids") or []:
+            if gid in counts:
+                counts[gid] += 1
+                total_links += 1
+
+    if not counts:
+        return []
+
+    expected = (total_links / len(counts)) if counts else 0.0
+    # Drift score: (actual - expected) / max(expected, 1) so a 0-count goal
+    # against expected=12 yields -1.0 and sorts to the top.
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for gid, count in counts.items():
+        drift_score = (count - expected) / max(expected, 1.0)
+        scored.append((drift_score, goal_index[gid]))
+    scored.sort(key=lambda x: x[0])
+    return [g for _score, g in scored[:BALANCE_MAX_GOALS]]
+
+
+@router.post("/admin/discovery/balance", status_code=status.HTTP_201_CREATED)
+async def admin_balance_dispatch(
+    request: Request,
+    body: BalanceDispatchRequest | None = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Queue a targeted discovery run aimed at starved CSP goals.
+
+    The operator clicks "Balance now" (or hits this endpoint directly). We:
+
+    1. Pick goals — explicit ``goal_ids`` if supplied, otherwise the
+       highest-drift cells in the last 30 days (auto cap ``BALANCE_MAX_GOALS``).
+    2. Translate each goal to queries via ``csp_goal_query_service`` (cached
+       — only the first call per goal hits the LLM).
+    3. Trim per-goal queries to ``max_queries_per_goal`` and the union to
+       ``BALANCE_GLOBAL_QUERY_CAP``.
+    4. Insert a ``discovery_runs`` row with the balancer config in
+       ``summary_report.config`` so the worker picks it up via the same
+       claim path manual / scheduled runs use.
+
+    Returns ``{run_id, goals_used, queued_queries}`` so the UI can link to
+    Operations and the operator can verify which goals fired.
+    """
+    require_admin(current_user)
+
+    # Local imports — csp_goal_query_service pulls openai_provider at import
+    # time, and admin_discovery is imported on every API boot.
+    from uuid import UUID as _UUID
+    from uuid import uuid4
+
+    from app import csp_goal_query_service
+    from app.cost_guardrail import check_budget_or_raise
+    from app.models import CustomQuerySpec
+
+    payload = body or BalanceDispatchRequest()
+    await check_budget_or_raise()  # 503 with friendly detail if tripped.
+
+    # Resolve goals.
+    if payload.goal_ids:
+        try:
+            parsed_ids = [_UUID(g) for g in payload.goal_ids]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"goal_ids must be UUIDs: {exc}"
+            ) from exc
+        if len(parsed_ids) > BALANCE_MAX_GOALS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {BALANCE_MAX_GOALS} goal_ids per dispatch.",
+            )
+
+        def fetch_explicit() -> list[dict[str, Any]]:
+            return (
+                supabase.table("csp_goals")
+                .select("id,code,name,pillar_code")
+                .in_("id", [str(g) for g in parsed_ids])
+                .execute()
+                .data
+                or []
+            )
+
+        goals = await asyncio.to_thread(fetch_explicit)
+        if len(goals) != len(parsed_ids):
+            missing = {str(g) for g in parsed_ids} - {g["id"] for g in goals}
+            raise HTTPException(
+                status_code=404, detail=f"Unknown goal_ids: {sorted(missing)}"
+            )
+    else:
+        if payload.window_days not in (7, 30, 90):
+            raise HTTPException(
+                status_code=400,
+                detail="window_days must be one of 7, 30, 90",
+            )
+        goals = await _auto_pick_starved_goals(payload.window_days)
+        if not goals:
+            raise HTTPException(
+                status_code=404,
+                detail="No active CSP goals available for auto-pick.",
+            )
+
+    # Translate each goal -> queries.
+    queries: list[CustomQuerySpec] = []
+    goals_used: list[dict[str, Any]] = []
+    pillars_seen: set[str] = set()
+    derivation_errors: list[dict[str, Any]] = []
+
+    for goal in goals:
+        try:
+            derived = await csp_goal_query_service.derive_queries(_UUID(goal["id"]))
+        except csp_goal_query_service.QueryDerivationError as exc:
+            # One bad goal shouldn't drop the whole batch — record and skip.
+            derivation_errors.append(
+                {"goal_id": goal["id"], "code": goal.get("code"), "error": str(exc)}
+            )
+            continue
+        trimmed = derived[: payload.max_queries_per_goal]
+        if not trimmed:
+            continue
+        pillar = (goal.get("pillar_code") or "").strip()
+        if not pillar:
+            # Goal without a pillar code is meaningless to the discovery
+            # pipeline's pillar-bucketed scoring. Skip.
+            derivation_errors.append(
+                {
+                    "goal_id": goal["id"],
+                    "code": goal.get("code"),
+                    "error": "goal has no pillar_code",
+                }
+            )
+            continue
+        added = 0
+        for q in trimmed:
+            if len(queries) >= BALANCE_GLOBAL_QUERY_CAP:
+                break
+            queries.append(
+                CustomQuerySpec(
+                    query_text=q, pillar_code=pillar, source_context="balance"
+                )
+            )
+            added += 1
+        if added == 0:
+            continue
+        pillars_seen.add(pillar)
+        goals_used.append(
+            {
+                "id": goal["id"],
+                "code": goal.get("code"),
+                "name": goal.get("name"),
+                "pillar_code": pillar,
+                "query_count": added,
+            }
+        )
+        if len(queries) >= BALANCE_GLOBAL_QUERY_CAP:
+            break
+
+    if not queries:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "No usable queries derived for the selected goals.",
+                "errors": derivation_errors,
+            },
+        )
+
+    categories = payload.categories or list(BALANCE_DEFAULT_CATEGORIES)
+
+    # Build the persisted run config — this is what the worker will read
+    # back via ``summary_report.config`` (see worker.py:408). The shape must
+    # match ``DiscoveryConfigRequest``.
+    run_id = str(uuid4())
+    resolved_config = {
+        "max_queries_per_run": min(len(queries), BALANCE_GLOBAL_QUERY_CAP),
+        "max_sources_total": None,
+        "auto_approve_threshold": 0.95,
+        "pillars_filter": sorted(pillars_seen),
+        "dry_run": False,
+        "categories_to_scan": categories,
+        "source_ids": None,
+        "custom_queries": [q.model_dump() for q in queries],
+        "enable_multi_source": False,
+    }
+
+    run_record = {
+        "id": run_id,
+        "status": "running",
+        "triggered_by": "manual",
+        "triggered_by_user": current_user["id"],
+        "summary_report": {
+            "stage": "queued",
+            "config": resolved_config,
+            "balance": {
+                "goals": goals_used,
+                "derivation_errors": derivation_errors,
+            },
+        },
+        "cards_created": 0,
+        "cards_enriched": 0,
+        "cards_deduplicated": 0,
+        "sources_found": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "pillars_scanned": sorted(pillars_seen),
+    }
+
+    def insert_run() -> None:
+        supabase.table("discovery_runs").insert(run_record).execute()
+
+    try:
+        await asyncio.to_thread(insert_run)
+    except Exception as exc:
+        logger.exception("Failed to enqueue balance discovery run")
+        raise HTTPException(
+            status_code=500, detail=f"failed to enqueue run: {exc}"
+        ) from exc
+
+    return {
+        "run_id": run_id,
+        "goals_used": goals_used,
+        "queued_queries": [q.model_dump() for q in queries],
+        "derivation_errors": derivation_errors,
+        "categories": categories,
+    }
+
+
 @router.post(
     "/admin/workstreams/{workstream_id}/scan", status_code=status.HTTP_201_CREATED
 )

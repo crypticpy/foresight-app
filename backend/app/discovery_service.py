@@ -182,6 +182,11 @@ class DiscoveryConfig:
     enable_multi_source: bool = True  # Enable fetching from all 5 source categories
     search_topics: List[str] = field(default_factory=list)  # Topics for source searches
 
+    # Coverage-balancer override. When populated, ``_generate_queries`` returns
+    # this list verbatim instead of going through the hardcoded pillar +
+    # priority generator. Each entry is the same shape QueryGenerator emits.
+    custom_queries: List["QueryConfig"] = field(default_factory=list)
+
     def __post_init__(self):
         """Apply environment defaults and initialize source category configurations."""
         # Step 1: Apply environment defaults for any None values
@@ -354,6 +359,33 @@ def load_active_source_urls(category: str) -> List[str]:
     return []
 
 
+def _coerce_custom_query(item: Any) -> QueryConfig:
+    """Convert a balancer custom-query payload into a ``QueryConfig`` dataclass.
+
+    Accepts:
+      * a ``QueryConfig`` already (passed through)
+      * a Pydantic ``CustomQuerySpec`` (``.model_dump()``)
+      * a plain dict deserialized from the persisted run config
+
+    Anything else is a programmer error and we let Python raise.
+    """
+    if isinstance(item, QueryConfig):
+        return item
+    if hasattr(item, "model_dump"):
+        data = item.model_dump()
+    elif isinstance(item, dict):
+        data = item
+    else:
+        raise TypeError(f"Unsupported custom_query payload: {type(item).__name__}")
+    return QueryConfig(
+        query_text=data["query_text"],
+        pillar_code=data["pillar_code"],
+        priority_id=data.get("priority_id"),
+        horizon_target=data.get("horizon_target", "H2"),
+        source_context=data.get("source_context", "balance"),
+    )
+
+
 def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
     """Build a ``DiscoveryConfig`` with admin-settings overrides applied.
 
@@ -381,6 +413,15 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
         "categories_to_scan", None
     )
     source_ids: Optional[List[str]] = explicit_non_none.pop("source_ids", None)
+
+    # PR-E balancer overrides — translate the request-shaped custom_queries
+    # (Pydantic CustomQuerySpec or plain dict) into QueryConfig dataclasses
+    # so the dataclass-typed field is happy.
+    raw_customs = explicit_non_none.pop("custom_queries", None)
+    if raw_customs:
+        explicit_non_none["custom_queries"] = [
+            _coerce_custom_query(item) for item in raw_customs
+        ]
 
     merged = {**admin_overrides, **explicit_non_none}
     config = DiscoveryConfig(**merged)
@@ -2075,6 +2116,12 @@ class DiscoveryService:
         Returns:
             List of QueryConfig objects
         """
+        if config.custom_queries:
+            # Coverage-balancer path: caller pre-built the list (e.g. LLM-derived
+            # queries for a starved CSP goal). Trust them and cap at
+            # max_queries_per_run so the global budget still applies.
+            limit = config.max_queries_per_run or len(config.custom_queries)
+            return list(config.custom_queries[:limit])
         return self.query_generator.generate_queries(
             pillars_filter=config.pillars_filter or None,
             horizons=config.horizons_filter or None,

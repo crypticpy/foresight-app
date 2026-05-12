@@ -204,6 +204,8 @@ async def execute_discovery_run_background(
             dry_run=config.dry_run,
             categories_to_scan=config.categories_to_scan,
             source_ids=config.source_ids,
+            custom_queries=config.custom_queries,
+            enable_multi_source=config.enable_multi_source,
         )
 
         # Execute discovery using the service (pass existing run_id to avoid duplicate)
