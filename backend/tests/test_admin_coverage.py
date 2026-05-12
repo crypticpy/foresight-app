@@ -1252,27 +1252,56 @@ def test_balance_dispatch_auto_pick_ignores_archived_cards(monkeypatch):
 
     Regression: without ``.eq("status", "active")`` on the cards query, a
     goal whose recent cards have all been archived looks "covered" and the
-    auto-picker skips it — leaving the actual gap unscanned.
+    auto-picker drops it from the top-N starved slice — leaving the actual
+    gap unscanned.
+
+    Setup chosen to make the test *falsifiable*. With 7 goals against
+    ``BALANCE_MAX_GOALS=5``, the slice actually matters:
+
+    - ``starved`` has 0 cards (active or archived) → drift = -1 either way.
+    - ``masked`` has 10 ARCHIVED cards →
+        - WITH the fix: counts as 0 active → tied with ``starved`` → IN top-5.
+        - WITHOUT the fix: counts as 10 → highest count → OUT of top-5.
+    - 5 ``satisfied_*`` goals each have 2 active cards → middle of the pack.
+
+    The assertion ``masked in used_ids`` flips with the production fix, so
+    removing the ``.eq("status", "active")`` filter would fail this test.
     """
     from app.routers import admin_discovery
 
     starved = str(uuid.uuid4())
     masked = str(uuid.uuid4())
+    satisfied = [str(uuid.uuid4()) for _ in range(5)]
     now = datetime.now(timezone.utc)
     tables = {
         "csp_goals": [
             {"id": starved, "code": "PS.1", "name": "Starved", "pillar_code": "PS"},
             {"id": masked, "code": "HG.1", "name": "Masked", "pillar_code": "HG"},
+            *[
+                {"id": gid, "code": f"CH.{i}", "name": f"Sat{i}", "pillar_code": "CH"}
+                for i, gid in enumerate(satisfied)
+            ],
         ],
         "cards": [
-            # The "masked" goal has 5 ARCHIVED cards — they shouldn't count.
+            # Masked: 10 archived cards. Without the fix, these would inflate
+            # masked's count above the others and push it out of the slice.
             *[
                 {
                     "csp_goal_ids": [masked],
                     "created_at": (now - timedelta(days=2)).isoformat(),
                     "status": "archived",
                 }
-                for _ in range(5)
+                for _ in range(10)
+            ],
+            # Each "satisfied" goal: 2 active cards. Middle-of-pack drift.
+            *[
+                {
+                    "csp_goal_ids": [gid],
+                    "created_at": (now - timedelta(days=2)).isoformat(),
+                    "status": "active",
+                }
+                for gid in satisfied
+                for _ in range(2)
             ],
         ],
         "discovery_runs": [],
@@ -1289,11 +1318,17 @@ def test_balance_dispatch_auto_pick_ignores_archived_cards(monkeypatch):
             request=_mock_request(), body=None, current_user=actor
         )
     )
-    # With zero active cards on either goal, both are equally starved (tied
-    # drift_score=0). What matters: the masked goal isn't somehow scored
-    # higher than the starved one because of its archived cards.
     used_ids = [g["id"] for g in result["goals_used"]]
+    # ``starved`` is always picked (true zero-card goal).
     assert starved in used_ids
+    # ``masked`` is only picked when archived cards are filtered out;
+    # otherwise its inflated count pushes it past the BALANCE_MAX_GOALS=5
+    # slice. This is the falsifiable half of the regression.
+    assert masked in used_ids, (
+        "masked goal was excluded from the auto-pick — archived cards are "
+        "inflating its score, which means the .eq('status', 'active') "
+        "filter regressed."
+    )
 
 
 def test_admin_refresh_goal_queries_returns_404_for_missing_goal(monkeypatch):
