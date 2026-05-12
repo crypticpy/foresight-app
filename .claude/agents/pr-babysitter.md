@@ -46,7 +46,11 @@ gh pr view <N> --json statusCheckRollup,state,mergeable,headRefName,baseRefName,
 
 - If `state != "OPEN"`: PR closed or already merged. Mark state, exit.
 - If `baseRefName` is `main` or `master`: standard feature-branch → main squash-merge, safe to proceed. Anything non-standard (`production`, `release/*`, etc.) falls under the guardrail at the bottom of this doc — refuse to merge and report. Either way, you only push commits to the PR's head branch; you never touch the base branch directly.
-- Record CI status: green only if every check has `conclusion == "SUCCESS"` (or is a non-blocking comment-only check that's complete).
+- Record CI status. `gh pr view` returns each check with a `conclusion` (e.g. `SUCCESS`, `FAILURE`, `NEUTRAL`, `SKIPPED`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`) or a `status` (`PENDING`, `IN_PROGRESS`) while still running. Apply these deterministic rules:
+  - **Non-blocking (count as green)**: `SUCCESS`, `NEUTRAL`, `SKIPPED`.
+  - **Blocking (fail the gate)**: `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE`.
+  - **Pending (fail the gate this tick, retry next)**: any check still in `PENDING`/`IN_PROGRESS`/`QUEUED`/`WAITING` or with a missing `conclusion`.
+  - CI is green only when every check is in the non-blocking set. A single blocking check stops the merge even if review is otherwise clean.
 
 ### 3. Pull new bot comments
 
