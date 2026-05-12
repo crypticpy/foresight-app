@@ -34,7 +34,7 @@ from typing import List, Optional, Dict, Tuple
 from supabase import Client
 import openai
 
-from .ai_service import AIService, TriageResult
+from .ai_service import AIService, AnalysisResult, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from . import domain_reputation_service
@@ -1230,7 +1230,7 @@ Example: ["query 1", "query 2", ...]"""
         self,
         card_id: str,
         source: ProcessedSource,
-        analysis,
+        analysis: AnalysisResult,
     ) -> None:
         """Synthesize a rich markdown profile from the source and persist it
         on cards.description. Mirrors signal_agent_service._generate_card_profile
