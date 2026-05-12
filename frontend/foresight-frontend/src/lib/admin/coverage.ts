@@ -61,6 +61,53 @@ export function fetchPillarCoverage(
 }
 
 // ----------------------------------------------------------------------------
+// Coverage gaps (per-goal drift heatmap)
+// ----------------------------------------------------------------------------
+
+export type GapPriority = "high" | "medium" | "none";
+
+export interface CoverageGapCell {
+  pillar_code: string;
+  goal_id: string;
+  goal_code: string;
+  goal_name: string;
+  cards_in_window: number;
+  expected: number;
+  drift: number;
+  /** Normalized drift in ``[-1.0, +inf)`` — the heatmap color uses this. */
+  drift_score: number;
+  priority: GapPriority;
+}
+
+export interface CoverageGapsResponse {
+  window_days: number;
+  target_distribution: "uniform";
+  since: string;
+  /** Cells are pre-sorted starvation-first by the backend. */
+  cells: CoverageGapCell[];
+  totals: {
+    credits: number;
+    goals: number;
+    expected_per_cell: number;
+    underrepresented_cells: number;
+  };
+}
+
+export function fetchCoverageGaps(
+  token: string,
+  days: CoverageWindowDays,
+): Promise<CoverageGapsResponse> {
+  const params = new URLSearchParams({
+    days: String(days),
+    target_distribution: "uniform",
+  });
+  return apiRequest<CoverageGapsResponse>(
+    `/api/v1/admin/coverage/gaps?${params.toString()}`,
+    token,
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Workstream coverage
 // ----------------------------------------------------------------------------
 
