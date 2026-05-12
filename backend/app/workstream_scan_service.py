@@ -1056,11 +1056,27 @@ Example: ["query 1", "query 2", ...]"""
 
         return processed
 
+    @staticmethod
+    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+        """Cosine similarity between two embedding vectors. Returns 0.0 if either has zero norm."""
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = 0.0
+        norm_a = 0.0
+        norm_b = 0.0
+        for x, y in zip(a, b):
+            dot += x * y
+            norm_a += x * x
+            norm_b += y * y
+        if norm_a == 0.0 or norm_b == 0.0:
+            return 0.0
+        return dot / ((norm_a**0.5) * (norm_b**0.5))
+
     async def _deduplicate(
         self, sources: List[ProcessedSource], config: WorkstreamScanConfig
     ) -> Tuple[List[ProcessedSource], List[Tuple[ProcessedSource, str, float]], int]:
         """
-        Deduplicate against existing cards.
+        Deduplicate against existing cards AND within the current batch.
 
         Returns: (unique_sources, enrichment_candidates, duplicate_count)
         """
@@ -1093,7 +1109,7 @@ Example: ["query 1", "query 2", ...]"""
                         duplicate_count += 1
                         continue
 
-                # Vector similarity check
+                # Vector similarity check against existing cards in DB
                 if source.embedding:
                     match_result = self.supabase.rpc(
                         "find_similar_cards",
@@ -1112,6 +1128,30 @@ Example: ["query 1", "query 2", ...]"""
                             # Strong match - enrich
                             enrichments.append((source, top_match["id"], similarity))
                             continue
+
+                # Intra-batch check: don't create two near-identical cards in the
+                # same scan. find_similar_cards above only sees already-persisted
+                # cards, so a batch with two sources on the same topic (e.g.,
+                # two "Civic Tech Partnerships" articles) would otherwise produce
+                # two separate cards in one run.
+                if source.embedding:
+                    is_intra_batch_dup = False
+                    for accepted in unique:
+                        if not accepted.embedding:
+                            continue
+                        sim = self._cosine_similarity(
+                            source.embedding, accepted.embedding
+                        )
+                        if sim >= config.similarity_threshold:
+                            is_intra_batch_dup = True
+                            duplicate_count += 1
+                            logger.info(
+                                f"Intra-batch dedup: dropping '{source.raw.title[:60]}' "
+                                f"(sim={sim:.3f} to '{accepted.raw.title[:60]}')"
+                            )
+                            break
+                    if is_intra_batch_dup:
+                        continue
 
                 # New unique source
                 unique.append(source)
