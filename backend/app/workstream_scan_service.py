@@ -1058,8 +1058,22 @@ Example: ["query 1", "query 2", ...]"""
 
     @staticmethod
     def _cosine_similarity(a: List[float], b: List[float]) -> float:
-        """Cosine similarity between two embedding vectors. Returns 0.0 if either has zero norm."""
-        if not a or not b or len(a) != len(b):
+        """Cosine similarity between two embedding vectors.
+
+        Returns 0.0 if either vector is empty or has zero norm. Dimension
+        mismatches are logged as a warning (and still return 0.0 so the
+        dedup pass keeps moving) because they indicate an upstream wiring
+        bug in how embeddings are generated.
+        """
+        if not a or not b:
+            return 0.0
+        if len(a) != len(b):
+            logger.warning(
+                "Cosine similarity dimension mismatch: len(a)=%d len(b)=%d; "
+                "returning 0.0. This likely indicates an embedding-pipeline bug.",
+                len(a),
+                len(b),
+            )
             return 0.0
         dot = 0.0
         norm_a = 0.0
@@ -1145,9 +1159,13 @@ Example: ["query 1", "query 2", ...]"""
                         if sim >= config.similarity_threshold:
                             is_intra_batch_dup = True
                             duplicate_count += 1
+                            source_title = (source.raw.title or "Untitled")[:60]
+                            accepted_title = (accepted.raw.title or "Untitled")[:60]
                             logger.info(
-                                f"Intra-batch dedup: dropping '{source.raw.title[:60]}' "
-                                f"(sim={sim:.3f} to '{accepted.raw.title[:60]}')"
+                                "Intra-batch dedup: dropping '%s' (sim=%.3f to '%s')",
+                                source_title,
+                                sim,
+                                accepted_title,
                             )
                             break
                     if is_intra_batch_dup:
