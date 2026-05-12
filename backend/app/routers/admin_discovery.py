@@ -655,14 +655,16 @@ async def get_pillar_coverage(
     ``secondary_cards`` and ``csp_linked_cards`` so the UI can show all
     three at once without re-fetching.
 
-    Share semantics: ``share = bucket.cards / total`` where ``total`` is
-    the count of distinct cards in the window. In ``primary_or_secondary``
-    and ``union`` modes a single card can credit multiple pillars (one
-    primary plus any number of secondary/CSP-linked pillars), so the
-    pillar shares may sum to more than 1.0. This is intentional — the
-    union shares answer "what fraction of cards touch each pillar" rather
-    than "how are cards distributed across pillars." Drift is computed
-    against the same uniform 1/6 baseline in every mode.
+    Share semantics: ``share = bucket.cards / mode_total`` where
+    ``mode_total = sum(mode_counts.values())``. In ``primary`` this is
+    just the count of cards with a pillar assigned (``total - unassigned``)
+    so a card with no pillar doesn't dilute the others. In the union
+    modes, a single card may credit several pillars, so the denominator
+    is the total number of pillar-touches; this keeps
+    ``sum(share) == 1.0`` across pillars in every mode and makes the
+    uniform 1/6 drift baseline meaningful regardless of mode. The raw
+    card count is still returned as ``total`` (and the pillar-touch count
+    as ``mode_total``) so callers can render both.
     """
     require_admin(current_user)
     if days not in ALLOWED_COVERAGE_DAYS:
@@ -757,6 +759,15 @@ async def get_pillar_coverage(
                 unassigned += 1
 
         total = len(rows)
+        # Share denominator. In ``primary`` each card credits at most one
+        # pillar, so this equals total - unassigned. In the union modes a
+        # card can credit several pillars, so this is the sum of all
+        # mode-counts (pillar-touches). Using a mode-aware denominator
+        # keeps ``sum(share) == 1.0`` across pillars in every mode, which
+        # is what makes the uniform 1/6 drift baseline meaningful — a
+        # raw-card denominator would let every drift go positive in union
+        # modes and the starvation signal would stop working.
+        mode_total = sum(mode_counts.values())
         # Expected share is uniform — six pillars, 1/6 each. Recorded so the
         # frontend can render a baseline line without re-deriving the
         # constant on its end.
@@ -764,7 +775,7 @@ async def get_pillar_coverage(
         by_pillar: dict[str, dict[str, Any]] = {}
         for code, name in PILLAR_DEFINITIONS.items():
             cards = mode_counts[code]
-            share = round(cards / total, 4) if total else 0.0
+            share = round(cards / mode_total, 4) if mode_total else 0.0
             by_pillar[code] = {
                 "name": name,
                 # ``cards`` reflects the selected mode so the UI can size
@@ -784,7 +795,12 @@ async def get_pillar_coverage(
             "window_days": days,
             "mode": mode,
             "since": cutoff,
+            # ``total`` stays the raw card count so the UI's "N cards in
+            # window" line is honest. ``mode_total`` is exposed so a caller
+            # can verify it's the denominator for ``share`` (and so the
+            # gap-detector in PR-C can reuse it).
             "total": total,
+            "mode_total": mode_total,
             "unassigned": unassigned,
             "by_pillar": by_pillar,
         }

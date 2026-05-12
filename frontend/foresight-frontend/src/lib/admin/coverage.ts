@@ -33,7 +33,15 @@ export interface PillarCoverageResponse {
   /** Echoes the mode the response was computed under. */
   mode: PillarCoverageMode;
   since: string;
+  /** Raw card count in the window. Drives the "N cards in window" label. */
   total: number;
+  /**
+   * Sum of pillar-touches under the selected ``mode`` — the denominator
+   * the backend uses for each bucket's ``share``. Equals ``total`` in
+   * ``primary`` minus any unassigned cards; can exceed ``total`` in the
+   * union modes when cards credit multiple pillars.
+   */
+  mode_total: number;
   unassigned: number;
   by_pillar: Record<string, PillarCoverageBucket>;
 }
