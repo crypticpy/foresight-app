@@ -345,12 +345,23 @@ class WorkstreamScanService:
             # Runs AFTER inbox-add so a slow generate_signal_profile call
             # cannot eat the scan timeout before cards land in the workstream.
             # Profile failures only warn — card + membership are already saved.
+            #
+            # Per-card timeout caps each profile call so the loop as a whole
+            # stays within the worker's FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS
+            # budget (default 300s). Without this, generate_signal_profile's
+            # ~120s ceiling × 8 cards could blow past the scan timeout, and the
+            # worker's asyncio.wait_for would raise CancelledError (which is a
+            # BaseException — not caught below) so a successful card-creation
+            # run would be reported as "failed (timed out)".
             for card_id, source in profile_targets:
                 if source.analysis is None:
                     continue
                 try:
-                    await self._generate_card_profile(
-                        card_id, source, source.analysis
+                    await asyncio.wait_for(
+                        self._generate_card_profile(
+                            card_id, source, source.analysis
+                        ),
+                        timeout=30,
                     )
                 except Exception as profile_err:
                     logger.warning(
