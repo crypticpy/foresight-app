@@ -282,10 +282,15 @@ async def derive_queries(
 
     cached = goal.get("query_aliases") or []
     current_version = _cache_version()
+    # Cache-hit guard also enforces ``MIN_QUERIES`` on the stored list:
+    # an old persistence written before the parser-side guard could carry
+    # a single-query payload at the current version stamp, and returning
+    # it here would route around the new minimum. Treat under-minimum
+    # caches as misses so the next LLM call refreshes them.
     if (
         not force
         and isinstance(cached, list)
-        and cached
+        and len(cached) >= MIN_QUERIES
         and goal.get("query_aliases_version") == current_version
     ):
         return list(cached)

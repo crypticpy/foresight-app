@@ -266,6 +266,37 @@ def test_parser_rejects_below_min_queries():
         svc._parse_query_list('["only one"]')
 
 
+def test_under_minimum_cached_aliases_are_treated_as_miss():
+    """An old cache row with only one query (written before MIN_QUERIES
+    landed) must not bypass the parser guard via the cache-hit short
+    circuit. Regression for the Codex P2 on PR #81: PROMPT_VERSION didn't
+    change, so an existing one-query alias at the current version stamp
+    would slip through and underfeed the dispatcher's per-goal budget.
+    """
+    gid = str(uuid.uuid4())
+    sb = _FakeSupabase([
+        {
+            "id": gid,
+            "code": "PS.1",
+            "name": "Reduce violent crime",
+            "description": "Lower the violent crime rate.",
+            # One-query cache at the CURRENT version stamp — should be
+            # treated as a miss, not returned.
+            "query_aliases": ["legacy single"],
+            "query_aliases_version": svc._cache_version(),
+        }
+    ])
+    oc = _make_oc(_make_llm_response('["fresh one", "fresh two"]'))
+
+    out = asyncio.run(
+        svc.derive_queries(uuid.UUID(gid), supabase=sb, openai_client=oc)
+    )
+    assert out == ["fresh one", "fresh two"]
+    oc.chat.completions.create.assert_awaited_once()
+    # Cache was overwritten with the fresh (compliant) list.
+    assert sb.store[gid]["query_aliases"] == out
+
+
 def test_llm_returns_garbage_surfaces_derivation_error():
     gid = str(uuid.uuid4())
     sb = _FakeSupabase([
