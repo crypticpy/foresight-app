@@ -243,7 +243,7 @@ async def suggest_description(
 ):
     """Generate a workstream description from a name, pillars, and keywords.
 
-    Uses GPT-4.1-mini for cost efficiency. Returns a 1-2 sentence professional
+    Uses the mini tier for cost efficiency. Returns a 1-2 sentence professional
     description explaining what signals the workstream will track.
     """
     try:

@@ -78,7 +78,7 @@ The backend was decomposed from an 11K-line `main.py` monolith into a slim app f
   - `research_service.py` — gpt-researcher integration
   - `brief_service.py` — executive brief generation + portfolio synthesis
   - `chat_service.py` + `rag_engine.py` — SSE chat orchestrator and hybrid RAG (FTS + pgvector via RRF)
-  - `chat_tools.py` — Tavily-backed `web_search` tool for chat
+  - `chat_tools.py` — `web_search` tool for chat, backed by Serper / SearXNG (Tavily path removed)
   - `gamma_service.py` — Gamma API integration for AI-generated decks (with local PPTX/PDF fallback)
   - `export_service.py` — PDF/PPTX/CSV export
   - `portfolio_export.py` — shared portfolio render pipeline used by both `/bulk-brief-export` and `/portfolios/{id}/export`
@@ -121,7 +121,7 @@ The backend was decomposed from an 11K-line `main.py` monolith into a slim app f
 - `rag_engine.py` runs hybrid FTS + vector search via Reciprocal Rank Fusion. SQL functions: `hybrid_search_cards()` and `hybrid_search_sources()` (require `SET search_path = extensions, public` for pgvector operators).
 - Pipeline: query expansion → embedding → hybrid search → scope enrichment → LLM reranking → context assembly. Context budget ~120K chars, max_tokens 8192, conversation history 20 messages.
 - All three scopes (signal / workstream / global) use the same engine with scope-specific enrichment.
-- `web_search` is offered to the model only when `TAVILY_API_KEY` is set. Max 2 searches/msg, 10s timeout. The streaming loop must return a tool response for **every** tool_call, including unknown tools or limit-reached cases.
+- `web_search` is offered to the model only when a Serper/SearXNG provider is configured (see `chat_tools.py`). Max 2 searches/msg, 10s timeout. The streaming loop must return a tool response for **every** tool_call, including unknown tools or limit-reached cases. **Do not reintroduce Tavily.**
 - Citation indices use `max(source_map.keys(), default=0) + 1` — **never** `len(source_map)`, since keys can be non-contiguous.
 
 ## Environment & Feature Flags
@@ -136,8 +136,10 @@ AZURE_OPENAI_ENDPOINT=
 AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_DEPLOYMENT=
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=
-TAVILY_API_KEY=                 # Powers gpt-researcher and chat web_search tool
-FIRECRAWL_API_KEY=              # gpt-researcher
+SERPER_API_KEY=                 # Google search via Serper (chat web_search + gpt-researcher)
+SEARXNG_URL=                    # Self-hosted SearXNG aggregator (chat web_search + gpt-researcher)
+# NOTE: Tavily and Firecrawl are decommissioned. Do not set TAVILY_API_KEY / FIRECRAWL_API_KEY,
+# and do not re-add code paths that read them.
 
 # Runtime flags (read in main.py lifespan)
 FORESIGHT_EMBED_WORKER=true     # Default: embed the worker in the API process. Set false to run the worker separately.

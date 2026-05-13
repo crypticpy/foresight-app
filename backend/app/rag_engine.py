@@ -130,7 +130,7 @@ class RAGEngine:
     # ------------------------------------------------------------------
 
     async def _expand_query(self, query: str) -> List[str]:
-        """Use gpt-4.1-mini to produce 2-3 search-query variants."""
+        """Use the mini tier to produce 2-3 search-query variants."""
         try:
             response = await azure_openai_async_client.chat.completions.create(
                 model=get_chat_mini_deployment(),
@@ -539,7 +539,7 @@ class RAGEngine:
         sources: List[Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Use gpt-4.1-mini to rerank the top candidates by relevance.
+        Use the mini tier to rerank the top candidates by relevance.
 
         Falls back to original ordering on any failure.
         """
@@ -1101,8 +1101,8 @@ class RAGEngine:
     async def web_search(query: str, max_results: int = 5) -> list[dict]:
         """Search the web via the configured search provider (SearXNG → Serper).
 
-        Returns list of {title, url, content} dicts compatible with the
-        previous Tavily-shaped response.
+        Returns list of {title, url, content} dicts in the standard
+        search-result shape consumed by the chat tool loop.
         """
         from app import search_provider
 
