@@ -197,7 +197,7 @@ async def _run(args: argparse.Namespace) -> int:
         )
         return 2
 
-    supabase = create_client(url, key)
+    supabase = await asyncio.to_thread(create_client, url, key)
 
     print(f"target extraction_prompt_version: {EXTRACTION_PROMPT_VERSION}")
 
