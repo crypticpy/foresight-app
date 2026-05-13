@@ -1234,21 +1234,30 @@ class DiscoveryService:
                     f"{categories_fetched}/5 categories in {processing_time.multi_source_fetch_seconds:.2f}s"
                 )
 
-            # Step 2b: Execute query-based searches (traditional GPT Researcher + Exa)
-            # Note: This step depends on Firecrawl. If Firecrawl is down/out of credits,
-            # individual queries will timeout at 120s each. We also cap total step time at 5min.
+            # Step 2b: Execute query-based searches (Serper-first + gpt-researcher).
+            # Each query has a 210s inner cap; queries run in batches of 5
+            # concurrently inside ``_execute_searches``. The outer cap scales
+            # with the number of batches (~240s/batch budget = inner 210s + the
+            # 1s inter-batch sleep + dedup/gather overhead) and clamps at 1200s
+            # so a runaway can't hang the discovery run. Without scaling, a
+            # 300s wrapper used to fire mid-second-batch and discard every
+            # accumulated query_source — the new ceiling fits multi-batch runs.
             if queries:
                 step_start = datetime.now(timezone.utc)
+                planned_queries = queries[: config.max_queries_per_run]
+                batch_size = 5
+                num_batches = (len(planned_queries) + batch_size - 1) // batch_size
+                per_batch_budget = 240
+                search_step_timeout = min(1200, max(300, num_batches * per_batch_budget))
                 try:
                     query_sources, query_cost = await asyncio.wait_for(
-                        self._execute_searches(
-                            queries[: config.max_queries_per_run], config
-                        ),
-                        timeout=300,  # 5 minute total cap for query-based searches
+                        self._execute_searches(planned_queries, config),
+                        timeout=search_step_timeout,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Query-based search step timed out after 300s - continuing with multi-source results only"
+                        f"Query-based search step timed out after {search_step_timeout}s "
+                        f"({num_batches} batches) - continuing with multi-source results only"
                     )
                     query_sources, query_cost = [], 0.0
                 search_cost += query_cost

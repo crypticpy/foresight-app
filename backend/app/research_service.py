@@ -392,7 +392,13 @@ class ResearchService:
             Tuple of (sources, report_text_or_none, cost)
         """
         sources: List[RawSource] = []
-        seen_urls: set = set()
+        # Seed dedupe from the caller's existing-source list so the Serper-first
+        # phase doesn't re-add URLs already on the card (deep-research /
+        # card-update paths) and waste crawl/triage budget on duplicates that
+        # ``_store_source`` would only drop later. New URLs we add below also
+        # accumulate into this set so the gpt-researcher dedup downstream keeps
+        # working.
+        seen_urls: set[str] = {url for url in (existing_source_urls or []) if url}
 
         # 1) Serper-first baseline — quick, deterministic, no LLM in the loop.
         try:
