@@ -96,7 +96,7 @@ class ForesightWorker:
             "FORESIGHT_DISCOVERY_TIMEOUT_SECONDS", 90 * 60
         )
         self.workstream_scan_timeout_seconds = _get_int_env(
-            "FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS", 5 * 60
+            "FORESIGHT_WORKSTREAM_SCAN_TIMEOUT_SECONDS", 30 * 60
         )
         self.rss_check_interval_seconds = _get_int_env(
             "FORESIGHT_RSS_CHECK_INTERVAL_SECONDS", 30 * 60  # 30 minutes
