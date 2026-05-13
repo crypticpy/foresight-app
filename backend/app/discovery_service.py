@@ -2229,7 +2229,7 @@ class DiscoveryService:
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"Search timed out for query '{query.query_text[:50]}...' (180s)"
+                f"Search timed out for query '{query.query_text[:50]}...' (210s)"
             )
             return [], 0.0
         except Exception as e:

@@ -436,6 +436,12 @@ class ResearchService:
                     report = await asyncio.wait_for(
                         researcher.write_report(), timeout=60
                     )
+                    # Refresh costs after write_report: gpt-researcher only
+                    # accumulates report-generation LLM spend into
+                    # research_costs once write_report's awaited calls
+                    # complete, so the pre-write_report snapshot above
+                    # excludes it.
+                    costs = researcher.get_costs() or costs
                 except asyncio.TimeoutError:
                     logger.warning(
                         "GPT Researcher write_report timed out; "
@@ -530,7 +536,7 @@ class ResearchService:
         from .crawler import crawl_url
 
         if not search_available():
-            logger.warning("No search provider available for supplementary search")
+            logger.warning("No search provider available for Serper baseline search")
             return []
 
         sources = []
