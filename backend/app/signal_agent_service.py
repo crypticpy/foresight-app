@@ -1586,7 +1586,15 @@ class SignalAgentService:
             try:
                 if action.action_type == "create_signal":
                     props = action.signal_properties or {}
-                    pillar = props.get("pillar_id") or "UNKNOWN"
+                    raw_pillar = props.get("pillar_id")
+                    # Normalize: only canonical VALID_PILLAR_IDS get their own
+                    # bucket. Missing, empty, or malformed values share UNKNOWN
+                    # so a typo'd code can't silently dilute cap enforcement.
+                    if isinstance(raw_pillar, str):
+                        candidate = raw_pillar.strip().upper()
+                    else:
+                        candidate = ""
+                    pillar = candidate if candidate in VALID_PILLAR_IDS else "UNKNOWN"
                     if cards_created_per_pillar[pillar] >= max_new_cards:
                         logger.warning(
                             f"Signal agent: Per-pillar card limit ({max_new_cards}) "

@@ -216,6 +216,26 @@ async def test_missing_pillar_id_buckets_under_unknown():
 
 
 @pytest.mark.asyncio
+async def test_malformed_pillar_id_buckets_under_unknown():
+    """Malformed/non-canonical pillar codes (typos, lowercase noise, garbage)
+    must share the UNKNOWN cap rather than each getting their own bucket —
+    otherwise a typo'd code silently dilutes cap enforcement."""
+    config = _Config(max_new_cards_per_run=1, max_new_cards_total=60)
+    actions = [
+        _make_action(pillar="bad-code", name="bad-1"),
+        _make_action(pillar="another-bad", name="bad-2"),
+        _make_action(pillar="HH", name="HH-1"),
+    ]
+    service = _make_service_with_fake_create(["card-1", "card-2"])
+
+    result = await service._execute_actions(actions, [], config)
+
+    # bad-1 lands (first UNKNOWN), bad-2 skips (UNKNOWN cap=1, shared with
+    # other malformed codes), HH-1 lands (its own bucket is empty).
+    assert len(result["signals_created"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_per_pillar_warning_names_the_pillar(caplog):
     """The warning string must include the pillar code so a log search
     for 'Per-pillar card limit reached for HH' is precise."""

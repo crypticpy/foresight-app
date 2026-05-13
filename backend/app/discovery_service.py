@@ -163,7 +163,14 @@ class DiscoveryConfig:
     name_similarity_threshold: float = 0.80  # Name-based matching threshold
 
     # Card creation limits - PREVENT RUNAWAY CARD CREATION
-    max_new_cards_per_run: int = 15  # Maximum new cards per discovery run
+    # PR #87 made ``max_new_cards_per_run`` a *per-pillar* cap and added the
+    # global ``max_new_cards_total`` as a safety net so HH/late batches stop
+    # getting starved by EW/MC/HG. Admins that previously set
+    # ``FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN`` should also set
+    # ``FORESIGHT_DISCOVERY_MAX_NEW_CARDS_TOTAL`` if they want to keep a hard
+    # total-cards ceiling on each run.
+    max_new_cards_per_run: int = 15  # Per-pillar cap (was global pre-PR #87)
+    max_new_cards_total: int = 60  # Global ceiling across all pillars per run
 
     # Filtering
     pillars_filter: List[str] = field(default_factory=list)  # Empty = all pillars
@@ -242,6 +249,9 @@ DISCOVERY_SETTING_MAP: Dict[str, Tuple[str, type, Optional[str]]] = {
     ),
     "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_PER_RUN": (
         "max_new_cards_per_run", int, None,
+    ),
+    "FORESIGHT_DISCOVERY_MAX_NEW_CARDS_TOTAL": (
+        "max_new_cards_total", int, None,
     ),
     "FORESIGHT_DISCOVERY_AUTO_APPROVE_THRESHOLD": (
         "auto_approve_threshold", float, None,
