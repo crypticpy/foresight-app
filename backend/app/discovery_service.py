@@ -2202,14 +2202,17 @@ class DiscoveryService:
             # The discovery pipeline only consumes the source list; the synthesized
             # report is discarded. Skip write_report (saves up to 60s/query) and
             # give the inner Serper+gpt-researcher chain room to finish: Serper
-            # baseline (~30s) + gpt-researcher conduct_research (≤150s) = 180s.
+            # baseline (≤30s, up to 10 sequential crawls) + gpt-researcher
+            # conduct_research (≤150s) ≈ 180s nominal. Outer timeout sits at 210s
+            # to leave headroom for dedup/title-gen overhead so a successful inner
+            # run isn't cancelled by the wrapper.
             sources, _report, cost = await asyncio.wait_for(
                 self.research_service._discover_sources(
                     query=query.query_text,
                     report_type="research_report",
                     skip_report=True,
                 ),
-                timeout=180,
+                timeout=210,
             )
 
             # Limit sources per query

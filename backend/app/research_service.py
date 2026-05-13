@@ -413,6 +413,7 @@ class ResearchService:
         os.environ["SCRAPER"] = "bs"  # Tavily Extract decommissioned; use BeautifulSoup.
         report: Optional[str] = None
         costs = 0.0
+        raw_sources: List[Dict[str, Any]] = []
         try:
             researcher = GPTResearcher(
                 query=query,
@@ -426,23 +427,34 @@ class ResearchService:
                 verbose=False,
             )
             await asyncio.wait_for(researcher.conduct_research(), timeout=150)
+            # Read sources/costs FIRST so a write_report failure (timeout, LLM
+            # error, etc.) doesn't discard the conduct_research output.
+            raw_sources = researcher.get_research_sources() or []
+            costs = researcher.get_costs() or 0.0
             if not skip_report:
-                report = await asyncio.wait_for(
-                    researcher.write_report(), timeout=60
-                )
-            raw_sources = researcher.get_research_sources()
-            costs = researcher.get_costs()
+                try:
+                    report = await asyncio.wait_for(
+                        researcher.write_report(), timeout=60
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "GPT Researcher write_report timed out; "
+                        "keeping conduct_research sources, report=None"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"GPT Researcher write_report failed: {e}; "
+                        "keeping conduct_research sources, report=None"
+                    )
         except asyncio.TimeoutError:
             logger.warning(
-                "GPT Researcher timed out; returning Serper baseline only"
+                "GPT Researcher conduct_research timed out; "
+                "returning Serper baseline only"
             )
-            raw_sources = []
         except (TypeError, ValueError) as e:
             logger.warning(f"GPT Researcher failed (likely LLM error): {e}")
-            raw_sources = []
         except Exception as e:
             logger.error(f"GPT Researcher unexpected error: {e}")
-            raw_sources = []
 
         gptr_added = 0
         for src in raw_sources:
@@ -497,10 +509,11 @@ class ResearchService:
         self, query: str, num_results: int = 5
     ) -> List[RawSource]:
         """
-        Search with Serper + crawler for supplementary sources.
+        Search with Serper + crawler for source discovery.
 
-        Uses Serper for web + news search and the unified crawler module
-        for full-text extraction.
+        Runs first inside ``_discover_sources`` to establish a deterministic
+        URL baseline before gpt-researcher; uses Serper for web + news search
+        and the unified crawler module for full-text extraction.
 
         Args:
             query: Search query
