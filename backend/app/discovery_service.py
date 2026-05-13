@@ -1072,6 +1072,12 @@ class DiscoveryService:
     7. Auto-approve high-confidence discoveries
     """
 
+    # Single source of truth for the query batch size used in
+    # _execute_searches. The outer step-level timeout in run() derives
+    # num_batches from this value; keeping them in sync prevents an
+    # under-estimated wrapper timeout from firing mid-batch.
+    _QUERY_BATCH_SIZE = 5
+
     def __init__(
         self,
         supabase: Client,
@@ -1245,7 +1251,7 @@ class DiscoveryService:
             if queries:
                 step_start = datetime.now(timezone.utc)
                 planned_queries = queries[: config.max_queries_per_run]
-                batch_size = 5
+                batch_size = self._QUERY_BATCH_SIZE
                 num_batches = (len(planned_queries) + batch_size - 1) // batch_size
                 per_batch_budget = 240
                 search_step_timeout = min(1200, max(300, num_batches * per_batch_budget))
@@ -2160,7 +2166,7 @@ class DiscoveryService:
         seen_urls = set()
 
         # Process queries in batches to avoid rate limits
-        batch_size = 5
+        batch_size = self._QUERY_BATCH_SIZE
         for i in range(0, len(queries), batch_size):
             batch = queries[i : i + batch_size]
 

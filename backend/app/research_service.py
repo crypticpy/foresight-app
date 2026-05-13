@@ -101,6 +101,12 @@ def _configure_gpt_researcher_for_openai():
 # Configure GPT Researcher on module load
 _configure_gpt_researcher_for_openai()
 
+# Tavily Extract was decommissioned; route gpt-researcher scraping through
+# BeautifulSoup. Set once at import time to avoid mutating global process
+# state from inside async request handlers (would otherwise race across
+# concurrent _discover_sources calls).
+os.environ["SCRAPER"] = "bs"
+
 
 # ============================================================================
 # Data Classes
@@ -415,8 +421,7 @@ class ResearchService:
 
         # 2) gpt-researcher for depth — adds subtopic-expanded discovery. Wrapped
         # in tolerant timeouts so a slow research pass never wipes out the
-        # baseline above.
-        os.environ["SCRAPER"] = "bs"  # Tavily Extract decommissioned; use BeautifulSoup.
+        # baseline above. (SCRAPER env is set once at module load above.)
         report: Optional[str] = None
         costs = 0.0
         raw_sources: List[Dict[str, Any]] = []
