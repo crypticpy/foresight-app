@@ -65,12 +65,21 @@ COMMENT ON COLUMN public.cards.concept_tags IS
 COMMENT ON COLUMN public.cards.concept_tags_version IS
     'Extraction prompt version that produced concept_tags. NULL until first extraction; mismatch with EXTRACTION_PROMPT_VERSION queues the card for re-tagging.';
 
--- Partial index — "find rows due for (re-)tagging" is the hottest query
--- the backfill script will run. Includes NULL rows by virtue of the
--- predicate. Only used by the backfill so we keep it narrow.
+-- Partial indexes — "find rows due for (re-)tagging" is the hottest
+-- query the backfill script will run. Two indexes because the backfill
+-- query has two branches:
+--   1. concept_tags_version IS NULL              (never tagged)
+--   2. concept_tags_version != <current_version> (tagged on an older prompt)
+-- A single partial index on `IS NULL` only covers branch 1; bumping
+-- EXTRACTION_PROMPT_VERSION would devolve to a seq-scan of every card
+-- already tagged on the old version without index #2.
 CREATE INDEX IF NOT EXISTS cards_concept_tags_version_pending
     ON public.cards (id)
     WHERE concept_tags_version IS NULL;
+
+CREATE INDEX IF NOT EXISTS cards_concept_tags_version_nonnull
+    ON public.cards (concept_tags_version)
+    WHERE concept_tags_version IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- entities
@@ -160,9 +169,19 @@ CREATE TABLE IF NOT EXISTS public.entity_mentions (
 -- One row per (item, canonical_name, type, prompt_version). canonical_name
 -- is the natural key here, not entity_id — entity_id is NULL during the
 -- pending phase between extraction and reconciliation.
+--
+-- Index uses the plain column (not lower(canonical_name)) because
+-- entity_extraction_service upserts with
+--   on_conflict="item_id,item_type,canonical_name,entity_type,prompt_version"
+-- and PostgREST/Postgres only honor that arbiter against a constraint or
+-- index whose key list matches exactly. An expression index on
+-- lower(canonical_name) does NOT match a column-list arbiter, which would
+-- break every non-empty extraction at upsert time. Case-insensitive dedup
+-- still happens upstream: _parse_concept_tags collapses tags by lowered
+-- canonical before this table sees them.
 CREATE UNIQUE INDEX IF NOT EXISTS entity_mentions_natural_key_unique
     ON public.entity_mentions
-       (item_id, item_type, lower(canonical_name), entity_type, prompt_version);
+       (item_id, item_type, canonical_name, entity_type, prompt_version);
 
 -- Primary window scan (Mode B per-window aggregation in PR-3).
 CREATE INDEX IF NOT EXISTS entity_mentions_window
@@ -181,8 +200,12 @@ CREATE INDEX IF NOT EXISTS entity_mentions_entity
        (prompt_version, entity_id, item_created_at DESC);
 
 -- Reconciliation-pending scan ("show me mentions still missing entity_id").
+-- _fetch_pending in entity_reconciliation_service filters by prompt_version,
+-- requires entity_id IS NULL, and orders by created_at ASC with a limit, so
+-- the index keys include created_at to give Postgres an index-ordered scan
+-- instead of an extra sort step.
 CREATE INDEX IF NOT EXISTS entity_mentions_pending
-    ON public.entity_mentions (prompt_version)
+    ON public.entity_mentions (prompt_version, created_at)
     WHERE entity_id IS NULL;
 
 COMMENT ON TABLE public.entity_mentions IS

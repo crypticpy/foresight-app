@@ -415,9 +415,10 @@ async def _persist_card_tags(
         )
 
     def write_card() -> None:
+        # item_type guard runs in extract_for_item before any persistence;
+        # this is defense-in-depth in case a future caller invokes
+        # _persist_card_tags directly.
         if item.item_type != "card":
-            # PR-2 will add the source branch; refuse silently here so a
-            # mis-wired caller fails loud at write time rather than later.
             raise ValueError(
                 f"entity_extraction_service PR-1 only handles cards; "
                 f"got item_type={item.item_type!r}"
@@ -457,6 +458,16 @@ async def extract_for_item(
     parent row's ``concept_tags_version`` so the next backfill pass
     doesn't keep re-trying empty items.
     """
+    # Fail fast on unsupported item_type BEFORE any LLM call or persistence.
+    # PR-2 wires the source branch; until then a mis-wired source call
+    # must not spend on extraction or write pending mentions that the card
+    # stamp would then refuse to follow.
+    if item.item_type != "card":
+        raise ValueError(
+            f"entity_extraction_service PR-1 only handles cards; "
+            f"got item_type={item.item_type!r}"
+        )
+
     sb = supabase if supabase is not None else default_supabase
     oc = openai_client if openai_client is not None else default_openai_client
 

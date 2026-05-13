@@ -321,19 +321,27 @@ async def _insert_entity(
             logger.debug("entities insert raced or rejected: %s", exc)
 
         # Conflict path: re-fetch by (lower(canonical), type, version).
-        existing = (
+        # ``canonical`` comes from LLM-extracted text and may contain `%`
+        # or `_`, which Supabase `.ilike()` treats as wildcards and does
+        # not escape. Pull the scoped rows for this (type, version) and
+        # do the case-insensitive comparison in Python so wildcard
+        # characters in the canonical can't mis-link a mention to the
+        # wrong entity. The unique index restricts the candidate set to
+        # a small number of rows per scope, so over-fetching is cheap.
+        target_lower = canonical.lower()
+        rows = (
             supabase.table("entities")
-            .select("id")
+            .select("id, canonical_name")
             .eq("entity_type", entity_type)
             .eq("prompt_version", prompt_version)
-            .ilike("canonical_name", canonical)
-            .limit(1)
             .execute()
             .data
             or []
         )
-        if existing:
-            return existing[0]["id"]
+        for row in rows:
+            row_name = (row.get("canonical_name") or "").strip().lower()
+            if row_name == target_lower:
+                return row["id"]
         return None
 
     return await asyncio.to_thread(insert)

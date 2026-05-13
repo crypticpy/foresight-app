@@ -340,7 +340,12 @@ def test_extract_for_item_parse_error_raises_and_writes_nothing():
 
 
 def test_extract_for_item_source_type_raises():
-    """PR-1 only handles cards; source extraction is wired in PR-2."""
+    """PR-1 only handles cards; source extraction is wired in PR-2.
+
+    Also asserts zero DB writes occur on rejection — the guard runs
+    before the LLM call and before any persistence, so a miswired
+    source caller must not leave pending mentions behind.
+    """
     sb = _FakeSupabase()
     oc = _make_oc(
         '[{"canonical": "x", "aliases": [], "type": "tech", '
@@ -361,6 +366,9 @@ def test_extract_for_item_source_type_raises():
         asyncio.run(
             svc.extract_for_item(source_input, supabase=sb, openai_client=oc)
         )
+
+    assert sb.mentions == []
+    assert sb.cards == {}
 
 
 def test_extract_for_item_writes_mentions_before_card_stamp():

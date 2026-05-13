@@ -261,6 +261,17 @@ async def _run(args: argparse.Namespace) -> int:
         "passes": 0,
     }
     while True:
+        # Reconciliation embeds every distinct (canonical, type) tuple, so
+        # it has its own per-call spend ($\\approx$ $0.000004/embedding).
+        # Honor the global trip-wire here too — without this, a tripped
+        # budget during extraction wouldn't stop the reconciliation loop
+        # from continuing to incur embedding spend.
+        try:
+            await check_budget_or_skip()
+        except BudgetExceededError as exc:
+            print(f"  [BUDGET] reconciliation paused ({exc})")
+            break
+
         summary = await reconcile_pending(
             EXTRACTION_PROMPT_VERSION,
             batch_size=args.reconcile_batch_size,
