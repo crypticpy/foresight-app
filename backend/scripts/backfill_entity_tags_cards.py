@@ -121,7 +121,10 @@ def _parse_args() -> argparse.Namespace:
         default=200,
         help="Tuples per reconciliation pass. Default 200.",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.limit is not None and args.limit < 0:
+        p.error("--limit must be >= 0")
+    return args
 
 
 def _build_candidate_query(supabase: Any, args: argparse.Namespace):
@@ -139,7 +142,7 @@ def _build_candidate_query(supabase: Any, args: argparse.Namespace):
             f"concept_tags_version.is.null,"
             f'concept_tags_version.neq."{EXTRACTION_PROMPT_VERSION}"'
         )
-    if args.limit:
+    if args.limit is not None:
         q = q.limit(args.limit)
     return q
 
@@ -260,6 +263,8 @@ async def _run(args: argparse.Namespace) -> int:
         "mentions": 0,
         "passes": 0,
     }
+    budget_paused = False
+    reconcile_errors = 0
     while True:
         # Reconciliation embeds every distinct (canonical, type) tuple, so
         # it has its own per-call spend ($\\approx$ $0.000004/embedding).
@@ -270,6 +275,7 @@ async def _run(args: argparse.Namespace) -> int:
             await check_budget_or_skip()
         except BudgetExceededError as exc:
             print(f"  [BUDGET] reconciliation paused ({exc})")
+            budget_paused = True
             break
 
         summary = await reconcile_pending(
@@ -290,6 +296,7 @@ async def _run(args: argparse.Namespace) -> int:
             f"skipped={summary.skipped}  mentions_updated={summary.mentions_updated}"
         )
         if summary.errors:
+            reconcile_errors += len(summary.errors)
             for err in summary.errors[:5]:
                 print(f"    err: {err}")
             if len(summary.errors) > 5:
@@ -313,7 +320,15 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"  skipped       : {total['skipped']}")
     print(f"  mentions wrote: {total['mentions']}")
 
-    rec_rc = 0 if total["skipped"] == 0 else 1
+    rec_rc = (
+        0
+        if (
+            total["skipped"] == 0
+            and not budget_paused
+            and reconcile_errors == 0
+        )
+        else 1
+    )
     return extract_rc or rec_rc
 
 
