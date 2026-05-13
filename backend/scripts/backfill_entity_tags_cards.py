@@ -98,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--card-ids",
-        nargs="*",
+        nargs="+",
         default=None,
         help="Optional explicit list of card UUIDs (overrides version filter).",
     )
@@ -132,7 +132,7 @@ def _build_candidate_query(supabase: Any, args: argparse.Namespace):
     untargeted query path.
     """
     q = supabase.table("cards").select(SELECT_COLS).eq("status", "active")
-    if args.card_ids:
+    if args.card_ids is not None:
         q = q.in_("id", args.card_ids)
     elif not args.force:
         q = q.or_(
