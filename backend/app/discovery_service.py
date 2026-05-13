@@ -2199,13 +2199,17 @@ class DiscoveryService:
             Tuple of (sources, cost)
         """
         try:
-            # Use the research service's discovery method with timeout
-            # GPT Researcher can hang if Firecrawl is down/out of credits
+            # The discovery pipeline only consumes the source list; the synthesized
+            # report is discarded. Skip write_report (saves up to 60s/query) and
+            # give the inner Serper+gpt-researcher chain room to finish: Serper
+            # baseline (~30s) + gpt-researcher conduct_research (≤150s) = 180s.
             sources, _report, cost = await asyncio.wait_for(
                 self.research_service._discover_sources(
-                    query=query.query_text, report_type="research_report"
+                    query=query.query_text,
+                    report_type="research_report",
+                    skip_report=True,
                 ),
-                timeout=120,  # 2 minute timeout per query
+                timeout=180,
             )
 
             # Limit sources per query
@@ -2222,7 +2226,7 @@ class DiscoveryService:
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"Search timed out for query '{query.query_text[:50]}...' (120s)"
+                f"Search timed out for query '{query.query_text[:50]}...' (180s)"
             )
             return [], 0.0
         except Exception as e:
