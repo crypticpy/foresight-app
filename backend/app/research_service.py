@@ -1636,7 +1636,7 @@ class ResearchService:
                 peer_query = (
                     f'"{card["name"]}" ({" OR ".join(peer_cities)}) city implementation'
                 )
-                peer_sources = await self._search_with_serper(peer_query, max_results=5)
+                peer_sources = await self._search_with_serper(peer_query, num_results=5)
                 if peer_sources:
                     sources.extend(peer_sources)
                     logger.info(f"Peer city search added {len(peer_sources)} sources")
@@ -1705,7 +1705,7 @@ class ResearchService:
                         f'"{q}"' for q in follow_up_queries[:3]
                     )
                     round_2_sources = await self._search_with_serper(
-                        combined_query, max_results=10
+                        combined_query, num_results=10
                     )
                     if round_2_sources:
                         round_2_sources = await self._backfill_content(round_2_sources)
