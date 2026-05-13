@@ -32,47 +32,6 @@ INITIAL_BACKOFF = 1.0  # seconds
 BACKOFF_MULTIPLIER = 2.0
 REQUEST_TIMEOUT = 60  # seconds
 
-# Summary quality configuration
-SUMMARY_MIN_WORDS = 150
-SUMMARY_MAX_WORDS = 300
-SUMMARY_STRUCTURE_KEYWORDS = {
-    "problem_statement": [
-        "challenge",
-        "trend",
-        "opportunity",
-        "issue",
-        "development",
-        "emerging",
-        "innovation",
-        "technology",
-        "advancement",
-    ],
-    "implications": [
-        "implication",
-        "impact",
-        "effect",
-        "affect",
-        "consequence",
-        "result",
-        "influence",
-        "municipal",
-        "city",
-        "government",
-    ],
-    "strategic": [
-        "consider",
-        "prepare",
-        "action",
-        "decision",
-        "strategy",
-        "recommend",
-        "plan",
-        "implement",
-        "adopt",
-        "evaluate",
-    ],
-}
-
 
 def with_retry(max_retries: int = MAX_RETRIES):
     """
@@ -202,93 +161,6 @@ class AnalysisResult:
 
     # Flag indicating whether scores are defaults (e.g., due to AI parse failure)
     scores_are_defaults: bool = False
-
-
-@dataclass
-class SummaryQualityResult:
-    """Result of summary quality validation."""
-
-    is_valid: bool
-    word_count: int
-    word_count_valid: bool
-    structure_valid: bool
-    structure_scores: Dict[str, float]  # Score for each structural element
-    issues: List[str]  # List of quality issues found
-
-
-# ============================================================================
-# Summary Quality Validation
-# ============================================================================
-
-
-def validate_summary_quality(summary: str) -> SummaryQualityResult:
-    """
-    Validate summary quality against length and structure requirements.
-
-    Checks:
-    1. Word count is between 150-300 words
-    2. Summary contains indicators of the 3-part structure:
-       - Problem statement (challenge/trend/opportunity)
-       - Implications (effects for municipal government)
-       - Strategic considerations (actions/decisions)
-
-    Args:
-        summary: The summary text to validate
-
-    Returns:
-        SummaryQualityResult with validation details
-    """
-    issues = []
-
-    # Word count validation
-    words = summary.split()
-    word_count = len(words)
-    word_count_valid = SUMMARY_MIN_WORDS <= word_count <= SUMMARY_MAX_WORDS
-
-    if word_count < SUMMARY_MIN_WORDS:
-        issues.append(
-            f"Summary too short: {word_count} words (minimum: {SUMMARY_MIN_WORDS})"
-        )
-    elif word_count > SUMMARY_MAX_WORDS:
-        issues.append(
-            f"Summary too long: {word_count} words (maximum: {SUMMARY_MAX_WORDS})"
-        )
-
-    # Structure validation - check for presence of key structural elements
-    summary_lower = summary.lower()
-    structure_scores = {}
-
-    for element, keywords in SUMMARY_STRUCTURE_KEYWORDS.items():
-        # Count how many keywords from each category are present
-        matches = sum(bool(kw in summary_lower) for kw in keywords)
-        # Normalize to 0-1 score (at least 2 matches for good score)
-        score = min(matches / 2.0, 1.0)
-        structure_scores[element] = score
-
-        if score < 0.5:
-            issues.append(
-                f"Weak {element.replace('_', ' ')}: consider adding relevant context"
-            )
-
-    # Structure is valid if all elements have at least 0.5 score
-    structure_valid = all(score >= 0.5 for score in structure_scores.values())
-
-    # Overall validity requires both word count and structure
-    is_valid = word_count_valid and structure_valid
-
-    return SummaryQualityResult(
-        is_valid=is_valid,
-        word_count=word_count,
-        word_count_valid=word_count_valid,
-        structure_valid=structure_valid,
-        structure_scores=structure_scores,
-        issues=issues,
-    )
-
-
-def get_word_count(text: str) -> int:
-    """Get the word count of a text string."""
-    return len(text.split())
 
 
 # ============================================================================
@@ -772,22 +644,7 @@ Respond with ONLY the title text, nothing else."""
             )
             for ent in result.get("entities", [])
         ]
-        # Validate summary quality
         summary = result.get("summary", "")
-        quality_result = validate_summary_quality(summary)
-
-        if not quality_result.is_valid:
-            logger.warning(
-                f"Summary quality issues for '{title[:50]}...': "
-                f"word_count={quality_result.word_count}, "
-                f"issues={quality_result.issues}"
-            )
-        else:
-            logger.debug(
-                f"Summary quality validated for '{title[:50]}...': "
-                f"word_count={quality_result.word_count}, "
-                f"structure_scores={quality_result.structure_scores}"
-            )
 
         # Extract raw scores and clamp to valid ranges
         raw_credibility = result.get("credibility", 3.0)
