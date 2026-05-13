@@ -1045,7 +1045,8 @@ def test_balance_dispatch_with_explicit_goal_ids(monkeypatch):
     rows = tables["discovery_runs"]
     assert len(rows) == 1
     config = rows[0]["summary_report"]["config"]
-    assert config["enable_multi_source"] is False
+    assert config["enable_multi_source"] is True
+    assert config["max_sources_total"] == 200
     assert config["custom_queries"] and len(config["custom_queries"]) == 3
     assert config["pillars_filter"] == ["PS"]
 

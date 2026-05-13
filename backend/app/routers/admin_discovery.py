@@ -1454,14 +1454,21 @@ async def admin_balance_dispatch(
     run_id = str(uuid4())
     resolved_config = {
         "max_queries_per_run": min(len(queries), BALANCE_GLOBAL_QUERY_CAP),
-        "max_sources_total": None,
+        "max_sources_total": 200,
         "auto_approve_threshold": 0.95,
         "pillars_filter": sorted(pillars_seen),
         "dry_run": False,
         "categories_to_scan": categories,
         "source_ids": None,
         "custom_queries": [q.model_dump() for q in queries],
-        "enable_multi_source": False,
+        # Multi-source must stay on: it is the RSS/news/government fetch path,
+        # which `categories_to_scan` then filters down. Disabling it skips RSS
+        # entirely, leaving only the gpt-researcher web_search path — and that
+        # path frequently exhausts its 120s per-query timeout on broad goal-
+        # derived queries, producing 0 sources. Verified end-to-end on
+        # run b3c14108 (multi_source=True → 36 sources, 7 cards) vs
+        # run f3e1b489 (multi_source=False → 0 sources, 0 cards).
+        "enable_multi_source": True,
     }
 
     run_record = {
