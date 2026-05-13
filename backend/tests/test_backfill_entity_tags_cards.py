@@ -141,7 +141,9 @@ def test_query_filters_to_active_pending_cards_by_default():
     assert entity_extraction_service.EXTRACTION_PROMPT_VERSION in t.or_calls[0]
 
 
-def test_query_card_ids_without_force_still_applies_version_filter():
+def test_query_card_ids_overrides_version_filter():
+    """Explicit --card-ids must skip the version predicate so targeted
+    reruns are not silently no-op'd (CodeRabbit #88 / id 3237048118)."""
     sb = _CapturingSupabase()
     args = _parse(["--card-ids", "a", "b"])
     backfill._build_candidate_query(sb, args)
@@ -149,7 +151,7 @@ def test_query_card_ids_without_force_still_applies_version_filter():
     t = sb.last_table
     assert t is not None
     assert t.in_calls == [("id", ["a", "b"])]
-    assert len(t.or_calls) == 1
+    assert t.or_calls == []
 
 
 def test_query_force_skips_version_filter():

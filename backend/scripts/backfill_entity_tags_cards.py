@@ -125,15 +125,15 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _build_candidate_query(supabase: Any, args: argparse.Namespace):
-    """Match the lens-backfill query shape — active cards, version filter."""
+    """Match the lens-backfill query shape — active cards, version filter.
+
+    Explicit ``--card-ids`` overrides the version filter so targeted reruns
+    work as the help text advertises. ``--force`` does the same for the
+    untargeted query path.
+    """
     q = supabase.table("cards").select(SELECT_COLS).eq("status", "active")
     if args.card_ids:
         q = q.in_("id", args.card_ids)
-        if not args.force:
-            q = q.or_(
-                f"concept_tags_version.is.null,"
-                f'concept_tags_version.neq."{EXTRACTION_PROMPT_VERSION}"'
-            )
     elif not args.force:
         q = q.or_(
             f"concept_tags_version.is.null,"

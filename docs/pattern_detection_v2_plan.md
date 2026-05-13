@@ -148,7 +148,7 @@ python -m backend.scripts.backfill_entity_tags_cards --limit 20   # real run, sm
 
 ### Babysit loop
 
-```
+```bash
 gh pr create --title "feat: pattern v2 — entity extraction foundation (cards + schema)" --body <body>
 /babysit-pr <N>
 ```
