@@ -19,7 +19,14 @@ from app.deps import (
     evict_cached_profile,
 )
 from app import cost_guardrail
-from app.openai_provider import reload_config as reload_openai_config
+from app.openai_provider import (
+    DEFAULT_CHAT_AGENT_MODEL,
+    DEFAULT_CHAT_MINI_MODEL,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_REASONING_EFFORT,
+    reload_config as reload_openai_config,
+)
 from app.models.source_rating import (
     SourceRatingCreate,
     SourceRatingResponse,
@@ -61,7 +68,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Chat model",
         "description": "Primary model for user-facing Ask Foresight responses.",
         "value_type": "string",
-        "default": "gpt-5.4-2026-03-05",
+        "default": DEFAULT_CHAT_MODEL,
     },
     {
         "key": "OPENAI_CHAT_AGENT_MODEL",
@@ -69,7 +76,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Agent model",
         "description": "Model for agentic research and tool-heavy workflows.",
         "value_type": "string",
-        "default": "gpt-5.4-2026-03-05",
+        "default": DEFAULT_CHAT_AGENT_MODEL,
     },
     {
         "key": "OPENAI_CHAT_MINI_MODEL",
@@ -77,7 +84,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Mini model",
         "description": "Lower-cost model for classification and structured helper tasks.",
         "value_type": "string",
-        "default": "gpt-5.4-mini-2026-03-17",
+        "default": DEFAULT_CHAT_MINI_MODEL,
     },
     {
         "key": "OPENAI_EMBEDDING_MODEL",
@@ -85,7 +92,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Embedding model",
         "description": "Embedding model used for vector search and deduplication.",
         "value_type": "string",
-        "default": "text-embedding-ada-002",
+        "default": DEFAULT_EMBEDDING_MODEL,
     },
     {
         "key": "OPENAI_REASONING_EFFORT",
@@ -93,7 +100,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "label": "Reasoning effort",
         "description": "Default reasoning effort passed to supported OpenAI models.",
         "value_type": "string",
-        "default": "medium",
+        "default": DEFAULT_REASONING_EFFORT,
     },
     {
         "key": "FORESIGHT_CHAT_QUOTA_ENABLED",

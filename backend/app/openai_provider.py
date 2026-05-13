@@ -54,6 +54,21 @@ def _get_optional_env(name: str, default: str) -> str:
     return os.getenv(name, default)
 
 
+# Factory defaults for each tier. Changing a default here is the single
+# source of truth: OpenAIConfig falls back to these when the matching env
+# var is unset, the admin SETTING_DEFINITIONS displays them as the factory
+# default in the UI, and research_service inherits them through the tier
+# helpers.
+DEFAULT_CHAT_MODEL = "gpt-5.4-2026-03-05"
+DEFAULT_CHAT_AGENT_MODEL = "gpt-5.4-2026-03-05"
+DEFAULT_CHAT_MINI_MODEL = "gpt-5.4-mini-2026-03-17"
+# Nano deliberately has no factory default — when OPENAI_CHAT_NANO_MODEL is
+# unset it falls back to the resolved mini model so nano-routed call sites
+# don't quietly drop a generation in quality.
+DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
+DEFAULT_REASONING_EFFORT = "medium"
+
+
 class OpenAIConfig:
     """Commercial OpenAI configuration container."""
 
@@ -63,22 +78,19 @@ class OpenAIConfig:
 
         # Model names (real OpenAI model IDs, not Azure deployment names)
         self.model_chat = _get_optional_env(
-            "OPENAI_CHAT_MODEL", "gpt-5.4-2026-03-05"
+            "OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL
         )
         self.model_chat_agent = _get_optional_env(
-            "OPENAI_CHAT_AGENT_MODEL", "gpt-5.4-2026-03-05"
+            "OPENAI_CHAT_AGENT_MODEL", DEFAULT_CHAT_AGENT_MODEL
         )
         self.model_chat_mini = _get_optional_env(
-            "OPENAI_CHAT_MINI_MODEL", "gpt-5.4-mini-2026-03-17"
+            "OPENAI_CHAT_MINI_MODEL", DEFAULT_CHAT_MINI_MODEL
         )
-        # Nano falls back to the mini model when unset — ensures nano-routed
-        # call sites don't quietly drop a generation in quality if the env
-        # var isn't configured.
         self.model_chat_nano = _get_optional_env(
             "OPENAI_CHAT_NANO_MODEL", self.model_chat_mini
         )
         self.model_embedding = _get_optional_env(
-            "OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"
+            "OPENAI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
         )
 
     def log_configuration(self):
@@ -122,7 +134,7 @@ def get_reasoning_effort() -> str:
     Default 'medium' balances answer quality against reasoning-token spend.
     Override per-deployment via OPENAI_REASONING_EFFORT.
     """
-    return os.getenv("OPENAI_REASONING_EFFORT", "medium")
+    return os.getenv("OPENAI_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
 
 
 def get_chat_api_version() -> str:
@@ -434,6 +446,12 @@ validate_openai_connection = validate_azure_connection
 
 
 __all__ = [
+    # Factory defaults (single source of truth for tier model names)
+    "DEFAULT_CHAT_MODEL",
+    "DEFAULT_CHAT_AGENT_MODEL",
+    "DEFAULT_CHAT_MINI_MODEL",
+    "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_REASONING_EFFORT",
     # Clients (legacy Azure-prefixed names, retained for caller compatibility)
     "azure_openai_client",
     "azure_openai_async_client",
