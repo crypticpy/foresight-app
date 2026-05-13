@@ -109,6 +109,8 @@ You will receive a numbered list of source summaries, plus any existing signals 
 - If you have 15 sources, aim for 3-6 signals, not 10-15. Each signal should ideally have 2+ sources.
 - Single-source signals should be rare — only create one when a source represents a truly unique trend with no overlap to any other source in the batch.
 
+{batch_pillar_hint}
+
 ## Existing Related Signals
 {existing_signals}
 
@@ -447,6 +449,41 @@ def _clamp_score(value: Any, low: int = 0, high: int = 100) -> int:
         return 50  # Default mid-range
 
 
+def _render_pillar_prior(pillar_id: str) -> str:
+    """Render the seeding-pillar hint block injected into the system prompt.
+
+    When a batch carries a known seeding pillar — i.e., the discovery
+    pipeline grouped these sources because they were found via a
+    pillar-targeted query — we tell the agent to default the
+    ``create_signal`` ``pillar_id`` to that pillar. The leak this fixes:
+    a batch seeded from HH but containing one Vision-Zero-flavored
+    article was previously labelled MC for every signal because the LLM
+    had no prior about the batch's intent.
+
+    The block is intentionally soft — it does NOT forbid other pillars,
+    only sets a default. Sources whose content is clearly outside the
+    batch pillar (Vision Zero in an HH-seeded batch) should still flow
+    to their real pillar.
+    """
+    if pillar_id not in PILLAR_NAMES:
+        return (
+            "## Batch Pillar\n"
+            "This batch has no seeding pillar — classify each signal on its "
+            "own merits."
+        )
+    pillar_name = PILLAR_NAMES[pillar_id]
+    return (
+        f"## Batch Pillar\n"
+        f"This batch was seeded from the **{pillar_id} ({pillar_name})** "
+        f"pillar — the operator was looking for {pillar_name} signals when "
+        f"these sources were discovered. Default `pillar_id` on every "
+        f"`create_signal` call to **{pillar_id}**. Only assign a different "
+        f"pillar when the source content is clearly outside {pillar_name} "
+        f"(e.g., a Vision Zero piece in an HH-seeded batch should still "
+        f"go to PS). When in doubt, prefer {pillar_id}."
+    )
+
+
 # =============================================================================
 # SignalAgentService
 # =============================================================================
@@ -616,8 +653,12 @@ class SignalAgentService:
                             "None found. You may need to create new signals."
                         )
 
-                    # Build messages
+                    # Build messages — the pillar prior tells the agent
+                    # the batch's seeding pillar (when known) so it
+                    # defaults create_signal.pillar_id to that pillar
+                    # rather than picking free-form from the 6-code enum.
                     system_message = SIGNAL_AGENT_SYSTEM_PROMPT.format(
+                        batch_pillar_hint=_render_pillar_prior(pillar_id),
                         existing_signals=existing_text,
                         source_summaries=source_summaries,
                     )
@@ -833,23 +874,60 @@ class SignalAgentService:
         """
         Group sources by their primary strategic pillar.
 
-        Uses the first pillar from analysis.pillars, falling back to
-        triage.primary_pillar, then to "UNKNOWN".
+        Resolution priority:
+          1. ``source.pillar_code`` — seeding-pillar hint set by the
+             discovery pipeline when a source comes from a pillar-targeted
+             query (e.g., the balance dispatcher). This is the operator's
+             intent, so it wins over the analysis-derived label.
+          2. ``analysis.pillars[0]`` — lens classifier's primary pillar.
+          3. ``triage.primary_pillar`` — earliest-pass triage label.
+          4. ``"UNKNOWN"`` — fallback.
+
+        Before this change the batcher used (2) and (3) only, which let
+        an LLM mislabel slip past the seeding intent — an HH-seeded
+        batch could end up grouped under MC because one article's
+        analysis returned MC. The seeding hint now wins.
         """
         batches: Dict[str, List[ProcessedSource]] = defaultdict(list)
 
         for source in sources:
             pillar = None
 
-            # Try analysis pillars first
-            if source.analysis and source.analysis.pillars:
+            # 1. Seeding-pillar hint — operator intent. The discovery
+            #    pipeline stamps ``pillar_code`` dynamically on the
+            #    ``RawSource`` instance (see ``discovery_service.py``
+            #    around line 2239). ``ProcessedSource`` wraps that as
+            #    ``.raw`` without copying the dynamic attribute, so we
+            #    look at ``source.raw.pillar_code`` first, with a
+            #    fallback to ``source.pillar_code`` to keep tests and
+            #    any direct-on-ProcessedSource callers working.
+            raw = getattr(source, "raw", None)
+            hint = getattr(raw, "pillar_code", None) if raw is not None else None
+            if hint is None:
+                hint = getattr(source, "pillar_code", None)
+            if isinstance(hint, str):
+                if hint in PILLAR_NAMES:
+                    pillar = hint
+                elif hint.strip():
+                    # Non-empty but unrecognized hint: config drift
+                    # (typo, deprecated code, case mismatch). Surface
+                    # it so misconfigurations don't silently fall
+                    # through to analysis without anyone noticing.
+                    logger.warning(
+                        "Seeding pillar hint %r is not in PILLAR_NAMES; "
+                        "falling back to analysis/triage for this source",
+                        hint,
+                    )
+
+            # 2. Lens-classifier primary pillar.
+            if not pillar and source.analysis and source.analysis.pillars:
                 pillar = source.analysis.pillars[0]
 
-            # Fall back to triage primary pillar
+            # 3. Triage primary pillar.
             if not pillar and source.triage and source.triage.primary_pillar:
                 pillar = source.triage.primary_pillar
 
-            # Final fallback
+            # 4. Final fallback.
             if not pillar:
                 pillar = "UNKNOWN"
 
