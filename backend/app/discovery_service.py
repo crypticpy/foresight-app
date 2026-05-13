@@ -1072,6 +1072,12 @@ class DiscoveryService:
     7. Auto-approve high-confidence discoveries
     """
 
+    # Single source of truth for the query batch size used in
+    # _execute_searches. The outer step-level timeout in run() derives
+    # num_batches from this value; keeping them in sync prevents an
+    # under-estimated wrapper timeout from firing mid-batch.
+    _QUERY_BATCH_SIZE = 5
+
     def __init__(
         self,
         supabase: Client,
@@ -1234,21 +1240,30 @@ class DiscoveryService:
                     f"{categories_fetched}/5 categories in {processing_time.multi_source_fetch_seconds:.2f}s"
                 )
 
-            # Step 2b: Execute query-based searches (traditional GPT Researcher + Exa)
-            # Note: This step depends on Firecrawl. If Firecrawl is down/out of credits,
-            # individual queries will timeout at 120s each. We also cap total step time at 5min.
+            # Step 2b: Execute query-based searches (Serper-first + gpt-researcher).
+            # Each query has a 210s inner cap; queries run in batches of 5
+            # concurrently inside ``_execute_searches``. The outer cap scales
+            # with the number of batches (~240s/batch budget = inner 210s + the
+            # 1s inter-batch sleep + dedup/gather overhead) and clamps at 1200s
+            # so a runaway can't hang the discovery run. Without scaling, a
+            # 300s wrapper used to fire mid-second-batch and discard every
+            # accumulated query_source — the new ceiling fits multi-batch runs.
             if queries:
                 step_start = datetime.now(timezone.utc)
+                planned_queries = queries[: config.max_queries_per_run]
+                batch_size = self._QUERY_BATCH_SIZE
+                num_batches = (len(planned_queries) + batch_size - 1) // batch_size
+                per_batch_budget = 240
+                search_step_timeout = min(1200, max(300, num_batches * per_batch_budget))
                 try:
                     query_sources, query_cost = await asyncio.wait_for(
-                        self._execute_searches(
-                            queries[: config.max_queries_per_run], config
-                        ),
-                        timeout=300,  # 5 minute total cap for query-based searches
+                        self._execute_searches(planned_queries, config),
+                        timeout=search_step_timeout,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Query-based search step timed out after 300s - continuing with multi-source results only"
+                        f"Query-based search step timed out after {search_step_timeout}s "
+                        f"({num_batches} batches) - continuing with multi-source results only"
                     )
                     query_sources, query_cost = [], 0.0
                 search_cost += query_cost
@@ -2151,7 +2166,7 @@ class DiscoveryService:
         seen_urls = set()
 
         # Process queries in batches to avoid rate limits
-        batch_size = 5
+        batch_size = self._QUERY_BATCH_SIZE
         for i in range(0, len(queries), batch_size):
             batch = queries[i : i + batch_size]
 
@@ -2199,13 +2214,20 @@ class DiscoveryService:
             Tuple of (sources, cost)
         """
         try:
-            # Use the research service's discovery method with timeout
-            # GPT Researcher can hang if Firecrawl is down/out of credits
+            # The discovery pipeline only consumes the source list; the synthesized
+            # report is discarded. Skip write_report (saves up to 60s/query) and
+            # give the inner Serper+gpt-researcher chain room to finish: Serper
+            # baseline (≤30s, up to 10 sequential crawls) + gpt-researcher
+            # conduct_research (≤150s) ≈ 180s nominal. Outer timeout sits at 210s
+            # to leave headroom for dedup/title-gen overhead so a successful inner
+            # run isn't cancelled by the wrapper.
             sources, _report, cost = await asyncio.wait_for(
                 self.research_service._discover_sources(
-                    query=query.query_text, report_type="research_report"
+                    query=query.query_text,
+                    report_type="research_report",
+                    skip_report=True,
                 ),
-                timeout=120,  # 2 minute timeout per query
+                timeout=210,
             )
 
             # Limit sources per query
@@ -2222,7 +2244,7 @@ class DiscoveryService:
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"Search timed out for query '{query.query_text[:50]}...' (120s)"
+                f"Search timed out for query '{query.query_text[:50]}...' (210s)"
             )
             return [], 0.0
         except Exception as e:

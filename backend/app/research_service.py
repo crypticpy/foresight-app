@@ -19,7 +19,7 @@ Research Types:
 import asyncio
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from gpt_researcher import GPTResearcher
@@ -28,14 +28,6 @@ import openai
 
 if TYPE_CHECKING:
     from app.job_events import JobEventEmitter
-
-# Optional imports for enhanced source fetching
-try:
-    from exa_py import Exa
-
-    EXA_AVAILABLE = True
-except ImportError:
-    EXA_AVAILABLE = False
 
 from .ai_service import AIService, AnalysisResult, TriageResult
 
@@ -108,6 +100,12 @@ def _configure_gpt_researcher_for_openai():
 
 # Configure GPT Researcher on module load
 _configure_gpt_researcher_for_openai()
+
+# Tavily Extract was decommissioned; route gpt-researcher scraping through
+# BeautifulSoup. Set once at import time to avoid mutating global process
+# state from inside async request handlers (would otherwise race across
+# concurrent _discover_sources calls).
+os.environ["SCRAPER"] = "bs"
 
 
 # ============================================================================
@@ -237,15 +235,6 @@ class ResearchService:
         self.supabase = supabase
         self.openai_client = openai_client
         self.ai_service = AIService(openai_client)
-
-        # Initialize Exa if available
-        self.exa = None
-        if EXA_AVAILABLE and os.getenv("EXA_API_KEY"):
-            try:
-                self.exa = Exa(os.getenv("EXA_API_KEY"))
-                logger.info("Exa AI initialized for enhanced search")
-            except Exception as e:
-                logger.warning(f"Exa initialization failed: {e}")
 
     # ========================================================================
     # Card Snapshots — version history before overwrites
@@ -383,216 +372,165 @@ class ResearchService:
         query: str,
         report_type: str = "research_report",
         existing_source_urls: Optional[List[str]] = None,
-    ) -> Tuple[List[RawSource], str, float]:
+        skip_report: bool = False,
+    ) -> Tuple[List[RawSource], Optional[str], float]:
         """
-        Use GPT Researcher to discover sources, enhanced with Serper + crawler.
+        Discover sources via Serper-first search, then gpt-researcher for depth.
+
+        Order matters: Serper runs synchronously first and gives us a fast,
+        reliable URL baseline (~30s, ~10 sources). gpt-researcher then expands
+        on that baseline for synthesis-quality depth. If gpt-researcher times
+        out we still return the Serper baseline rather than empty hands — the
+        previous order (gpt-researcher first, Serper as fallback) had Serper
+        blocked behind a 120s outer timeout that rarely allowed it to run.
 
         Args:
             query: Research query (customized for municipal focus)
             report_type: 'research_report' for quick, 'detailed_report' for deep
+            existing_source_urls: If provided, gpt-researcher complements these
+                rather than searching from scratch.
+            skip_report: When True, skip ``write_report`` (saves up to 60s per
+                call). Use for source-discovery-only paths that discard the
+                report (e.g. the discovery pipeline). Card-update and deep-
+                research paths leave this False because they consume ``report``.
 
         Returns:
-            Tuple of (sources, report_text, cost)
+            Tuple of (sources, report_text_or_none, cost)
         """
-        # Tavily Extract is decommissioned — fall back to BeautifulSoup scraping.
-        os.environ["SCRAPER"] = "bs"
+        sources: List[RawSource] = []
+        # Seed dedupe from the caller's existing-source list so the Serper-first
+        # phase doesn't re-add URLs already on the card (deep-research /
+        # card-update paths) and waste crawl/triage budget on duplicates that
+        # ``_store_source`` would only drop later. New URLs we add below also
+        # accumulate into this set so the gpt-researcher dedup downstream keeps
+        # working.
+        seen_urls: set[str] = {url for url in (existing_source_urls or []) if url}
 
-        researcher = GPTResearcher(
-            query=query,
-            report_type=report_type,
-            max_subtopics=10,
-            source_urls=existing_source_urls or None,
-            complement_source_urls=bool(existing_source_urls),
-            verbose=False,
-        )
-
-        # Wrap GPT Researcher calls with timeouts to prevent indefinite hangs
-        try:
-            await asyncio.wait_for(researcher.conduct_research(), timeout=300)
-            report = await asyncio.wait_for(researcher.write_report(), timeout=120)
-            raw_sources = researcher.get_research_sources()
-            costs = researcher.get_costs()
-        except asyncio.TimeoutError:
-            logger.warning(
-                "GPT Researcher timed out during conduct_research/write_report"
-            )
-            raw_sources = []
-            report = None
-            costs = 0.0
-        except (TypeError, ValueError) as e:
-            # Handle case where LLM returns None or invalid response
-            logger.warning(f"GPT Researcher failed (likely LLM timeout): {e}")
-            raw_sources = []
-            report = None
-            costs = 0.0
-        except Exception as e:
-            logger.error(f"GPT Researcher unexpected error: {e}")
-            raw_sources = []
-            report = None
-            costs = 0.0
-
-        # Convert to our RawSource format
-        sources = []
-        seen_urls = set()
-        for src in raw_sources:
-            url = src.get("url", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-
-                # Extract title - GPT Researcher may return empty title for PDFs
-                raw_title = src.get("title", "") or ""
-
-                # If title is empty or just whitespace, try to extract from URL or content
-                if not raw_title.strip():
-                    # Try LLM-based title generation if content is available
-                    content_for_title = src.get("content", "") or ""
-                    if content_for_title and len(content_for_title) > 50:
-                        try:
-                            raw_title = await self.ai_service.generate_source_title(
-                                url=url,
-                                content_snippet=content_for_title[:1000],
-                            )
-                            logger.debug(f"LLM-generated title: {raw_title}")
-                        except Exception:
-                            pass
-
-                    # Fallback: extract from URL filename for PDFs
-                    if not raw_title.strip() and url.lower().endswith(".pdf"):
-                        from urllib.parse import urlparse, unquote
-
-                        path = urlparse(url).path
-                        filename = unquote(path.split("/")[-1])
-                        raw_title = (
-                            filename.replace(".pdf", "")
-                            .replace("_", " ")
-                            .replace("-", " ")
-                            .strip()
-                        )
-                        logger.debug(f"PDF title from URL: {raw_title}")
-
-                    # If still empty, use "Untitled"
-                    if not raw_title.strip():
-                        raw_title = "Untitled"
-
-                # Log source data for debugging
-                logger.debug(
-                    f"Source from GPT Researcher: url={url[:80]}, title={raw_title[:50] if raw_title else 'EMPTY'}, keys={list(src.keys())}"
-                )
-
-                sources.append(
-                    RawSource(
-                        url=url,
-                        title=raw_title,
-                        content=src.get("content", "") or "",
-                        source_name=src.get("source", "") or src.get("domain", ""),
-                        relevance=src.get("relevance", src.get("score", 0.7)),
-                    )
-                )
-
-        logger.info(f"GPT Researcher found {len(sources)} sources")
-
-        # Supplement with Serper search for additional high-quality sources (primary supplement)
+        # 1) Serper-first baseline — quick, deterministic, no LLM in the loop.
         try:
             serper_sources = await self._search_with_serper(query, num_results=10)
             for src in serper_sources:
-                if src.url not in seen_urls:
+                if src.url and src.url not in seen_urls:
                     seen_urls.add(src.url)
                     sources.append(src)
-            if serper_sources:
-                logger.info(f"Serper added {len(serper_sources)} additional sources")
+            logger.info(
+                f"Serper baseline found {len(sources)} sources for: {query[:60]}"
+            )
         except Exception as e:
-            logger.warning(
-                f"Serper search failed (continuing with GPT Researcher sources): {e}"
-            )
+            logger.warning(f"Serper baseline failed (continuing without it): {e}")
 
-        # Exa neural search as FALLBACK — only when Tavily+Serper didn't find enough
-        MIN_SOURCES_BEFORE_EXA = 10
-        if len(sources) < MIN_SOURCES_BEFORE_EXA:
-            logger.info(
-                f"Only {len(sources)} sources from Tavily+Serper (need {MIN_SOURCES_BEFORE_EXA}), falling back to Exa"
+        # 2) gpt-researcher for depth — adds subtopic-expanded discovery. Wrapped
+        # in tolerant timeouts so a slow research pass never wipes out the
+        # baseline above. (SCRAPER env is set once at module load above.)
+        report: Optional[str] = None
+        costs = 0.0
+        raw_sources: List[Dict[str, Any]] = []
+        try:
+            researcher = GPTResearcher(
+                query=query,
+                report_type=report_type,
+                # max_subtopics was 10, which fans each query out into ~50 crawls
+                # and reliably blew the per-query budget for broad balance queries.
+                # 5 still gives meaningful breadth.
+                max_subtopics=5,
+                source_urls=existing_source_urls or None,
+                complement_source_urls=bool(existing_source_urls),
+                verbose=False,
             )
-            try:
-                exa_sources = await self._search_with_exa(query, num_results=10)
-                exa_added = 0
-                for src in exa_sources:
-                    if src.url not in seen_urls:
-                        seen_urls.add(src.url)
-                        sources.append(src)
-                        exa_added += 1
-                if exa_added:
-                    logger.info(f"Exa fallback added {exa_added} additional sources")
-            except Exception as e:
-                logger.warning(f"Exa fallback search failed: {e}")
-        else:
-            logger.info(
-                f"Tavily+Serper found {len(sources)} sources, skipping Exa (cost savings)"
+            await asyncio.wait_for(researcher.conduct_research(), timeout=150)
+            # Read sources/costs FIRST so a write_report failure (timeout, LLM
+            # error, etc.) doesn't discard the conduct_research output.
+            raw_sources = researcher.get_research_sources() or []
+            costs = researcher.get_costs() or 0.0
+            if not skip_report:
+                try:
+                    report = await asyncio.wait_for(
+                        researcher.write_report(), timeout=60
+                    )
+                    # Refresh costs after write_report: gpt-researcher only
+                    # accumulates report-generation LLM spend into
+                    # research_costs once write_report's awaited calls
+                    # complete, so the pre-write_report snapshot above
+                    # excludes it.
+                    costs = researcher.get_costs() or costs
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "GPT Researcher write_report timed out; "
+                        "keeping conduct_research sources, report=None"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"GPT Researcher write_report failed: {e}; "
+                        "keeping conduct_research sources, report=None"
+                    )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "GPT Researcher conduct_research timed out; "
+                "returning Serper baseline only"
             )
+        except (TypeError, ValueError) as e:
+            logger.warning(f"GPT Researcher failed (likely LLM error): {e}")
+        except Exception as e:
+            logger.error(f"GPT Researcher unexpected error: {e}")
+
+        gptr_added = 0
+        for src in raw_sources:
+            url = src.get("url", "")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            raw_title = (src.get("title") or "").strip()
+            if not raw_title:
+                content_for_title = src.get("content", "") or ""
+                if content_for_title and len(content_for_title) > 50:
+                    try:
+                        raw_title = await self.ai_service.generate_source_title(
+                            url=url,
+                            content_snippet=content_for_title[:1000],
+                        )
+                    except Exception:
+                        pass
+
+                if not raw_title and url.lower().endswith(".pdf"):
+                    from urllib.parse import urlparse, unquote
+
+                    filename = unquote(urlparse(url).path.split("/")[-1])
+                    raw_title = (
+                        filename.replace(".pdf", "")
+                        .replace("_", " ")
+                        .replace("-", " ")
+                        .strip()
+                    )
+
+                if not raw_title:
+                    raw_title = "Untitled"
+
+            sources.append(
+                RawSource(
+                    url=url,
+                    title=raw_title,
+                    content=src.get("content", "") or "",
+                    source_name=src.get("source", "") or src.get("domain", ""),
+                    relevance=src.get("relevance", src.get("score", 0.7)),
+                )
+            )
+            gptr_added += 1
+
+        if gptr_added:
+            logger.info(f"GPT Researcher added {gptr_added} additional sources")
 
         return sources, report, costs
-
-    async def _search_with_exa(
-        self, query: str, num_results: int = 10
-    ) -> List[RawSource]:
-        """
-        Search with Exa AI neural search for high-quality sources with content.
-
-        Args:
-            query: Search query
-            num_results: Max number of results
-
-        Returns:
-            List of RawSource with content included
-        """
-        if not self.exa:
-            return []
-
-        try:
-            # Calculate date range (last 180 days for broader coverage)
-            start_date = (datetime.now(timezone.utc) - timedelta(days=180)).strftime(
-                "%Y-%m-%d"
-            )
-
-            # Exa search with content retrieval
-            results = self.exa.search_and_contents(
-                query,
-                num_results=num_results,
-                start_published_date=start_date,
-                type="neural",
-                text=True,
-                highlights=True,
-            )
-
-            sources = []
-            for result in results.results:
-                # Combine text and highlights for content
-                content = result.text or ""
-                if result.highlights:
-                    content = "\n\n".join(result.highlights) + "\n\n" + content
-
-                sources.append(
-                    RawSource(
-                        url=result.url,
-                        title=result.title or "Untitled",
-                        content=content[:10000],  # Limit content size
-                        source_name=result.author or "",
-                        relevance=result.score if hasattr(result, "score") else 0.8,
-                    )
-                )
-
-            return sources
-
-        except Exception as e:
-            logger.warning(f"Exa search error: {e}")
-            return []
 
     async def _search_with_serper(
         self, query: str, num_results: int = 5
     ) -> List[RawSource]:
         """
-        Search with Serper + crawler for supplementary sources.
+        Search with Serper + crawler for source discovery.
 
-        Uses Serper for web + news search and the unified crawler module
-        for full-text extraction.
+        Runs first inside ``_discover_sources`` to establish a deterministic
+        URL baseline before gpt-researcher; uses Serper for web + news search
+        and the unified crawler module for full-text extraction.
 
         Args:
             query: Search query
@@ -609,7 +547,7 @@ class ResearchService:
         from .crawler import crawl_url
 
         if not search_available():
-            logger.warning("No search provider available for supplementary search")
+            logger.warning("No search provider available for Serper baseline search")
             return []
 
         sources = []
@@ -1703,7 +1641,7 @@ class ResearchService:
                 peer_query = (
                     f'"{card["name"]}" ({" OR ".join(peer_cities)}) city implementation'
                 )
-                peer_sources = await self._search_with_serper(peer_query, max_results=5)
+                peer_sources = await self._search_with_serper(peer_query, num_results=5)
                 if peer_sources:
                     sources.extend(peer_sources)
                     logger.info(f"Peer city search added {len(peer_sources)} sources")
@@ -1772,7 +1710,7 @@ class ResearchService:
                         f'"{q}"' for q in follow_up_queries[:3]
                     )
                     round_2_sources = await self._search_with_serper(
-                        combined_query, max_results=10
+                        combined_query, num_results=10
                     )
                     if round_2_sources:
                         round_2_sources = await self._backfill_content(round_2_sources)
