@@ -185,6 +185,7 @@ def test_cache_miss_invokes_llm_and_persists():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate across the city.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
@@ -210,6 +211,7 @@ def test_stale_version_invalidates_cache():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": ["old one"],
             "query_aliases_version": "lens-v0|prompt:v0",
         }
@@ -230,6 +232,7 @@ def test_force_bypasses_matching_cache():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": ["cached"],
             "query_aliases_version": svc._cache_version(),
         }
@@ -305,6 +308,7 @@ def test_llm_returns_garbage_surfaces_derivation_error():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
@@ -338,6 +342,7 @@ def test_persist_failure_does_not_block_return():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
