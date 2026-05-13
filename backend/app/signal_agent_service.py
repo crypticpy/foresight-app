@@ -893,12 +893,31 @@ class SignalAgentService:
         for source in sources:
             pillar = None
 
-            # 1. Seeding-pillar hint — operator intent. Set dynamically
-            #    by discovery_service (see backend/app/discovery_service.py
-            #    around line 2239), so we guard with getattr.
-            hint = getattr(source, "pillar_code", None)
-            if isinstance(hint, str) and hint in PILLAR_NAMES:
-                pillar = hint
+            # 1. Seeding-pillar hint — operator intent. The discovery
+            #    pipeline stamps ``pillar_code`` dynamically on the
+            #    ``RawSource`` instance (see ``discovery_service.py``
+            #    around line 2239). ``ProcessedSource`` wraps that as
+            #    ``.raw`` without copying the dynamic attribute, so we
+            #    look at ``source.raw.pillar_code`` first, with a
+            #    fallback to ``source.pillar_code`` to keep tests and
+            #    any direct-on-ProcessedSource callers working.
+            raw = getattr(source, "raw", None)
+            hint = getattr(raw, "pillar_code", None) if raw is not None else None
+            if hint is None:
+                hint = getattr(source, "pillar_code", None)
+            if isinstance(hint, str):
+                if hint in PILLAR_NAMES:
+                    pillar = hint
+                elif hint.strip():
+                    # Non-empty but unrecognized hint: config drift
+                    # (typo, deprecated code, case mismatch). Surface
+                    # it so misconfigurations don't silently fall
+                    # through to analysis without anyone noticing.
+                    logger.warning(
+                        "Seeding pillar hint %r is not in PILLAR_NAMES; "
+                        "falling back to analysis/triage for this source",
+                        hint,
+                    )
 
             # 2. Lens-classifier primary pillar.
             if not pillar and source.analysis and source.analysis.pillars:

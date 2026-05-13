@@ -20,8 +20,10 @@ into production as a ``KeyError`` at request time.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import List, Optional
 from unittest.mock import MagicMock
@@ -50,8 +52,22 @@ class _StubTriage:
     primary_pillar: Optional[str] = None
 
 
+class _StubRaw:
+    """Stand-in for RawSource — discovery stamps pillar_code on this."""
+
+    def __init__(self, pillar_code: Optional[str] = None):
+        if pillar_code is not None:
+            self.pillar_code = pillar_code
+
+
 class _StubSource:
-    """Stand-in for ProcessedSource matching the attributes the batcher reads."""
+    """Stand-in for ProcessedSource matching the attributes the batcher reads.
+
+    Discovery sets ``pillar_code`` on the ``RawSource`` (i.e. ``source.raw``),
+    not on the ``ProcessedSource`` itself. By default the stub mirrors that:
+    ``pillar_code`` lands on ``self.raw``. Callers that want to exercise the
+    ProcessedSource-level fallback can pass ``hint_on_self=True``.
+    """
 
     def __init__(
         self,
@@ -59,10 +75,12 @@ class _StubSource:
         pillar_code: Optional[str] = None,
         analysis_pillars: Optional[List[str]] = None,
         triage_primary: Optional[str] = None,
+        hint_on_self: bool = False,
     ):
-        # Mirror discovery_service's dynamic assignment: only set the
-        # attribute when the discovery pipeline actually had a hint.
-        if pillar_code is not None:
+        self.raw = _StubRaw(
+            pillar_code=None if hint_on_self else pillar_code
+        )
+        if hint_on_self and pillar_code is not None:
             self.pillar_code = pillar_code
         self.analysis = (
             _StubAnalysis(pillars=analysis_pillars)
@@ -151,6 +169,95 @@ def test_phase1_unknown_when_nothing_is_set():
     batches = service._phase1_batch_by_pillar(sources)
 
     assert list(batches.keys()) == ["UNKNOWN"]
+
+
+def test_phase1_seeding_hint_on_raw_wins_over_analysis():
+    """Production path: discovery_service stamps pillar_code on RawSource.
+
+    The batcher must read ``source.raw.pillar_code`` — checking only
+    ``source.pillar_code`` would silently return None for every real
+    ProcessedSource and re-introduce the coverage leak this PR fixes.
+    """
+    sources = [
+        _StubSource(pillar_code="HH", analysis_pillars=["MC"]),
+        _StubSource(pillar_code="HH", analysis_pillars=["MC", "HG"]),
+    ]
+    service = _make_service()
+
+    batches = service._phase1_batch_by_pillar(sources)
+
+    assert set(batches.keys()) == {"HH"}
+    assert len(batches["HH"]) == 2
+
+
+def test_phase1_seeding_hint_on_processed_source_also_works():
+    """Direct-on-ProcessedSource fallback: kept for callers that set the
+    hint at the ProcessedSource level instead of on .raw.
+    """
+    sources = [
+        _StubSource(pillar_code="EW", analysis_pillars=["MC"], hint_on_self=True),
+    ]
+    service = _make_service()
+
+    batches = service._phase1_batch_by_pillar(sources)
+
+    assert list(batches.keys()) == ["EW"]
+
+
+@contextmanager
+def _capture_signal_agent_warnings():
+    """Capture warning records from the signal_agent_service logger.
+
+    Standalone helper so individual tests don't have to depend on pytest's
+    ``caplog`` fixture wiring (which interacts oddly with sub-loggers in
+    some configurations).
+    """
+    records: list[logging.LogRecord] = []
+
+    class _Handler(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Handler(level=logging.WARNING)
+    target = logging.getLogger("app.signal_agent_service")
+    target.addHandler(handler)
+    prev_level = target.level
+    target.setLevel(logging.WARNING)
+    try:
+        yield records
+    finally:
+        target.removeHandler(handler)
+        target.setLevel(prev_level)
+
+
+def test_phase1_invalid_hint_logs_warning():
+    """Unrecognized non-empty hints must surface in logs so config drift
+    (typo, case mismatch, deprecated code) is visible instead of silent."""
+    sources = [
+        _StubSource(pillar_code="ZZ", analysis_pillars=["MC"]),
+        _StubSource(pillar_code="hh", analysis_pillars=["PS"]),  # case mismatch
+    ]
+    service = _make_service()
+
+    with _capture_signal_agent_warnings() as records:
+        service._phase1_batch_by_pillar(sources)
+
+    warnings = [r for r in records if r.levelno == logging.WARNING]
+    assert any("ZZ" in r.getMessage() for r in warnings)
+    assert any("hh" in r.getMessage() for r in warnings)
+
+
+def test_phase1_empty_string_hint_does_not_log():
+    """An empty-string hint is treated as no hint, not config drift —
+    don't spam warnings for benign cases.
+    """
+    sources = [_StubSource(pillar_code="", analysis_pillars=["HG"])]
+    service = _make_service()
+
+    with _capture_signal_agent_warnings() as records:
+        service._phase1_batch_by_pillar(sources)
+
+    assert not any(r.levelno == logging.WARNING for r in records)
 
 
 def test_phase1_invalid_hint_falls_through():
