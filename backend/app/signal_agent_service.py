@@ -1573,16 +1573,38 @@ class SignalAgentService:
         auto_approved = 0
 
         max_new_cards = getattr(config, "max_new_cards_per_run", 15)
+        global_ceiling = getattr(config, "max_new_cards_total", 60)
         auto_approve_threshold = getattr(config, "auto_approve_threshold", 0.95)
-        cards_created = 0
+        # Per-pillar counter — the agent prompt already promises each batch
+        # "up to {max_new_cards} new signals total", so the enforcement at
+        # execution time must match that mental model. A single global counter
+        # starves whichever pillar's actions land last (PR #87).
+        cards_created_per_pillar: Dict[str, int] = defaultdict(int)
+        cards_created_total = 0
 
         for action in actions:
             try:
                 if action.action_type == "create_signal":
-                    # Enforce card creation limit
-                    if cards_created >= max_new_cards:
+                    props = action.signal_properties or {}
+                    raw_pillar = props.get("pillar_id")
+                    # Normalize: only canonical VALID_PILLAR_IDS get their own
+                    # bucket. Missing, empty, or malformed values share UNKNOWN
+                    # so a typo'd code can't silently dilute cap enforcement.
+                    if isinstance(raw_pillar, str):
+                        candidate = raw_pillar.strip().upper()
+                    else:
+                        candidate = ""
+                    pillar = candidate if candidate in VALID_PILLAR_IDS else "UNKNOWN"
+                    if cards_created_per_pillar[pillar] >= max_new_cards:
                         logger.warning(
-                            f"Signal agent: Card creation limit ({max_new_cards}) "
+                            f"Signal agent: Per-pillar card limit ({max_new_cards}) "
+                            f"reached for {pillar}, skipping signal "
+                            f"'{action.signal_name}'"
+                        )
+                        continue
+                    if cards_created_total >= global_ceiling:
+                        logger.warning(
+                            f"Signal agent: Global card ceiling ({global_ceiling}) "
                             f"reached, skipping signal '{action.signal_name}'"
                         )
                         continue
@@ -1592,7 +1614,8 @@ class SignalAgentService:
                     )
                     if card_id:
                         signals_created.append(card_id)
-                        cards_created += 1
+                        cards_created_per_pillar[pillar] += 1
+                        cards_created_total += 1
 
                         # Track auto-approvals
                         if action.confidence >= auto_approve_threshold:
