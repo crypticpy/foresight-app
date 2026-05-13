@@ -185,6 +185,7 @@ def test_cache_miss_invokes_llm_and_persists():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate across the city.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
@@ -210,6 +211,7 @@ def test_stale_version_invalidates_cache():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": ["old one"],
             "query_aliases_version": "lens-v0|prompt:v0",
         }
@@ -230,6 +232,7 @@ def test_force_bypasses_matching_cache():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": ["cached"],
             "query_aliases_version": svc._cache_version(),
         }
@@ -305,6 +308,7 @@ def test_llm_returns_garbage_surfaces_derivation_error():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
@@ -338,6 +342,7 @@ def test_persist_failure_does_not_block_return():
             "code": "PS.1",
             "name": "Reduce violent crime",
             "description": "Lower the violent crime rate.",
+            "pillar_code": "PS",
             "query_aliases": [],
             "query_aliases_version": None,
         }
@@ -348,3 +353,91 @@ def test_persist_failure_does_not_block_return():
         svc.derive_queries(uuid.UUID(gid), supabase=sb, openai_client=oc)
     )
     assert out == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Pillar anchoring (v2 prompt)
+# ---------------------------------------------------------------------------
+
+
+def test_pillar_label_known_code_includes_full_name():
+    assert svc._pillar_label({"pillar_code": "PS"}) == "PS (Public Safety)"
+    assert (
+        svc._pillar_label({"pillar_code": "HH"})
+        == "HH (Homelessness & Housing)"
+    )
+
+
+def test_pillar_label_normalizes_case_and_whitespace():
+    assert svc._pillar_label({"pillar_code": "ps"}) == "PS (Public Safety)"
+    assert svc._pillar_label({"pillar_code": " hh "}) == "HH (Homelessness & Housing)"
+
+
+def test_pillar_label_unknown_code_returns_bare_code():
+    assert svc._pillar_label({"pillar_code": "ZZ"}) == "ZZ"
+
+
+def test_pillar_label_missing_or_empty_returns_blank():
+    assert svc._pillar_label({"pillar_code": ""}) == ""
+    assert svc._pillar_label({"pillar_code": None}) == ""
+    assert svc._pillar_label({}) == ""
+
+
+def test_user_prompt_includes_pillar_anchor():
+    prompt = svc._user_prompt(
+        "Reduce violent crime",
+        "Lower the violent crime rate citywide.",
+        "PS (Public Safety)",
+    )
+    assert "Seeding pillar: PS (Public Safety)" in prompt
+    assert "PS (Public Safety) practitioner" in prompt
+    assert "recognizably about PS (Public Safety)" in prompt
+
+
+def test_user_prompt_pillar_unknown_falls_back_to_placeholder():
+    prompt = svc._user_prompt("g", "d", "")
+    assert "(pillar unknown)" in prompt
+
+
+def test_llm_call_receives_pillar_label_for_goal():
+    """End-to-end: a cache miss must send a user prompt anchored to the
+    seeding pillar so the model produces pillar-specific vocabulary
+    instead of cross-pillar topical phrasing (the v1->v2 regression).
+    """
+    gid = str(uuid.uuid4())
+    sb = _FakeSupabase([
+        {
+            "id": gid,
+            "code": "HH.1",
+            "name": "Equitable complete communities",
+            "description": "Expand affordable housing supply.",
+            "pillar_code": "HH",
+            "query_aliases": [],
+            "query_aliases_version": None,
+        }
+    ])
+    oc = _make_oc(
+        _make_llm_response(
+            '["LIHTC pipeline Austin", "Section 8 voucher utilization"]'
+        )
+    )
+
+    asyncio.run(
+        svc.derive_queries(uuid.UUID(gid), supabase=sb, openai_client=oc)
+    )
+
+    create = oc.chat.completions.create
+    create.assert_awaited_once()
+    messages = create.await_args.kwargs["messages"]
+    user_content = next(m["content"] for m in messages if m["role"] == "user")
+    assert "Seeding pillar: HH (Homelessness & Housing)" in user_content
+    assert "HH (Homelessness & Housing) practitioner" in user_content
+
+
+def test_prompt_version_bumped_to_v2():
+    """Guard against accidental rollback: a v1 cache stamp must not match
+    the live version, otherwise stale cross-pillar aliases would persist
+    across the prompt-anchoring upgrade.
+    """
+    assert svc.PROMPT_VERSION == "v2"
+    assert "prompt:v2" in svc._cache_version()

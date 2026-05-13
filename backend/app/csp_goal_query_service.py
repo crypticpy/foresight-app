@@ -45,6 +45,7 @@ from app.openai_provider import (
     get_chat_mini_deployment,
     openai_async_client as default_openai_client,
 )
+from app.taxonomy import PILLAR_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,15 @@ MAX_QUERY_LENGTH = 120
 
 # Prompt version is part of the cache key — bump it when the system prompt
 # below changes so the next call invalidates stale aliases.
-PROMPT_VERSION = "v1"
+#
+# v2 (2026-05-13): the v1 prompt produced broad topical queries
+# ("equitable complete communities", "affordable housing development policy")
+# that surfaced cross-pillar content — HH-seeded queries returned
+# Complete-Streets/15-min-city sources, which the classifier then assigned
+# to MC instead of HH. v2 anchors every query to the seeding pillar by
+# demanding pillar-specific program names, statutory levers, and proper
+# nouns instead of generic topical phrases.
+PROMPT_VERSION = "v2"
 
 
 class QueryDerivationError(RuntimeError):
@@ -84,22 +93,41 @@ class GoalNotFoundError(QueryDerivationError):
 def _system_prompt() -> str:
     return (
         "You generate concise web-search queries for a municipal-government "
-        "strategic-foresight system. Each query should surface news, "
-        "research, or public-sector reports relevant to the goal. Prefer "
-        "two-to-six-word phrases. Avoid quotes, boolean operators, and "
-        "site: filters. Cover slightly different angles per query (policy, "
-        "technology, programs, peer cities) — do not just rephrase the "
-        "goal name. Return ONLY a JSON array of strings — no preamble, no "
-        "trailing prose, no markdown fences."
+        "strategic-foresight system. Each query must surface news, "
+        "research, or public-sector reports about the **specific strategic "
+        "pillar** the goal belongs to — not adjacent or fashionable "
+        "municipal topics.\n\n"
+        "RULES:\n"
+        "1. Prefer two-to-six-word phrases. No quotes, boolean operators, "
+        "or site: filters.\n"
+        "2. Anchor every query to the seeding pillar with pillar-specific "
+        "vocabulary: program names (e.g. LIHTC, Section 8, Percent-for-Art, "
+        "Vision Zero, CIT, Coordinated Entry), statutory levers (e.g. "
+        "inclusionary zoning, housing trust fund, TIF district), or "
+        "domain-of-art proper nouns. Avoid generic municipal phrases that "
+        "fire across pillars ('complete communities', '15-minute city', "
+        "'equitable access') unless paired with a pillar-specific modifier.\n"
+        "3. Cover different angles per query (policy levers, peer-city "
+        "programs, current legislation, research/evaluation, "
+        "technology/tooling) — do NOT just rephrase the goal name.\n"
+        "4. Each query should be one a domain practitioner in that pillar "
+        "would actually type. If the same query would make sense to "
+        "practitioners in three different pillars, rewrite it tighter.\n\n"
+        "Return ONLY a JSON array of strings — no preamble, no trailing "
+        "prose, no markdown fences."
     )
 
 
-def _user_prompt(name: str, description: str) -> str:
+def _user_prompt(name: str, description: str, pillar_label: str) -> str:
     desc = (description or "").strip() or "(no description provided)"
+    pillar = pillar_label.strip() or "(pillar unknown)"
     return (
+        f"Seeding pillar: {pillar}\n"
         f"Goal name: {name.strip()}\n"
         f"Goal description: {desc}\n\n"
-        f"Return {MIN_QUERIES}-{MAX_QUERIES} search queries as a JSON array."
+        f"Return {MIN_QUERIES}-{MAX_QUERIES} search queries (JSON array) "
+        f"that a {pillar} practitioner would use. Each query must be "
+        f"recognizably about {pillar} — not adjacent pillars."
     )
 
 
@@ -178,7 +206,8 @@ async def _load_goal(goal_id: UUID, *, supabase: Any) -> dict[str, Any]:
         resp = (
             supabase.table("csp_goals")
             .select(
-                "id,code,name,description,query_aliases,query_aliases_version"
+                "id,code,name,description,pillar_code,"
+                "query_aliases,query_aliases_version"
             )
             .eq("id", str(goal_id))
             .limit(1)
@@ -221,6 +250,21 @@ async def _persist_aliases(
         )
 
 
+def _pillar_label(goal: dict[str, Any]) -> str:
+    """Render a human-friendly pillar label for the LLM prompt.
+
+    Format is ``"<CODE> (<full name>)"`` so the model gets both the short
+    handle it sees in tool calls and the descriptive name it can latch onto.
+    Goals without a known ``pillar_code`` collapse to an empty label so the
+    prompt's "(pillar unknown)" fallback kicks in.
+    """
+    code = (goal.get("pillar_code") or "").strip().upper()
+    if not code:
+        return ""
+    name = PILLAR_NAMES.get(code)
+    return f"{code} ({name})" if name else code
+
+
 async def _call_llm(
     goal: dict[str, Any], *, openai_client: AsyncOpenAI
 ) -> str | None:
@@ -233,6 +277,7 @@ async def _call_llm(
                 "content": _user_prompt(
                     goal.get("name") or "",
                     goal.get("description") or "",
+                    _pillar_label(goal),
                 ),
             },
         ],
