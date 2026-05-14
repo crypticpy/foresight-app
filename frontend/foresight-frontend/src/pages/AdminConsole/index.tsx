@@ -30,6 +30,7 @@ import { useLlmAudit } from "./hooks/useLlmAudit";
 import { useSafety } from "./hooks/useSafety";
 import { useSchedules } from "./hooks/useSchedules";
 import { useSources } from "./hooks/useSources";
+import { useTemplates } from "./hooks/useTemplates";
 import { useUsage } from "./hooks/useUsage";
 import { LlmAuditDetailModal } from "./modals/LlmAuditDetailModal";
 import { LlmAuditExportModal } from "./modals/LlmAuditExportModal";
@@ -43,6 +44,7 @@ import { SafetyTab } from "./tabs/SafetyTab";
 import { SchedulesTab } from "./tabs/SchedulesTab";
 import { SettingsTab } from "./tabs/SettingsTab";
 import { SourcesTab } from "./tabs/SourcesTab";
+import { TemplatesTab } from "./tabs/TemplatesTab";
 import { UsageTab } from "./tabs/UsageTab";
 import { UsersTab } from "./tabs/UsersTab";
 
@@ -77,6 +79,7 @@ const AdminConsole: React.FC = () => {
   const sources = useSources({ isAdmin, activeTab, onError, onNotice });
   const schedules = useSchedules({ isAdmin, activeTab, onError, onNotice });
   const coverage = useCoverage({ isAdmin, activeTab, onError, onNotice });
+  const templates = useTemplates({ isAdmin, activeTab, onError });
   const llmAudit = useLlmAudit({ isAdmin, activeTab, onError, onNotice });
   const safety = useSafety({ isAdmin, activeTab, onError, onNotice });
 
@@ -286,6 +289,13 @@ const AdminConsole: React.FC = () => {
                 if (!demoFreezeSetting) return;
                 await bootstrap.saveSetting(demoFreezeSetting, next);
               }}
+            />
+          )}
+          {activeTab === "templates" && (
+            <TemplatesTab
+              rows={templates.rows}
+              loading={templates.loading}
+              onRefresh={templates.load}
             />
           )}
           {activeTab === "coverage" && (

@@ -12,6 +12,7 @@ import {
   BarChart3,
   CalendarClock,
   Database,
+  FileStack,
   Gauge,
   History,
   MessageSquareText,
@@ -31,6 +32,7 @@ export type AdminTab =
   | "settings"
   | "sources"
   | "schedules"
+  | "templates"
   | "coverage"
   | "usage"
   | "llm_activity"
@@ -48,6 +50,7 @@ export const tabs: Array<{
   { id: "settings", label: "Models & Chat", icon: SlidersHorizontal },
   { id: "sources", label: "Sources", icon: Rss },
   { id: "schedules", label: "Schedules", icon: CalendarClock },
+  { id: "templates", label: "Templates", icon: FileStack },
   { id: "coverage", label: "Coverage", icon: Gauge },
   { id: "usage", label: "Usage", icon: Database },
   { id: "llm_activity", label: "LLM activity", icon: MessageSquareText },
