@@ -19,7 +19,10 @@ import {
   autoPopulateWorkstream,
   fetchWorkstreamCards,
 } from "../../lib/workstream-api";
-import { resolveTemplateIdToCloneEnsuring } from "../../lib/workstream/clone-resolution";
+import {
+  materializeAndResolveTemplateClone,
+  resolveTemplateIdToClone,
+} from "../../lib/workstream/clone-resolution";
 import type { KanbanStatus, WorkstreamCard } from "../../components/kanban";
 import type { Workstream } from "../../components/WorkstreamForm";
 
@@ -59,19 +62,19 @@ export function useWorkstreamData({
     try {
       // If the URL points at an org-template id (e.g. an old bookmark from
       // before the per-user clones rollout, or a redirect from another
-      // surface), redirect to the caller's clone. The ensuring variant
-      // materializes the clone server-side if it doesn't exist yet — without
-      // that, deep-linking to a template id before ever loading
-      // `/workstreams` would fall through to the direct supabase select
-      // below, which RLS now blocks for org templates (returns 406). Kept
-      // inside the try block so any rejection routes through the same error
-      // handler as the workstream fetch below.
+      // surface), redirect to the caller's clone. We do this in two phases
+      // so a normal user-owned workstream load doesn't pay for the heavy
+      // `/me/workstreams` materialization round-trip (which would also
+      // create clones for every untouched org template):
+      //   1. Cheap local pointer lookup — single RLS-protected select; if
+      //      the user already has a clone for this template id, redirect.
+      //   2. Otherwise try the direct workstream fetch. Only if it fails
+      //      (the RLS-blocked template case) do we trigger server-side
+      //      materialization and re-resolve.
       const token = await getAuthToken();
-      const cloneId = token
-        ? await resolveTemplateIdToCloneEnsuring(workstreamId, token)
-        : null;
-      if (cloneId && cloneId !== workstreamId) {
-        navigate(`/workstreams/${cloneId}/board`, { replace: true });
+      const existingClone = await resolveTemplateIdToClone(workstreamId);
+      if (existingClone && existingClone !== workstreamId) {
+        navigate(`/workstreams/${existingClone}/board`, { replace: true });
         return;
       }
 
@@ -82,6 +85,22 @@ export function useWorkstreamData({
         .single();
 
       if (fetchError) {
+        // Direct fetch failed — could be a genuine missing/permission case
+        // OR an org-template id we haven't materialized yet. Try the
+        // ensuring path; if it yields a clone id, redirect there. Otherwise
+        // surface the original error.
+        if (token) {
+          const materializedClone = await materializeAndResolveTemplateClone(
+            workstreamId,
+            token,
+          );
+          if (materializedClone && materializedClone !== workstreamId) {
+            navigate(`/workstreams/${materializedClone}/board`, {
+              replace: true,
+            });
+            return;
+          }
+        }
         console.error("Error loading workstream:", fetchError);
         setError(
           "Failed to load workstream. It may not exist or you may not have access.",
