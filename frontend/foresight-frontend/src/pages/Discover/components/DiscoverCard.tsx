@@ -86,11 +86,14 @@ export const DiscoverCard = React.memo(function DiscoverCard({
     >
       {/* Top gradient accent bar */}
       <div className="absolute top-0 left-0 right-0 h-1 rounded-t-lg bg-gradient-to-r from-brand-blue to-brand-green" />
-      <ArtifactFolderTab visible={card.artifacts?.has_deep_research} />
+      <ArtifactFolderTab
+        visible={card.artifacts?.has_deep_research}
+        className={compareMode ? undefined : "right-14"}
+      />
       <ArtifactRibbon
         artifacts={card.artifacts}
         hideDeepResearch={card.artifacts?.has_deep_research}
-        className={compareMode ? "right-11" : undefined}
+        className={compareMode ? "right-11" : "right-12"}
       />
 
       {/* Compare Mode Selection Indicator */}
@@ -106,109 +109,103 @@ export const DiscoverCard = React.memo(function DiscoverCard({
         </div>
       )}
 
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            {compareMode ? (
-              <span className="hover:text-extended-purple transition-colors cursor-pointer">
-                {card.name}
-              </span>
-            ) : (
-              <Link
-                to={`/signals/${card.slug}`}
-                className="hover:text-brand-blue transition-colors"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {card.name}
-              </Link>
-            )}
-          </h3>
-          <div className="flex items-center gap-2 flex-wrap mb-3">
-            {/* Search Relevance Badge - shown when semantic search is used */}
-            {card.search_relevance !== undefined && (
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-extended-purple/10 text-extended-purple border border-extended-purple/30"
-                title={`Search match: ${Math.round(card.search_relevance * 100)}% similarity to your query`}
-              >
-                <Sparkles className="h-3 w-3" />
-                {Math.round(card.search_relevance * 100)}% match
-              </span>
-            )}
-            <PillarBadge pillarId={card.pillar_id} showIcon size="sm" />
-            <HorizonBadge horizon={card.horizon} size="sm" />
-            {stageNumber !== null && (
-              <StageBadge stage={stageNumber} size="sm" variant="minimal" />
-            )}
-            {card.top25_relevance && card.top25_relevance.length > 0 && (
-              <Top25Badge
-                priorities={card.top25_relevance}
-                size="sm"
-                showCount
-              />
-            )}
-            {/* Quality Badge */}
-            <QualityBadge score={card.signal_quality_score ?? null} size="sm" />
-            <VelocityBadge
-              trend={card.velocity_trend as VelocityTrend}
-              score={card.velocity_score}
-            />
-            {/* Provenance indicator */}
-            {card.origin === "user_created" && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700">
-                <User className="h-2.5 w-2.5" />
-                User Created
-              </span>
-            )}
-            {card.origin === "workstream_scan" && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700">
-                <Scan className="h-2.5 w-2.5" />
-                Via Workstream
-              </span>
-            )}
-            {card.origin === "manual" && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
-                <User className="h-2.5 w-2.5" />
-                Manual Import
-              </span>
-            )}
-            {/* Scores Unverified indicator */}
-            {card.discovery_metadata?.scores_are_defaults === true && (
-              <span
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-50 text-yellow-800 border border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700"
-                title="Scores are defaults and have not been verified by analysis"
-              >
-                <AlertTriangle className="h-2.5 w-2.5" />
-                Scores Unverified
-              </span>
-            )}
-            <LensFlagChips
-              budgetAssessment={card.budget_assessment ?? null}
-              climateAssessment={card.climate_assessment ?? null}
-              issueTags={card.issue_tags ?? null}
-            />
-          </div>
+      <div className="mb-4 pr-10">
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+          {compareMode ? (
+            <span className="hover:text-extended-purple transition-colors cursor-pointer">
+              {card.name}
+            </span>
+          ) : (
+            <Link
+              to={`/signals/${card.slug}`}
+              className="hover:text-brand-blue transition-colors"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {card.name}
+            </Link>
+          )}
+        </h3>
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          {/* Search Relevance Badge - shown when semantic search is used */}
+          {card.search_relevance !== undefined && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-extended-purple/10 text-extended-purple border border-extended-purple/30"
+              title={`Search match: ${Math.round(card.search_relevance * 100)}% similarity to your query`}
+            >
+              <Sparkles className="h-3 w-3" />
+              {Math.round(card.search_relevance * 100)}% match
+            </span>
+          )}
+          <PillarBadge pillarId={card.pillar_id} showIcon size="sm" />
+          <HorizonBadge horizon={card.horizon} size="sm" />
+          {stageNumber !== null && (
+            <StageBadge stage={stageNumber} size="sm" variant="minimal" />
+          )}
+          {card.top25_relevance && card.top25_relevance.length > 0 && (
+            <Top25Badge priorities={card.top25_relevance} size="sm" showCount />
+          )}
+          {/* Quality Badge */}
+          <QualityBadge score={card.signal_quality_score ?? null} size="sm" />
+          <VelocityBadge
+            trend={card.velocity_trend as VelocityTrend}
+            score={card.velocity_score}
+          />
+          {/* Provenance indicator */}
+          {card.origin === "user_created" && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700">
+              <User className="h-2.5 w-2.5" />
+              User Created
+            </span>
+          )}
+          {card.origin === "workstream_scan" && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700">
+              <Scan className="h-2.5 w-2.5" />
+              Via Workstream
+            </span>
+          )}
+          {card.origin === "manual" && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
+              <User className="h-2.5 w-2.5" />
+              Manual Import
+            </span>
+          )}
+          {/* Scores Unverified indicator */}
+          {card.discovery_metadata?.scores_are_defaults === true && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-50 text-yellow-800 border border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700"
+              title="Scores are defaults and have not been verified by analysis"
+            >
+              <AlertTriangle className="h-2.5 w-2.5" />
+              Scores Unverified
+            </span>
+          )}
+          <LensFlagChips
+            budgetAssessment={card.budget_assessment ?? null}
+            climateAssessment={card.climate_assessment ?? null}
+            issueTags={card.issue_tags ?? null}
+          />
         </div>
-        {!compareMode && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFollow(card.id);
-            }}
-            className={`flex-shrink-0 p-2 transition-all duration-200 active:scale-75 ${
-              isFollowed
-                ? "text-red-500 hover:text-red-600"
-                : "text-gray-400 hover:text-red-500"
-            }`}
-            title={isFollowed ? "Unfollow signal" : "Follow signal"}
-            aria-pressed={isFollowed}
-          >
-            <Heart
-              className="h-5 w-5"
-              fill={isFollowed ? "currentColor" : "none"}
-            />
-          </button>
-        )}
       </div>
+      {!compareMode && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFollow(card.id);
+          }}
+          className={`absolute top-2 right-2 z-20 rounded-md p-2 transition-all duration-200 active:scale-75 ${
+            isFollowed
+              ? "text-red-500 hover:text-red-600"
+              : "text-gray-400 hover:text-red-500"
+          }`}
+          title={isFollowed ? "Unfollow signal" : "Follow signal"}
+          aria-pressed={isFollowed}
+        >
+          <Heart
+            className="h-5 w-5"
+            fill={isFollowed ? "currentColor" : "none"}
+          />
+        </button>
+      )}
 
       <p className="text-gray-600 dark:text-gray-400 mb-4 line-clamp-3">
         {searchTerm ? highlightText(card.summary, searchTerm) : card.summary}

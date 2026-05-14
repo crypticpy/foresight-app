@@ -28,7 +28,7 @@ export function ViewControlsBar({
   onOpenSaveSearch,
 }: ViewControlsBarProps) {
   return (
-    <div className="mt-4 flex items-center justify-between">
+    <div className="mb-4 mt-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Showing {visibleCount}
