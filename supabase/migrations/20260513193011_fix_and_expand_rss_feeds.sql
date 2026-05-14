@@ -62,8 +62,9 @@
 --
 -- ROLLBACK:
 --   -- revert rss_feeds URL updates
---   UPDATE rss_feeds SET url = 'https://www.pewtrusts.org/en/rss/all'
---     WHERE url = 'https://www.pewresearch.org/feed/' AND name = 'Pew Trusts';
+--   UPDATE rss_feeds
+--     SET url = 'https://www.pewtrusts.org/en/rss/all', name = 'Pew Trusts'
+--     WHERE url = 'https://www.pewresearch.org/feed/' AND name = 'Pew Research Center';
 --   UPDATE rss_feeds SET url = 'https://icma.org/feed'                 WHERE url = 'https://icma.org/rss.xml'              AND name = 'ICMA';
 --   UPDATE rss_feeds SET url = 'https://www.austintexas.gov/rss.xml'   WHERE url = 'https://www.austintexas.gov/site/news/rss.xml' AND name = 'City of Austin';
 --   UPDATE rss_feeds SET url = 'https://www.govtech.com/rss'           WHERE url = 'https://www.govtech.com/index.rss'    AND name = 'GovTech';
@@ -138,6 +139,12 @@ WHERE url = 'https://www.austintexas.gov/rss.xml'
     WHERE f.url = 'https://www.austintexas.gov/site/news/rss.xml'
   );
 
+-- GovTech is split across two statements (one per legacy variant) because
+-- updating both `/rss` and `/rss/` rows to the same canonical URL in one
+-- statement would trip the `rss_feeds.url` UNIQUE check at statement end.
+-- The second statement is a no-op once the first succeeds (the canonical
+-- URL now exists, so its NOT EXISTS guard skips). Any leftover legacy row
+-- is removed by the trailing DELETE block.
 UPDATE public.rss_feeds
 SET url           = 'https://www.govtech.com/index.rss',
     status        = 'active',
@@ -145,7 +152,20 @@ SET url           = 'https://www.govtech.com/index.rss',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url IN ('https://www.govtech.com/rss', 'https://www.govtech.com/rss/')
+WHERE url = 'https://www.govtech.com/rss'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.govtech.com/index.rss'
+  );
+
+UPDATE public.rss_feeds
+SET url           = 'https://www.govtech.com/index.rss',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.govtech.com/rss/'
   AND NOT EXISTS (
     SELECT 1 FROM public.rss_feeds f
     WHERE f.url = 'https://www.govtech.com/index.rss'
@@ -222,6 +242,9 @@ WHERE category = 'rss'
     WHERE d.category = 'rss' AND d.url = 'https://icma.org/rss.xml'
   );
 
+-- Same split as the rss_feeds GovTech UPDATE above: one statement per
+-- legacy variant so we never try to collapse both rows into the canonical
+-- URL inside a single statement.
 UPDATE public.discovery_sources_registry
 SET url        = 'https://www.govtech.com/index.rss',
     enabled    = TRUE,
@@ -229,7 +252,20 @@ SET url        = 'https://www.govtech.com/index.rss',
     last_failure_reason = NULL,
     updated_at = NOW()
 WHERE category = 'rss'
-  AND url IN ('https://www.govtech.com/rss/', 'https://www.govtech.com/rss')
+  AND url = 'https://www.govtech.com/rss/'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://www.govtech.com/index.rss'
+  );
+
+UPDATE public.discovery_sources_registry
+SET url        = 'https://www.govtech.com/index.rss',
+    enabled    = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at = NOW()
+WHERE category = 'rss'
+  AND url = 'https://www.govtech.com/rss'
   AND NOT EXISTS (
     SELECT 1 FROM public.discovery_sources_registry d
     WHERE d.category = 'rss' AND d.url = 'https://www.govtech.com/index.rss'
