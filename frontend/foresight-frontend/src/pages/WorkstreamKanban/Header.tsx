@@ -19,6 +19,7 @@ import {
   ListChecks,
   Loader2,
   Lock,
+  MessageCircle,
   MessageSquare,
   Plus,
   Presentation,
@@ -54,6 +55,7 @@ interface KanbanHeaderProps {
   onExport: (format: "pdf" | "pptx") => void;
   workstreamId: string;
   onOpenChat: () => void;
+  onOpenDiscussion: () => void;
   onOpenEdit: () => void;
 }
 
@@ -77,6 +79,7 @@ export function KanbanHeader({
   onExport,
   workstreamId,
   onOpenChat,
+  onOpenDiscussion,
   onOpenEdit,
 }: KanbanHeaderProps) {
   const isOrgOwned = workstream.owner_type === "org";
@@ -200,6 +203,15 @@ export function KanbanHeader({
           >
             <MessageSquare className="h-4 w-4" />
             <span className="hidden sm:inline">Chat</span>
+          </button>
+
+          <button
+            onClick={onOpenDiscussion}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-dark-surface-elevated hover:bg-gray-50 dark:hover:bg-dark-surface-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-blue dark:focus:ring-offset-dark-surface transition-colors"
+            aria-label="Open workstream discussion"
+          >
+            <MessageCircle className="h-4 w-4" />
+            <span className="hidden sm:inline">Discussion</span>
           </button>
 
           {canManage && (

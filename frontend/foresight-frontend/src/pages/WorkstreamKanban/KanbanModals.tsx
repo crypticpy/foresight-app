@@ -14,6 +14,7 @@ import { ActivityRail } from "../../components/activity/ActivityRail";
 import { MembersDrawer } from "../../components/collaboration/MembersDrawer";
 import { ShareWorkstreamModal } from "../../components/collaboration/ShareWorkstreamModal";
 import { WorkstreamChatPanel } from "../../components/WorkstreamChatPanel";
+import { WorkstreamDiscussionPanel } from "../../components/WorkstreamDiscussionPanel";
 
 import { FormModal } from "./FormModal";
 import { SignalDetailModal } from "./SignalDetailModal";
@@ -32,6 +33,9 @@ export interface KanbanModalsProps {
   onEditSuccess: () => void;
   chatOpen: boolean;
   onChatClose: () => void;
+  discussionOpen: boolean;
+  onDiscussionClose: () => void;
+  canComment: boolean;
   shareOpen: boolean;
   onShareClose: () => void;
   membersOpen: boolean;
@@ -54,6 +58,9 @@ export function KanbanModals({
   onEditSuccess,
   chatOpen,
   onChatClose,
+  discussionOpen,
+  onDiscussionClose,
+  canComment,
   shareOpen,
   onShareClose,
   membersOpen,
@@ -160,6 +167,14 @@ export function KanbanModals({
         workstreamName={workstream.name}
         isOpen={chatOpen}
         onClose={onChatClose}
+      />
+
+      <WorkstreamDiscussionPanel
+        workstreamId={workstreamId}
+        workstreamName={workstream.name}
+        isOpen={discussionOpen}
+        onClose={onDiscussionClose}
+        canComment={canComment}
       />
 
       <ShareWorkstreamModal
