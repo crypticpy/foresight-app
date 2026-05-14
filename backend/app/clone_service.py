@@ -1,15 +1,17 @@
 """Per-user workstream-clone materialization.
 
 Implements the lazy first-touch model from
-``docs/26_per_user_workstream_clones_plan.md``: each user gets a private
-clone of every ``owner_type='org'`` template, created on first read.  The
-clone copies the template's filter metadata, drops in every card that's
-currently in the template's pool, and records a pointer row in
-``user_workstream_clones`` so the future Friday fan-out job knows where
-to deliver new matches.
+``docs/26_per_user_workstream_clones_plan.md``:
 
-The Friday fan-out job itself ships in a follow-up PR — this module only
-handles first-touch materialization plus the lookup helper.
+- **First-touch** (``ensure_user_clones_for_templates``): every user gets
+  a private clone of every ``owner_type='org'`` template on first read.
+- **Dismissals** (``record_dismissal_if_clone``): when a user removes a
+  card from a clone, a tombstone is written so the future Friday fan-out
+  job never re-delivers the same card.
+
+The Friday fan-out job itself ships in PR-B — this module only handles
+first-touch materialization, the dismissal tombstone, and the lookup
+helper used by the kanban router.
 """
 
 from __future__ import annotations
@@ -124,9 +126,24 @@ def _copy_template_cards_to_clone(
 def materialize_clone(template: dict[str, Any], user_id: str) -> str:
     """Create the clone workstream + copy template cards + write pointer row.
 
-    Returns the newly-created clone's workstream id.  Raises on insert
-    failure; callers should catch and skip the template (the user still
-    gets their other clones; the next request retries).
+    Returns the clone's workstream id.  Raises on insert failure; callers
+    should catch and skip the template (the user still gets their other
+    clones; the next request retries).
+
+    Race safety: the only DB-enforced uniqueness guard is
+    ``user_workstream_clones(user_id, template_id)``, which is the *last*
+    write in this flow.  If two concurrent requests both pass the earlier
+    pointer-lookup check and reach this function, both will insert a
+    ``user_clone`` workstream + copy cards before either tries to insert
+    the pointer.  The loser's pointer insert fails on the unique
+    constraint, leaving an orphan duplicate clone visible in the user's
+    workstream list.
+
+    To stay race-safe we treat the pointer row as the single source of
+    truth: if the pointer insert fails, we delete the orphan workstream we
+    just created (``workstream_cards.workstream_id`` cascades, so the
+    copied junction rows go with it) and return the winner's clone id by
+    re-reading the pointer.
     """
     now_iso = _now_iso()
     inserted = (
@@ -142,16 +159,38 @@ def materialize_clone(template: dict[str, Any], user_id: str) -> str:
 
     copied = _copy_template_cards_to_clone(template["id"], clone_id, user_id, now_iso)
 
-    supabase.table("user_workstream_clones").insert(
-        {
-            "user_id": user_id,
-            "template_id": template["id"],
-            "clone_workstream_id": clone_id,
-            # Stamp last_fanout_at = now so the Friday job doesn't re-deliver
-            # the same cards the user just received.
-            "last_fanout_at": now_iso,
-        }
-    ).execute()
+    try:
+        supabase.table("user_workstream_clones").insert(
+            {
+                "user_id": user_id,
+                "template_id": template["id"],
+                "clone_workstream_id": clone_id,
+                # Stamp last_fanout_at = now so the Friday job doesn't re-deliver
+                # the same cards the user just received.
+                "last_fanout_at": now_iso,
+            }
+        ).execute()
+    except Exception as exc:  # noqa: BLE001 — covers PostgREST unique-violation
+        # Concurrent first-touch from another request already wrote the
+        # pointer.  Drop our orphan clone (cascade clears its
+        # workstream_cards rows) and surface the winner's clone id.
+        winner_id = _existing_clone_pointers(user_id).get(template["id"])
+        if winner_id is None:
+            # Pointer insert failed for some other reason — abort and let
+            # the caller surface it so we don't leave the orphan around.
+            supabase.table("workstreams").delete().eq("id", clone_id).execute()
+            raise
+        logger.info(
+            "Lost clone-materialization race for user %s, template %s; "
+            "dropping orphan clone %s (winner=%s, err=%s)",
+            user_id,
+            template["id"],
+            clone_id,
+            winner_id,
+            exc,
+        )
+        supabase.table("workstreams").delete().eq("id", clone_id).execute()
+        return winner_id
 
     logger.info(
         "Materialized workstream clone for user %s from template %s "

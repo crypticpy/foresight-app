@@ -1,5 +1,6 @@
 """Workstream CRUD and feed router."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -46,8 +47,10 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
 
     # Lazy first-touch: ensure non-admin callers have a clone for every org
     # template.  Cheap when clones already exist (one SELECT, no writes).
+    # Wrapped in ``asyncio.to_thread`` so the sync Supabase calls don't block
+    # the event loop on first-touch materialization (which writes rows).
     if not admin:
-        ensure_user_clones_for_templates(user_id)
+        await asyncio.to_thread(ensure_user_clones_for_templates, user_id)
 
     own = (
         supabase.table("workstreams")

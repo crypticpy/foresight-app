@@ -437,8 +437,11 @@ async def remove_card_from_workstream(
 
     # If this workstream is a user_clone, record a dismissal tombstone so
     # the Friday fan-out job never re-delivers the same card to this user.
+    # ``asyncio.to_thread`` keeps the sync Supabase calls off the event loop.
     if underlying_card_id:
-        record_dismissal_if_clone(workstream_id, underlying_card_id)
+        await asyncio.to_thread(
+            record_dismissal_if_clone, workstream_id, underlying_card_id
+        )
 
     return {"status": "removed", "message": "Card removed from workstream"}
 

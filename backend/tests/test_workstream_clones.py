@@ -116,6 +116,7 @@ class _Table:
         *,
         insert_fail: bool = False,
         insert_fail_predicate=None,
+        unique_keys: Optional[List[str]] = None,
     ) -> None:
         self.name = name
         self.rows = list(rows)
@@ -123,6 +124,9 @@ class _Table:
         self.upserted: List[Dict[str, Any]] = []
         self.insert_fail = insert_fail
         self.insert_fail_predicate = insert_fail_predicate
+        # When set, inserting a row whose composite-key values match an
+        # existing row raises (mirrors a Postgres unique-violation).
+        self.unique_keys = unique_keys
 
     def insert(self, payload, _eq):
         rows = payload if isinstance(payload, list) else [payload]
@@ -132,6 +136,17 @@ class _Table:
             return _MockResponse([])
         if self.insert_fail:
             return _MockResponse([])
+        if self.unique_keys:
+            for r in rows:
+                key = tuple(r.get(k) for k in self.unique_keys)
+                if any(
+                    tuple(existing.get(k) for k in self.unique_keys) == key
+                    for existing in self.rows
+                ):
+                    raise RuntimeError(
+                        f"duplicate key value violates unique constraint on "
+                        f"{self.name}({','.join(self.unique_keys)})"
+                    )
         ack = []
         for r in rows:
             r = {**r}
@@ -423,3 +438,55 @@ def test_record_dismissal_returns_false_for_missing_card_id(
 
     monkeypatch.setattr(cs, "supabase", supa)
     assert cs.record_dismissal_if_clone(_uuid(), "") is False
+
+
+def test_materialize_clone_is_race_safe_on_pointer_unique_violation(
+    monkeypatch, mock_supabase, template_ids
+):
+    """Concurrent first-touch must not leak an orphan duplicate clone.
+
+    Regression for the Codex review on PR #91: if two requests race past
+    ``_existing_clone_pointers`` and both call ``materialize_clone``, the
+    loser's pointer insert hits the
+    ``user_workstream_clones(user_id, template_id)`` unique constraint.
+    We expect the loser to drop the orphan workstream it created and
+    return the winner's clone id instead of raising — otherwise the user
+    sees a duplicate row in ``/me/workstreams`` until manual cleanup.
+    """
+    supa, tables = mock_supabase
+    import app.clone_service as cs
+
+    monkeypatch.setattr(cs, "supabase", supa)
+
+    user_id = _uuid()
+    template_a = template_ids[0]
+    template = next(
+        ws for ws in tables["workstreams"].rows if ws["id"] == template_a
+    )
+
+    # First call: real winner. Materializes a clone + writes the pointer.
+    winner_clone_id = cs.materialize_clone(template, user_id)
+    assert winner_clone_id is not None
+    initial_workstream_count = len(tables["workstreams"].rows)
+
+    # Flip the pointer table to enforce the (user_id, template_id) unique
+    # constraint, then call materialize_clone again to simulate the losing
+    # racer arriving after the winner has already written the pointer.
+    tables["user_workstream_clones"].unique_keys = ["user_id", "template_id"]
+
+    loser_result = cs.materialize_clone(template, user_id)
+
+    # Loser surfaces the winner's id, not a fresh one.
+    assert loser_result == winner_clone_id
+    # No orphan workstream survives — the loser cleaned up after itself.
+    # (The matching ``workstream_cards`` rows are cleaned by Postgres FK
+    # cascade in prod; this test asserts the service-layer behavior only.)
+    assert len(tables["workstreams"].rows) == initial_workstream_count
+    # Pointer table still has exactly one row for this (user, template).
+    pointers = [
+        p
+        for p in tables["user_workstream_clones"].rows
+        if p["user_id"] == user_id and p["template_id"] == template_a
+    ]
+    assert len(pointers) == 1
+    assert pointers[0]["clone_workstream_id"] == winner_clone_id
