@@ -30,6 +30,7 @@ class Workstream(BaseModel):
     budget_relevance: List[str] = Field(default_factory=list)
     purpose_statement: Optional[str] = None
     owner_type: str = "user"
+    cloned_from_id: Optional[str] = None
     role: Optional[str] = None
     created_at: datetime
 

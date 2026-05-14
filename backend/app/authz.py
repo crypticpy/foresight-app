@@ -16,6 +16,7 @@ from supabase import Client
 ADMIN_ROLES = {"admin", "service_role"}
 WORKSTREAM_OWNER_TYPE_ORG = "org"
 WORKSTREAM_OWNER_TYPE_USER = "user"
+WORKSTREAM_OWNER_TYPE_USER_CLONE = "user_clone"
 ACCOUNT_TYPE_PAID = "paid"
 ACCOUNT_TYPE_GUEST = "guest"
 WORKSTREAM_MEMBER_CAPABILITIES = {
@@ -80,16 +81,23 @@ def get_workstream_access(
     """Resolve the current user's access to a workstream.
 
     Current pilot rules:
-    - admins can read, edit, and manage all workstreams
-    - org workstreams are readable by authenticated users, not editable
-    - user workstreams are read/edit/manage by their owner only
+    - admins can read, edit, and manage all workstreams (including org templates).
+    - org workstreams are templates fanned out into per-user clones; non-admins
+      get **no** direct access. The workstreams router resolves template ids to
+      the caller's clone before responding, so this branch is reachable for
+      non-admins only when something tries to address a template id directly.
+    - user_clone workstreams are owned by the cloning user (same `user_id` /
+      ownership semantics as user workstreams; they just carry a non-null
+      `cloned_from_id`).
+    - user workstreams are read/edit/manage by their owner only.
 
-    The `workstream_members` lookup is already wired in so Phase 3 can add the
-    invite/member-management UI without rewriting downstream endpoint checks.
+    The `workstream_members` lookup is wired in so Phase 3 collaboration can
+    grant shared editors/viewers on user (or cloned) workstreams without
+    rewriting downstream endpoint checks.
     """
     ws_response = (
         supabase.table("workstreams")
-        .select("id, user_id, owner_type, name")
+        .select("id, user_id, owner_type, name, cloned_from_id")
         .eq("id", workstream_id)
         .limit(1)
         .execute()
@@ -142,15 +150,12 @@ def get_workstream_access(
             role=role,
         )
 
+    # Non-admin users have no direct access to org templates. The UI never
+    # links to a template id (workstreams.py rewrites the id to the caller's
+    # clone), so reaching this branch implies either a stale URL or someone
+    # probing template ids — treat it like a missing workstream.
     if workstream.get("owner_type") == WORKSTREAM_OWNER_TYPE_ORG:
-        return WorkstreamAccess(
-            workstream=workstream,
-            can_read=True,
-            can_comment=False,
-            can_edit=False,
-            can_manage=False,
-            role="org_viewer",
-        )
+        raise HTTPException(status_code=404, detail="Workstream not found")
 
     return WorkstreamAccess(
         workstream=workstream,

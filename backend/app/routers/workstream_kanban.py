@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.authz import require_paid_user, require_workstream_access
+from app.clone_service import record_dismissal_if_clone
 from app.deps import supabase, get_current_user, openai_client
 from app.models.workstream import (
     WorkstreamCardWithDetails,
@@ -395,11 +396,14 @@ async def remove_card_from_workstream(
     """
     Remove a card from a workstream.
 
-    This only removes the association; the card itself is not deleted.
+    This only removes the association; the card itself is not deleted.  When
+    the workstream is a user_clone of an org template, a tombstone row is
+    written into ``user_workstream_card_dismissals`` so the future Friday
+    fan-out job never re-delivers the same card.
 
     Args:
         workstream_id: UUID of the workstream
-        card_id: UUID of the card
+        card_id: UUID of the workstream_card junction row (NOT the underlying card UUID)
         current_user: Authenticated user (injected)
 
     Returns:
@@ -411,10 +415,11 @@ async def remove_card_from_workstream(
     """
     _require_workstream_edit(workstream_id, current_user)
 
-    # Check card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
+    # Pull the row first so we can read its underlying card_id (for the
+    # dismissal tombstone) and confirm the workstream/junction match.
     existing = (
         supabase.table("workstream_cards")
-        .select("id")
+        .select("id, card_id")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
         .execute()
@@ -423,10 +428,17 @@ async def remove_card_from_workstream(
     if not existing.data:
         raise HTTPException(status_code=404, detail="Card not found in this workstream")
 
+    underlying_card_id = existing.data[0].get("card_id")
+
     # Delete the association
     supabase.table("workstream_cards").delete().eq("workstream_id", workstream_id).eq(
         "id", card_id
     ).execute()
+
+    # If this workstream is a user_clone, record a dismissal tombstone so
+    # the Friday fan-out job never re-delivers the same card to this user.
+    if underlying_card_id:
+        record_dismissal_if_clone(workstream_id, underlying_card_id)
 
     return {"status": "removed", "message": "Card removed from workstream"}
 
