@@ -66,6 +66,23 @@ export const DiscoverCard = React.memo(function DiscoverCard({
   onToggleFollow,
 }: DiscoverCardProps) {
   const stageNumber = parseStageNumber(card.stage_id);
+  // Ribbon shows when there's a brief/scan or pending research (deep research is
+  // surfaced via ArtifactFolderTab instead, so it doesn't contribute here). When
+  // visible, the absolute ribbon at right-12 can extend ~80px leftward, so the
+  // title row needs more right padding to avoid the long-title overlap regression
+  // flagged in PR #94.
+  const hasRibbon = Boolean(
+    card.artifacts?.has_brief ||
+    card.artifacts?.has_scan ||
+    card.artifacts?.pending_research,
+  );
+  const headerPaddingRight = compareMode
+    ? hasRibbon
+      ? "pr-28"
+      : "pr-10"
+    : hasRibbon
+      ? "pr-32"
+      : "pr-12";
 
   return (
     <div
@@ -109,7 +126,7 @@ export const DiscoverCard = React.memo(function DiscoverCard({
         </div>
       )}
 
-      <div className="mb-4 pr-10">
+      <div className={`mb-4 ${headerPaddingRight}`}>
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           {compareMode ? (
             <span className="hover:text-extended-purple transition-colors cursor-pointer">
