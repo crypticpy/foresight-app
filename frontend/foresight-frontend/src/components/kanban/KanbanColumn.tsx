@@ -7,12 +7,13 @@
  * toolbar now. The column header is purely informational + drop target.
  */
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Inbox,
   FlaskConical,
@@ -155,6 +156,30 @@ export const KanbanColumn = memo(function KanbanColumn({
   const colors = COLUMN_COLORS[id];
   const Icon = COLUMN_ICONS[id];
 
+  // Virtualize the card list so columns with hundreds of cards (post-pruning
+  // pool can hit ~700 per template / clone) stay smooth. dnd-kit's
+  // SortableContext only needs the id array — not all card DOM nodes — to
+  // track sort order, so off-screen cards still participate in drag math
+  // when the user scrolls to them.
+  const scrollParentRef = useRef<HTMLDivElement>(null);
+  const getScrollElement = useCallback(() => scrollParentRef.current, []);
+  const estimateSize = useCallback(() => 180, []);
+  const getVirtualKey = useCallback(
+    (index: number) => cards[index]?.id ?? index,
+    [cards],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: cards.length,
+    getScrollElement,
+    estimateSize,
+    overscan: 5,
+    gap: 12,
+    getItemKey: getVirtualKey,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <div
       ref={setNodeRef}
@@ -206,6 +231,7 @@ export const KanbanColumn = memo(function KanbanColumn({
 
       {/* Card List */}
       <div
+        ref={scrollParentRef}
         className={cn(
           "flex-1 p-3 overflow-y-auto",
           "min-h-32 max-h-[calc(100vh-280px)]",
@@ -214,20 +240,42 @@ export const KanbanColumn = memo(function KanbanColumn({
       >
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
           {cards.length > 0 ? (
-            <div className="space-y-3">
-              {cards.map((card) => (
-                <KanbanCard
-                  key={card.id}
-                  card={card}
-                  workstreamId={workstreamId}
-                  columnId={id}
-                  readOnly={readOnly}
-                  onCardClick={onCardClick}
-                  cardActions={cardActions}
-                  isSelected={selectedCardIds?.has(card.id) ?? false}
-                  onToggleSelect={onToggleSelect}
-                />
-              ))}
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualItems.map((virtualItem) => {
+                const card = cards[virtualItem.index];
+                if (!card) return null;
+                return (
+                  <div
+                    key={virtualItem.key}
+                    data-index={virtualItem.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <KanbanCard
+                      card={card}
+                      workstreamId={workstreamId}
+                      columnId={id}
+                      readOnly={readOnly}
+                      onCardClick={onCardClick}
+                      cardActions={cardActions}
+                      isSelected={selectedCardIds?.has(card.id) ?? false}
+                      onToggleSelect={onToggleSelect}
+                    />
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <EmptyColumnState columnId={id} hint={columnDef?.emptyStateHint} />
