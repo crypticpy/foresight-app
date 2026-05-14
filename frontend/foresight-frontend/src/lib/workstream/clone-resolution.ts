@@ -32,6 +32,14 @@ export async function resolveTemplateIdToClone(
     .eq("template_id", workstreamId)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (error) {
+    // Don't fail the caller — the resolver is best-effort and any error
+    // (network, RLS misconfig, etc.) just falls through to the regular
+    // workstream load path. Log so operational failures are visible in the
+    // console rather than silently invisible.
+    console.warn("resolveTemplateIdToClone: clone lookup failed", error);
+    return null;
+  }
+  if (!data) return null;
   return (data as { clone_workstream_id?: string }).clone_workstream_id ?? null;
 }
