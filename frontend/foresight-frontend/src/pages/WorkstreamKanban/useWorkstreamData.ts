@@ -19,7 +19,7 @@ import {
   autoPopulateWorkstream,
   fetchWorkstreamCards,
 } from "../../lib/workstream-api";
-import { resolveTemplateIdToClone } from "../../lib/workstream/clone-resolution";
+import { resolveTemplateIdToCloneEnsuring } from "../../lib/workstream/clone-resolution";
 import type { KanbanStatus, WorkstreamCard } from "../../components/kanban";
 import type { Workstream } from "../../components/WorkstreamForm";
 
@@ -58,12 +58,18 @@ export function useWorkstreamData({
 
     try {
       // If the URL points at an org-template id (e.g. an old bookmark from
-      // before the per-user clones rollout), redirect to the caller's clone.
-      // resolveTemplateIdToClone returns null for normal workstream ids, so
-      // this is a single extra round-trip in the common case. Kept inside the
-      // try block so any rejection routes through the same error handler as
-      // the workstream fetch below.
-      const cloneId = await resolveTemplateIdToClone(workstreamId);
+      // before the per-user clones rollout, or a redirect from another
+      // surface), redirect to the caller's clone. The ensuring variant
+      // materializes the clone server-side if it doesn't exist yet — without
+      // that, deep-linking to a template id before ever loading
+      // `/workstreams` would fall through to the direct supabase select
+      // below, which RLS now blocks for org templates (returns 406). Kept
+      // inside the try block so any rejection routes through the same error
+      // handler as the workstream fetch below.
+      const token = await getAuthToken();
+      const cloneId = token
+        ? await resolveTemplateIdToCloneEnsuring(workstreamId, token)
+        : null;
       if (cloneId && cloneId !== workstreamId) {
         navigate(`/workstreams/${cloneId}/board`, { replace: true });
         return;

@@ -12,7 +12,8 @@ import { ArrowLeft, Edit, Filter, Loader2 } from "lucide-react";
 import { WorkstreamChatPanel } from "../../components/WorkstreamChatPanel";
 import { useToast } from "../../components/ui/Toast";
 import { useAuthContext } from "../../hooks/useAuthContext";
-import { resolveTemplateIdToClone } from "../../lib/workstream/clone-resolution";
+import { getAuthToken } from "../../lib/auth";
+import { resolveTemplateIdToCloneEnsuring } from "../../lib/workstream/clone-resolution";
 import {
   WorkstreamAccessError,
   downloadWorkstreamExport,
@@ -56,9 +57,15 @@ export default function WorkstreamFeed() {
 
       // Old bookmarks may point at an org-template id; after the per-user
       // clones rollout (PR #91) those are RLS-hidden from non-admins.  Redirect
-      // to the caller's clone before loading. resolveTemplateIdToClone returns
-      // null for normal workstream ids.
-      const cloneId = await resolveTemplateIdToClone(id);
+      // to the caller's clone before loading. The ensuring variant
+      // materializes the clone server-side if it doesn't exist yet — needed
+      // for deep-links that hit the feed page before the user has ever
+      // loaded `/workstreams` (which is what otherwise fires the lazy
+      // first-touch materialization).
+      const token = await getAuthToken();
+      const cloneId = token
+        ? await resolveTemplateIdToCloneEnsuring(id, token)
+        : null;
       if (cloneId && cloneId !== id) {
         navigate(`/workstreams/${cloneId}`, { replace: true });
         return;
