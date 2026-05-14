@@ -1,5 +1,6 @@
 """Workstream CRUD and feed router."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -7,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.authz import (
     WORKSTREAM_OWNER_TYPE_ORG,
+    is_admin,
     require_paid_user,
     require_workstream_access,
 )
+from app.clone_service import ensure_user_clones_for_templates
 from app.deps import supabase, get_current_user, _safe_error
 from app.helpers.workstream_utils import (
     _filter_cards_for_workstream,
@@ -32,26 +35,34 @@ router = APIRouter(prefix="/api/v1", tags=["workstreams"])
 
 @router.get("/me/workstreams")
 async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
-    """Get the caller's workstreams plus all org-owned workstreams.
+    """Get the caller's workstreams (own + shared + materialized org clones).
 
-    Org workstreams (owner_type='org', user_id IS NULL) are visible to every
-    authenticated user.  RLS already enforces this; the frontend uses
-    ``owner_type`` to render the Org vs My split.
+    Org templates (owner_type='org') are not returned directly to non-admins.
+    Instead the caller's clone for each template is materialized on first
+    touch (see ``app.clone_service``) and the **clone** is returned with
+    role='owner'.  Admins see the raw templates so they can manage filters.
     """
-    # Two-query fan-out keeps the supabase-py builder simple.  Both queries
-    # return small result sets (≤ tens of rows) so this is cheaper than
-    # learning the .or_() filter syntax.
+    user_id = current_user["id"]
+    admin = is_admin(current_user)
+
+    # Lazy first-touch: ensure non-admin callers have a clone for every org
+    # template.  Cheap when clones already exist (one SELECT, no writes).
+    # Wrapped in ``asyncio.to_thread`` so the sync Supabase calls don't block
+    # the event loop on first-touch materialization (which writes rows).
+    if not admin:
+        await asyncio.to_thread(ensure_user_clones_for_templates, user_id)
+
     own = (
         supabase.table("workstreams")
         .select("*")
-        .eq("user_id", current_user["id"])
+        .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
     )
     memberships = (
         supabase.table("workstream_members")
         .select("workstream_id, role")
-        .eq("user_id", current_user["id"])
+        .eq("user_id", user_id)
         .execute()
     )
     member_role_by_ws = {
@@ -70,28 +81,33 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
             .data
             or []
         )
-    org = (
-        supabase.table("workstreams")
-        .select("*")
-        .eq("owner_type", WORKSTREAM_OWNER_TYPE_ORG)
-        .order("created_at", desc=True)
-        .execute()
-    )
 
-    # Org rows come first (more strategic), then user rows; dedupe by id in
-    # case a future change makes a workstream both org-owned and user-owned.
+    # Admins also see org templates directly (filter/curation surface).
+    admin_templates: list[dict] = []
+    if admin:
+        admin_templates = (
+            supabase.table("workstreams")
+            .select("*")
+            .eq("owner_type", WORKSTREAM_OWNER_TYPE_ORG)
+            .order("created_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
+
     seen: set[str] = set()
     rows: list[dict] = []
-    for ws in (org.data or []) + shared_data + (own.data or []):
+    for ws in admin_templates + shared_data + (own.data or []):
         if ws["id"] in seen:
             continue
         seen.add(ws["id"])
-        if ws.get("user_id") == current_user["id"]:
+        if ws.get("user_id") == user_id:
             ws["role"] = "owner"
         elif ws["id"] in member_role_by_ws:
             ws["role"] = member_role_by_ws[ws["id"]]
         elif ws.get("owner_type") == WORKSTREAM_OWNER_TYPE_ORG:
-            ws["role"] = "org_viewer"
+            # Reachable only for admins per the branch above.
+            ws["role"] = "admin"
         rows.append(ws)
 
     return [Workstream(**ws) for ws in rows]
