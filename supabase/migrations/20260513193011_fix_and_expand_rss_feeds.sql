@@ -197,6 +197,25 @@ WHERE url IN (
     'https://www.brookings.edu/feed/'
 );
 
+-- Force-reset the failure state on the canonical rows. The per-URL UPDATEs
+-- above already do this when they move the legacy row to the canonical URL,
+-- but if the guard skipped (canonical row already existed), the canonical
+-- row may still be carrying status='error' / error_count > 0 from earlier
+-- failed polls — this final pass guarantees it is unpaused.
+UPDATE public.rss_feeds
+SET status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url IN (
+    'https://www.pewresearch.org/feed/',
+    'https://icma.org/rss.xml',
+    'https://www.austintexas.gov/site/news/rss.xml',
+    'https://www.govtech.com/index.rss',
+    'https://www.brookings.edu/feed/atom/'
+);
+
 -- ---------------------------------------------------------------------------
 -- Part 2: Add new feeds to `rss_feeds`
 -- ---------------------------------------------------------------------------
@@ -279,6 +298,20 @@ WHERE category = 'rss'
     'https://icma.org/feed',
     'https://www.govtech.com/rss/',
     'https://www.govtech.com/rss'
+  );
+
+-- Force-reset the failure state on the canonical registry rows (mirrors the
+-- rss_feeds normalization above so a previously-failed canonical row is
+-- guaranteed unpaused even when the guarded UPDATE skipped).
+UPDATE public.discovery_sources_registry
+SET enabled             = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at          = NOW()
+WHERE category = 'rss'
+  AND url IN (
+    'https://icma.org/rss.xml',
+    'https://www.govtech.com/index.rss'
   );
 
 -- ---------------------------------------------------------------------------
