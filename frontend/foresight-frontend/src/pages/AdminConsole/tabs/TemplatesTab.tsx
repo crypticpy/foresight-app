@@ -20,9 +20,28 @@ const HORIZON_LABELS: Record<string, string> = {
   ALL: "All horizons",
 };
 
-function Chip({ children }: { children: React.ReactNode }) {
+function Chip({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "active" | "inactive";
+}) {
+  const toneClasses = {
+    neutral:
+      "border-gray-200 bg-gray-50 text-gray-700 dark:border-gray-700 dark:bg-dark-surface dark:text-gray-300",
+    active:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300",
+    inactive:
+      "border-gray-300 bg-gray-100 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400",
+  }[tone];
   return (
-    <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-dark-surface dark:text-gray-300">
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+        toneClasses,
+      )}
+    >
       {children}
     </span>
   );
@@ -120,7 +139,9 @@ export function TemplatesTab({
                     <h3 className="text-base font-semibold text-gray-900 dark:text-white">
                       {workstream.name}
                     </h3>
-                    {!workstream.is_active && <Chip>Inactive</Chip>}
+                    <Chip tone={workstream.is_active ? "active" : "inactive"}>
+                      {workstream.is_active ? "Active" : "Inactive"}
+                    </Chip>
                   </div>
                   {workstream.description && (
                     <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
