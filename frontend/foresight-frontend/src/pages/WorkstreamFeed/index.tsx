@@ -12,7 +12,11 @@ import { ArrowLeft, Edit, Filter, Loader2 } from "lucide-react";
 import { WorkstreamChatPanel } from "../../components/WorkstreamChatPanel";
 import { useToast } from "../../components/ui/Toast";
 import { useAuthContext } from "../../hooks/useAuthContext";
-import { resolveTemplateIdToClone } from "../../lib/workstream/clone-resolution";
+import { getAuthToken } from "../../lib/auth";
+import {
+  materializeAndResolveTemplateClone,
+  resolveTemplateIdToClone,
+} from "../../lib/workstream/clone-resolution";
 import {
   WorkstreamAccessError,
   downloadWorkstreamExport,
@@ -55,17 +59,41 @@ export default function WorkstreamFeed() {
       setError(null);
 
       // Old bookmarks may point at an org-template id; after the per-user
-      // clones rollout (PR #91) those are RLS-hidden from non-admins.  Redirect
-      // to the caller's clone before loading. resolveTemplateIdToClone returns
-      // null for normal workstream ids.
-      const cloneId = await resolveTemplateIdToClone(id);
-      if (cloneId && cloneId !== id) {
-        navigate(`/workstreams/${cloneId}`, { replace: true });
+      // clones rollout (PR #91) those are RLS-hidden from non-admins. We
+      // resolve in two phases so a normal user-owned workstream load doesn't
+      // pay for the heavy `/me/workstreams` materialization round-trip
+      // (which would also create clones for every untouched org template):
+      //   1. Cheap local pointer lookup — if a clone already exists for
+      //      this template id, redirect to it immediately.
+      //   2. Otherwise try the direct workstream fetch. Only if it fails
+      //      (the RLS-blocked template case) do we trigger server-side
+      //      materialization and re-resolve.
+      const token = await getAuthToken();
+      const existingClone = await resolveTemplateIdToClone(id);
+      if (existingClone && existingClone !== id) {
+        navigate(`/workstreams/${existingClone}`, { replace: true });
         return;
       }
 
-      const data = await fetchWorkstream(id, user.id);
-      setWorkstream(data);
+      try {
+        const data = await fetchWorkstream(id, user.id);
+        setWorkstream(data);
+      } catch (fetchErr) {
+        // Direct fetch failed. If we have a token, attempt the ensuring
+        // path before surfacing the error — could be an unmaterialized
+        // org-template clone.
+        if (token && fetchErr instanceof WorkstreamAccessError) {
+          const materializedClone = await materializeAndResolveTemplateClone(
+            id,
+            token,
+          );
+          if (materializedClone && materializedClone !== id) {
+            navigate(`/workstreams/${materializedClone}`, { replace: true });
+            return;
+          }
+        }
+        throw fetchErr;
+      }
     } catch (err) {
       if (err instanceof WorkstreamAccessError) {
         setError(err.message);
