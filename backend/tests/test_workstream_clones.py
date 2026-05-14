@@ -52,6 +52,7 @@ class _Query:
         self._eq: Dict[str, Any] = {}
         self._in: Dict[str, List[Any]] = {}
         self._on_conflict: Optional[str] = None
+        self._range: Optional[tuple[int, int]] = None
 
     def select(self, *_args, **_kwargs):
         return self
@@ -90,6 +91,11 @@ class _Query:
     def limit(self, *_args, **_kwargs):
         return self
 
+    def range(self, start: int, end: int):
+        # PostgREST range is inclusive on both ends.
+        self._range = (start, end)
+        return self
+
     def _matches(self, row: Dict[str, Any]) -> bool:
         for col, val in self._eq.items():
             if row.get(col) != val:
@@ -101,7 +107,11 @@ class _Query:
 
     def execute(self) -> _MockResponse:
         if self._op == "select":
-            return _MockResponse([r for r in self._table.rows if self._matches(r)])
+            matched = [r for r in self._table.rows if self._matches(r)]
+            if self._range is not None:
+                start, end = self._range
+                matched = matched[start : end + 1]
+            return _MockResponse(matched)
         if self._op == "insert":
             return self._table.insert(self._payload, self._eq)
         if self._op == "upsert":
@@ -728,3 +738,110 @@ def test_fan_out_handles_no_org_templates(monkeypatch):
         "cards_delivered": 0,
         "failures": 0,
     }
+
+
+def test_fan_out_paginates_clone_pointers_past_postgrest_cap(monkeypatch):
+    """When user_workstream_clones has more rows than PostgREST's page cap,
+    fan_out_clones must walk every pointer rather than dropping the tail.
+
+    The codex review on PR #93 flagged this as P2: an unbounded ``.select()``
+    only returns the first page of results, so users beyond the cap silently
+    miss their weekly delivery. We shrink ``_PAGE_SIZE`` for the test so the
+    pagination path is exercised with a small number of pointers.
+    """
+    import app.clone_service as cs
+
+    template_id = _uuid()
+    card_id = _uuid()
+
+    pointer_count = 5
+    pointers = []
+    clones = []
+    workstream_cards = []
+    for i in range(pointer_count):
+        user_id = _uuid()
+        clone_id = _uuid()
+        pointers.append(
+            {
+                "user_id": user_id,
+                "template_id": template_id,
+                "clone_workstream_id": clone_id,
+                "last_fanout_at": "2026-05-07T00:00:00Z",
+            }
+        )
+        clones.append(
+            {
+                "id": clone_id,
+                "user_id": user_id,
+                "owner_type": "user_clone",
+                "cloned_from_id": template_id,
+            }
+        )
+
+    workstreams = [
+        {"id": template_id, "user_id": None, "owner_type": "org"},
+        *clones,
+    ]
+    # Template has one card in its pool.
+    workstream_cards.append(
+        {
+            "workstream_id": template_id,
+            "card_id": card_id,
+            "status": "inbox",
+            "position": 0,
+        }
+    )
+    cards = [{"id": card_id, "created_at": "2026-04-01T00:00:00Z"}]
+
+    tables = {
+        "workstreams": _Table("workstreams", workstreams),
+        "workstream_cards": _Table("workstream_cards", workstream_cards),
+        "user_workstream_clones": _Table("user_workstream_clones", pointers),
+        "user_workstream_card_dismissals": _Table(
+            "user_workstream_card_dismissals", []
+        ),
+        "cards": _Table("cards", cards),
+    }
+    monkeypatch.setattr(cs, "supabase", _MockSupabase(tables))
+    # Force pagination — 5 pointers across pages of size 2 means the paginator
+    # has to fetch three pages (2 + 2 + 1) to drain the set.
+    monkeypatch.setattr(cs, "_PAGE_SIZE", 2)
+
+    summary = cs.fan_out_clones()
+    assert summary["clones_processed"] == pointer_count, (
+        "every clone pointer must be processed despite PostgREST's response cap"
+    )
+    assert summary["cards_delivered"] == pointer_count
+    assert summary["failures"] == 0
+
+
+def test_fan_out_delivered_count_falls_back_when_insert_returns_no_data(
+    monkeypatch, fanout_world
+):
+    """Some PostgREST configurations return ``data=[]`` from an INSERT even
+    when the write succeeded; the summary count must reflect the attempted
+    inserts rather than silently reporting zero deliveries.
+    """
+    import app.clone_service as cs
+
+    monkeypatch.setattr(cs, "supabase", fanout_world["supabase"])
+
+    # Force the workstream_cards table to acknowledge inserts without
+    # returning the inserted rows. The rows are still written to the
+    # underlying list — we just suppress the echo on the insert response.
+    original_insert = fanout_world["tables"]["workstream_cards"].insert
+
+    def insert_without_returning(payload, _eq):
+        resp = original_insert(payload, _eq)
+        # Drain the response so callers see ``data == []``; the side-effect
+        # write into ``self.rows`` already happened inside ``original_insert``.
+        resp.data = []
+        return resp
+
+    fanout_world["tables"]["workstream_cards"].insert = insert_without_returning  # type: ignore[method-assign]
+
+    summary = cs.fan_out_clones()
+    # Alpha gains 2, beta gains 2 — same as the happy-path test — but now
+    # we're proving the count is correct even when the insert response is
+    # empty.
+    assert summary["cards_delivered"] == 4

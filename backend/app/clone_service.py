@@ -17,15 +17,45 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from app.deps import supabase
 
 logger = logging.getLogger(__name__)
 
+# PostgREST caps a single response at 1000 rows by default.  Page through
+# any query whose result set can plausibly exceed that ceiling in production.
+_PAGE_SIZE = 1000
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _paginate(build_query: Callable[[], Any]) -> list[dict[str, Any]]:
+    """Drain a PostgREST query past the default response cap.
+
+    ``build_query`` is a no-arg callable that returns a fresh, filter-applied
+    builder (pre-``execute()``).  We call it once per page so the supabase
+    client doesn't reuse a built request object across ``range()`` calls.
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        page = (
+            build_query()
+            .range(start, start + _PAGE_SIZE - 1)
+            .execute()
+            .data
+            or []
+        )
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            break
+        start += _PAGE_SIZE
+    return rows
 
 
 def _list_org_templates() -> list[dict[str, Any]]:
@@ -248,13 +278,10 @@ def _fan_out_to_one_clone(
     ``last_fanout_at`` even when nothing was delivered, so the watermark
     advances on every run.
     """
-    existing = (
-        supabase.table("workstream_cards")
+    existing = _paginate(
+        lambda: supabase.table("workstream_cards")
         .select("card_id, status, position")
         .eq("workstream_id", clone_id)
-        .execute()
-        .data
-        or []
     )
     existing_ids = {r["card_id"] for r in existing if r.get("card_id")}
     inbox_positions = [
@@ -264,14 +291,11 @@ def _fan_out_to_one_clone(
     ]
     next_position = (max(inbox_positions) + 1) if inbox_positions else 0
 
-    dismissed = (
-        supabase.table("user_workstream_card_dismissals")
+    dismissed = _paginate(
+        lambda: supabase.table("user_workstream_card_dismissals")
         .select("card_id")
         .eq("user_id", user_id)
         .eq("template_id", template_id)
-        .execute()
-        .data
-        or []
     )
     dismissed_ids = {r["card_id"] for r in dismissed if r.get("card_id")}
 
@@ -279,18 +303,19 @@ def _fan_out_to_one_clone(
 
     delivered = 0
     if new_card_ids:
-        # Order new cards by underlying created_at ascending so the oldest
-        # unseen cards land at the top of the new batch (matches first-touch
-        # ordering and avoids surprising shuffles between weekly fans).
-        card_rows = (
-            supabase.table("cards")
+        # Order new cards by underlying created_at ascending (with id as a
+        # deterministic tiebreaker for same-timestamp cards) so the oldest
+        # unseen cards land at the top of the new batch and weekly runs are
+        # reproducible.
+        new_card_id_list = list(new_card_ids)
+        card_rows = _paginate(
+            lambda: supabase.table("cards")
             .select("id, created_at")
-            .in_("id", list(new_card_ids))
-            .execute()
-            .data
-            or []
+            .in_("id", new_card_id_list)
         )
-        card_rows.sort(key=lambda r: r.get("created_at") or "")
+        card_rows.sort(
+            key=lambda r: ((r.get("created_at") or ""), (r.get("id") or ""))
+        )
         rows_to_insert = [
             {
                 "workstream_id": clone_id,
@@ -308,7 +333,10 @@ def _fan_out_to_one_clone(
             inserted = (
                 supabase.table("workstream_cards").insert(rows_to_insert).execute()
             )
-            delivered = len(inserted.data or [])
+            # Some PostgREST configs return [] from insert despite a successful
+            # write; fall back to the row count we attempted so the summary
+            # log line stays accurate.
+            delivered = len(inserted.data) if inserted.data else len(rows_to_insert)
 
     supabase.table("user_workstream_clones").update(
         {"last_fanout_at": now_iso}
@@ -352,23 +380,21 @@ def fan_out_clones() -> dict[str, int]:
     for template in templates:
         template_id = template["id"]
         try:
-            pool_rows = (
-                supabase.table("workstream_cards")
+            pool_rows = _paginate(
+                lambda tid=template_id: supabase.table("workstream_cards")
                 .select("card_id")
-                .eq("workstream_id", template_id)
-                .execute()
-                .data
-                or []
+                .eq("workstream_id", tid)
             )
             pool_card_ids = {r["card_id"] for r in pool_rows if r.get("card_id")}
 
-            pointers = (
-                supabase.table("user_workstream_clones")
+            # Paginate clone pointers — an org template can fan out to far more
+            # than PostgREST's default 1000-row response cap once we have real
+            # users, and dropping the tail of the page silently would skip
+            # whole users' deliveries until they happened to refresh.
+            pointers = _paginate(
+                lambda tid=template_id: supabase.table("user_workstream_clones")
                 .select("user_id, clone_workstream_id")
-                .eq("template_id", template_id)
-                .execute()
-                .data
-                or []
+                .eq("template_id", tid)
             )
             summary["templates"] += 1
 
