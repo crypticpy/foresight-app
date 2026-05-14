@@ -51,7 +51,12 @@
 --     - Government Executive (govexec.com/rss/all/)
 --
 -- IDEMPOTENCY:
---   - URL fixes use UPDATE on `rss_feeds.url` and `discovery_sources_registry.url`.
+--   - URL fixes use UPDATE on `rss_feeds.url` and `discovery_sources_registry.url`,
+--     each guarded with `NOT EXISTS` against the target URL so a re-run (or an
+--     environment where both old and new URLs already coexist) cannot violate
+--     the unique constraints (`rss_feeds.url`, `discovery_sources_registry
+--     (category, url)`). A trailing DELETE cleans up any rows still keyed by the
+--     old URL when the guard skipped the UPDATE.
 --   - New rows use ON CONFLICT (...) DO NOTHING.
 --   Re-running is safe.
 --
@@ -86,6 +91,12 @@
 -- ---------------------------------------------------------------------------
 -- For each fix we also reset error_count / last_error so the worker doesn't
 -- keep the row in a paused/error state on its next pass.
+--
+-- Each UPDATE is guarded with `AND NOT EXISTS (... new url ...)` to defend
+-- against the `rss_feeds.url` UNIQUE constraint on environments where both
+-- the old and new URLs already coexist (e.g. partial manual repairs or
+-- staggered deploys). In that case the row keyed by the old URL is left in
+-- place and the cleanup block at the end removes the duplicate.
 
 UPDATE public.rss_feeds
 SET url           = 'https://www.pewresearch.org/feed/',
@@ -95,7 +106,11 @@ SET url           = 'https://www.pewresearch.org/feed/',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url = 'https://www.pewtrusts.org/en/rss/all';
+WHERE url = 'https://www.pewtrusts.org/en/rss/all'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.pewresearch.org/feed/'
+  );
 
 UPDATE public.rss_feeds
 SET url           = 'https://icma.org/rss.xml',
@@ -104,7 +119,11 @@ SET url           = 'https://icma.org/rss.xml',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url = 'https://icma.org/feed';
+WHERE url = 'https://icma.org/feed'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://icma.org/rss.xml'
+  );
 
 UPDATE public.rss_feeds
 SET url           = 'https://www.austintexas.gov/site/news/rss.xml',
@@ -113,7 +132,11 @@ SET url           = 'https://www.austintexas.gov/site/news/rss.xml',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url = 'https://www.austintexas.gov/rss.xml';
+WHERE url = 'https://www.austintexas.gov/rss.xml'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.austintexas.gov/site/news/rss.xml'
+  );
 
 UPDATE public.rss_feeds
 SET url           = 'https://www.govtech.com/index.rss',
@@ -122,7 +145,11 @@ SET url           = 'https://www.govtech.com/index.rss',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url = 'https://www.govtech.com/rss';
+WHERE url IN ('https://www.govtech.com/rss', 'https://www.govtech.com/rss/')
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.govtech.com/index.rss'
+  );
 
 UPDATE public.rss_feeds
 SET url           = 'https://www.brookings.edu/feed/atom/',
@@ -131,7 +158,24 @@ SET url           = 'https://www.brookings.edu/feed/atom/',
     last_error    = NULL,
     next_check_at = NOW(),
     updated_at    = NOW()
-WHERE url = 'https://www.brookings.edu/feed/';
+WHERE url = 'https://www.brookings.edu/feed/'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.brookings.edu/feed/atom/'
+  );
+
+-- Clean up any rows still keyed by the old broken URLs (only present when the
+-- guard above skipped because the new URL already existed). Without this the
+-- worker would keep polling the broken URL forever.
+DELETE FROM public.rss_feeds
+WHERE url IN (
+    'https://www.pewtrusts.org/en/rss/all',
+    'https://icma.org/feed',
+    'https://www.austintexas.gov/rss.xml',
+    'https://www.govtech.com/rss',
+    'https://www.govtech.com/rss/',
+    'https://www.brookings.edu/feed/'
+);
 
 -- ---------------------------------------------------------------------------
 -- Part 2: Add new feeds to `rss_feeds`
@@ -151,12 +195,19 @@ INSERT INTO public.rss_feeds (url, name, category) VALUES
 ON CONFLICT (url) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- Part 3: Fix the broken ICMA URL in `discovery_sources_registry`
+-- Part 3: Fix broken URLs in `discovery_sources_registry`
 -- ---------------------------------------------------------------------------
--- This is the only fix needed here: the registry already used icma.org/rss.xml
--- in the 20260512000005 seed migration, but if any environment was bootstrapped
--- earlier with icma.org/feed we update it here. UPDATE is a no-op on envs that
--- already have the correct value.
+-- ICMA: the 20260512000005 public-safety seed inserted icma.org/rss.xml. If an
+-- environment was bootstrapped earlier with icma.org/feed we update it here.
+-- Both rows can coexist in environments where 20260512000005 ran without first
+-- removing the legacy row, so guard the UPDATE with NOT EXISTS against the
+-- (category, url) unique constraint and delete any leftover legacy row.
+--
+-- GovTech: 20260509000001 inserted https://www.govtech.com/rss/ into the
+-- registry, but the rss_feeds table has https://www.govtech.com/rss (no
+-- trailing slash). build_discovery_config() overlays enabled registry rows on
+-- top of rss_feeds, so the broken URL still drives discovery polling until we
+-- fix it here too. Cover both variants the registry might hold.
 
 UPDATE public.discovery_sources_registry
 SET url        = 'https://icma.org/rss.xml',
@@ -164,7 +215,35 @@ SET url        = 'https://icma.org/rss.xml',
     last_failure_at     = NULL,
     last_failure_reason = NULL,
     updated_at = NOW()
-WHERE category = 'rss' AND url = 'https://icma.org/feed';
+WHERE category = 'rss'
+  AND url = 'https://icma.org/feed'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://icma.org/rss.xml'
+  );
+
+UPDATE public.discovery_sources_registry
+SET url        = 'https://www.govtech.com/index.rss',
+    enabled    = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at = NOW()
+WHERE category = 'rss'
+  AND url IN ('https://www.govtech.com/rss/', 'https://www.govtech.com/rss')
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://www.govtech.com/index.rss'
+  );
+
+-- Clean up legacy rows that survived the NOT EXISTS guard above (only present
+-- when the canonical row already existed and the UPDATE was skipped).
+DELETE FROM public.discovery_sources_registry
+WHERE category = 'rss'
+  AND url IN (
+    'https://icma.org/feed',
+    'https://www.govtech.com/rss/',
+    'https://www.govtech.com/rss'
+  );
 
 -- ---------------------------------------------------------------------------
 -- Part 4: Add the same 10 new feeds to `discovery_sources_registry`
