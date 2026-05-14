@@ -188,6 +188,7 @@ export const DiscoverCard = React.memo(function DiscoverCard({
       </div>
       {!compareMode && (
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onToggleFollow(card.id);
