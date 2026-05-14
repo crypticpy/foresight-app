@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type { User } from "@supabase/supabase-js";
 
@@ -18,6 +19,7 @@ import {
   autoPopulateWorkstream,
   fetchWorkstreamCards,
 } from "../../lib/workstream-api";
+import { resolveTemplateIdToClone } from "../../lib/workstream/clone-resolution";
 import type { KanbanStatus, WorkstreamCard } from "../../components/kanban";
 import type { Workstream } from "../../components/WorkstreamForm";
 
@@ -41,6 +43,7 @@ export function useWorkstreamData({
   user,
   showToast,
 }: UseWorkstreamDataOptions) {
+  const navigate = useNavigate();
   const [workstream, setWorkstream] = useState<Workstream | null>(null);
   const [cards, setCards] =
     useState<Record<KanbanStatus, WorkstreamCard[]>>(EMPTY_COLUMNS);
@@ -52,6 +55,17 @@ export function useWorkstreamData({
 
   const loadWorkstream = useCallback(async () => {
     if (!workstreamId || !user) return;
+
+    // If the URL points at an org-template id (e.g. an old bookmark from
+    // before the per-user clones rollout), redirect to the caller's clone.
+    // resolveTemplateIdToClone returns null for normal workstream ids, so
+    // this is a single extra round-trip in the common case.
+    const cloneId = await resolveTemplateIdToClone(workstreamId);
+    if (cloneId && cloneId !== workstreamId) {
+      navigate(`/workstreams/${cloneId}/board`, { replace: true });
+      return;
+    }
+
     try {
       const { data, error: fetchError } = await supabase
         .from("workstreams")
@@ -84,7 +98,7 @@ export function useWorkstreamData({
       console.error("Error loading workstream:", err);
       setError("An unexpected error occurred.");
     }
-  }, [workstreamId, user]);
+  }, [workstreamId, user, navigate]);
 
   const loadCards = useCallback(async () => {
     if (!workstreamId) return;
