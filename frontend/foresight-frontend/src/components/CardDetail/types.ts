@@ -176,7 +176,8 @@ export type CardDetailTab =
   | "notes"
   | "related"
   | "assets"
-  | "chat";
+  | "chat"
+  | "discussion";
 
 /**
  * Score color classes for consistent styling across components

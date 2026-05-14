@@ -28,6 +28,7 @@ import {
   TrendingUp,
   GitBranch,
   FolderOpen,
+  MessageCircle,
   MessageSquare,
   Microscope,
 } from "lucide-react";
@@ -62,6 +63,7 @@ import { TimelineTab } from "./tabs/TimelineTab";
 import { NotesTab } from "./tabs/NotesTab";
 import { ResearchTab } from "./tabs/ResearchTab";
 import { AssetsTab } from "./AssetsTab";
+import { CommentThread } from "../comments/CommentThread";
 import { ScoreTimelineChart } from "../visualizations/ScoreTimelineChart";
 import { ConceptNetworkDiagram } from "../visualizations/ConceptNetworkDiagram";
 
@@ -233,6 +235,7 @@ export const CardDetail: React.FC<CardDetailProps> = ({
       ...(!readOnly
         ? [{ id: "chat" as const, name: "Chat", icon: MessageSquare }]
         : []),
+      { id: "discussion" as const, name: "Discussion", icon: MessageCircle },
       { id: "assets" as const, name: "Assets", icon: FolderOpen },
     ],
     [readOnly],
@@ -443,6 +446,15 @@ export const CardDetail: React.FC<CardDetailProps> = ({
             primaryPillar={card.pillar_id}
           />
         </Suspense>
+      )}
+      {activeTab === "discussion" && (
+        <CommentThread
+          targetType="card"
+          targetId={card.id}
+          canComment={!readOnly && Boolean(user)}
+          title="Signal discussion"
+          emptyHint="Be the first to start a discussion on this signal."
+        />
       )}
       {activeTab === "assets" && (
         <AssetsTab
