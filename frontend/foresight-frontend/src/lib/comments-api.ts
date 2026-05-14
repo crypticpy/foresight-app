@@ -54,10 +54,21 @@ export class CommentsDisabledError extends Error {
   }
 }
 
+/**
+ * @param detectDisabled  When true, a 404 with `{"detail": "Not found"}`
+ *   (the exact body `feature_flags.require_feature_enabled` raises) is
+ *   surfaced as `CommentsDisabledError`. Only callers that operate on a
+ *   collection — list / create — should opt in, because for those endpoints
+ *   a 404 can only mean "router gated off". Per-resource endpoints
+ *   (PATCH / DELETE / reactions on a specific comment id) leave this off so
+ *   a real "comment was deleted by someone else" 404 doesn't get
+ *   misclassified as "feature disabled".
+ */
 async function apiRequest<T>(
   endpoint: string,
   token: string,
   options: RequestInit = {},
+  detectDisabled = false,
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
@@ -67,22 +78,18 @@ async function apiRequest<T>(
       ...options.headers,
     },
   });
-  if (response.status === 404) {
-    // The comments router 404s wholesale when the feature flag is off (see
-    // feature_flags.collaboration_enabled). A 404 on list / create reliably
-    // means "feature disabled" — list returns [] for a real empty thread,
-    // create can only 404 by missing comment id on PATCH/DELETE.
-    const body = await response.json().catch(() => ({ detail: "Not found" }));
-    if (body?.detail === "Not found") {
-      throw new CommentsDisabledError();
-    }
-    throw new Error(body.detail ?? "Not found");
-  }
   if (!response.ok) {
     const body = await response
       .json()
-      .catch(() => ({ detail: "Request failed" }));
-    throw new Error(body.detail ?? `API error: ${response.status}`);
+      .catch(() => ({ detail: `API error: ${response.status}` }));
+    if (
+      detectDisabled &&
+      response.status === 404 &&
+      body?.detail === "Not found"
+    ) {
+      throw new CommentsDisabledError();
+    }
+    throw new Error(body?.detail ?? `API error: ${response.status}`);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -102,6 +109,8 @@ export function listComments(
   return apiRequest<CommentItem[]>(
     `/api/v1/comments?${params.toString()}`,
     token,
+    {},
+    /* detectDisabled */ true,
   );
 }
 
@@ -115,10 +124,12 @@ export function createComment(
     parent_id?: string;
   },
 ) {
-  return apiRequest<CommentItem>("/api/v1/comments", token, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiRequest<CommentItem>(
+    "/api/v1/comments",
+    token,
+    { method: "POST", body: JSON.stringify(body) },
+    /* detectDisabled */ true,
+  );
 }
 
 export function updateComment(

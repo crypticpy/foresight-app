@@ -371,10 +371,17 @@ export function CommentThread({
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const token = await getAuthToken();
-    if (!token) return;
+    setLoading(true);
     try {
-      setLoading(true);
+      const token = await getAuthToken();
+      if (!token) {
+        // Unauthenticated callers can't fetch comments — bail out without
+        // leaving the spinner spinning forever. Falls through to the empty
+        // state, matching what the UI shows for a real empty thread.
+        setComments([]);
+        setError(null);
+        return;
+      }
       const next = await listComments(
         token,
         targetType,
