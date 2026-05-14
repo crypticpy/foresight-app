@@ -331,6 +331,35 @@ async def run_digest_batch():
         logger.error(f"Digest batch processing failed: {e}")
 
 
+async def run_friday_clone_fanout():
+    """Deliver newly-classified cards into every user_clone workstream.
+
+    Friday 06:00 America/Chicago.  Walks every ``user_workstream_clones``
+    pointer, computes the diff between the template's pool and what the
+    user has already seen or dismissed, and inserts the new cards into
+    the clone inbox.  See ``app.clone_service.fan_out_clones``.
+
+    Supabase calls are sync; run them off the event loop via
+    ``asyncio.to_thread`` so the scheduler thread isn't blocked while
+    the job is running.
+    """
+    from app.clone_service import fan_out_clones
+
+    logger.info("Starting weekly workstream-clone fan-out...")
+    try:
+        summary = await asyncio.to_thread(fan_out_clones)
+        logger.info(
+            "Weekly workstream-clone fan-out complete: %d templates, %d clones, "
+            "%d cards delivered, %d failures",
+            summary.get("templates", 0),
+            summary.get("clones_processed", 0),
+            summary.get("cards_delivered", 0),
+            summary.get("failures", 0),
+        )
+    except Exception as e:
+        logger.error("Weekly workstream-clone fan-out failed: %s", e, exc_info=True)
+
+
 async def run_abuse_monitor():
     """Periodic usage-anomaly aggregation.
 
@@ -449,6 +478,21 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Weekly workstream-clone fan-out — Fridays 06:00 America/Chicago.
+    # Pinned to local time so the job lands at a predictable Austin morning
+    # regardless of DST shifts (other jobs use UTC because their cadence
+    # doesn't matter to end users).
+    scheduler.add_job(
+        run_friday_clone_fanout,
+        "cron",
+        day_of_week="fri",
+        hour=6,
+        minute=0,
+        timezone="America/Chicago",
+        id="weekly_workstream_clone_fanout",
+        replace_existing=True,
+    )
+
     # Abuse monitor every 30 min — cheap aggregation over the last hour
     scheduler.add_job(
         run_abuse_monitor,
@@ -466,7 +510,8 @@ def start_scheduler():
         "pattern detection at 7:00 AM UTC, "
         "velocity calculation at 7:30 AM UTC, "
         "digest batch at 8:00 AM UTC, "
-        "weekly discovery Sundays at 2:00 AM UTC"
+        "weekly discovery Sundays at 2:00 AM UTC, "
+        "workstream-clone fan-out Fridays at 6:00 AM America/Chicago"
     )
 
 

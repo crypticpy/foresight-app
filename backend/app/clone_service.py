@@ -1,17 +1,16 @@
-"""Per-user workstream-clone materialization.
+"""Per-user workstream-clone materialization + Friday fan-out.
 
-Implements the lazy first-touch model from
-``docs/26_per_user_workstream_clones_plan.md``:
+Implements the model from ``docs/26_per_user_workstream_clones_plan.md``:
 
 - **First-touch** (``ensure_user_clones_for_templates``): every user gets
   a private clone of every ``owner_type='org'`` template on first read.
+- **Friday fan-out** (``fan_out_clones``): a weekly scheduled job walks
+  every pointer row, finds cards added to the template's pool since the
+  user already received them, and inserts them into the user's clone
+  inbox — skipping anything the user has dismissed.
 - **Dismissals** (``record_dismissal_if_clone``): when a user removes a
-  card from a clone, a tombstone is written so the future Friday fan-out
-  job never re-delivers the same card.
-
-The Friday fan-out job itself ships in PR-B — this module only handles
-first-touch materialization, the dismissal tombstone, and the lookup
-helper used by the kanban router.
+  card from a clone, a tombstone is written so the Friday job never
+  re-delivers the same card.
 """
 
 from __future__ import annotations
@@ -233,6 +232,185 @@ def ensure_user_clones_for_templates(user_id: str) -> dict[str, str]:
             continue
 
     return clone_by_template
+
+
+def _fan_out_to_one_clone(
+    *,
+    template_id: str,
+    user_id: str,
+    clone_id: str,
+    pool_card_ids: set[str],
+    now_iso: str,
+) -> int:
+    """Insert pool cards the user hasn't seen or dismissed into a single clone.
+
+    Returns the number of cards delivered.  Always bumps the pointer's
+    ``last_fanout_at`` even when nothing was delivered, so the watermark
+    advances on every run.
+    """
+    existing = (
+        supabase.table("workstream_cards")
+        .select("card_id, status, position")
+        .eq("workstream_id", clone_id)
+        .execute()
+        .data
+        or []
+    )
+    existing_ids = {r["card_id"] for r in existing if r.get("card_id")}
+    inbox_positions = [
+        r["position"]
+        for r in existing
+        if r.get("status") == "inbox" and r.get("position") is not None
+    ]
+    next_position = (max(inbox_positions) + 1) if inbox_positions else 0
+
+    dismissed = (
+        supabase.table("user_workstream_card_dismissals")
+        .select("card_id")
+        .eq("user_id", user_id)
+        .eq("template_id", template_id)
+        .execute()
+        .data
+        or []
+    )
+    dismissed_ids = {r["card_id"] for r in dismissed if r.get("card_id")}
+
+    new_card_ids = pool_card_ids - existing_ids - dismissed_ids
+
+    delivered = 0
+    if new_card_ids:
+        # Order new cards by underlying created_at ascending so the oldest
+        # unseen cards land at the top of the new batch (matches first-touch
+        # ordering and avoids surprising shuffles between weekly fans).
+        card_rows = (
+            supabase.table("cards")
+            .select("id, created_at")
+            .in_("id", list(new_card_ids))
+            .execute()
+            .data
+            or []
+        )
+        card_rows.sort(key=lambda r: r.get("created_at") or "")
+        rows_to_insert = [
+            {
+                "workstream_id": clone_id,
+                "card_id": card["id"],
+                "added_by": user_id,
+                "added_at": now_iso,
+                "status": "inbox",
+                "position": next_position + idx,
+                "added_from": "auto",
+                "updated_at": now_iso,
+            }
+            for idx, card in enumerate(card_rows)
+        ]
+        if rows_to_insert:
+            inserted = (
+                supabase.table("workstream_cards").insert(rows_to_insert).execute()
+            )
+            delivered = len(inserted.data or [])
+
+    supabase.table("user_workstream_clones").update(
+        {"last_fanout_at": now_iso}
+    ).eq("user_id", user_id).eq("template_id", template_id).execute()
+
+    return delivered
+
+
+def fan_out_clones() -> dict[str, int]:
+    """Walk every clone pointer and deliver new template cards.
+
+    For each org template, read the current card pool and the set of
+    clones pointing at it; per-clone, insert any pool cards the user has
+    not yet received and has not dismissed.
+
+    Failures on one (template, clone) pair are logged and do not block
+    the rest of the run — the Friday cadence retries weekly.
+
+    Returns a summary dict (``templates``, ``clones_processed``,
+    ``cards_delivered``, ``failures``) for the scheduler log line.
+    """
+    summary = {
+        "templates": 0,
+        "clones_processed": 0,
+        "cards_delivered": 0,
+        "failures": 0,
+    }
+    now_iso = _now_iso()
+
+    templates = (
+        supabase.table("workstreams")
+        .select("id")
+        .eq("owner_type", "org")
+        .execute()
+        .data
+        or []
+    )
+    if not templates:
+        return summary
+
+    for template in templates:
+        template_id = template["id"]
+        try:
+            pool_rows = (
+                supabase.table("workstream_cards")
+                .select("card_id")
+                .eq("workstream_id", template_id)
+                .execute()
+                .data
+                or []
+            )
+            pool_card_ids = {r["card_id"] for r in pool_rows if r.get("card_id")}
+
+            pointers = (
+                supabase.table("user_workstream_clones")
+                .select("user_id, clone_workstream_id")
+                .eq("template_id", template_id)
+                .execute()
+                .data
+                or []
+            )
+            summary["templates"] += 1
+
+            for ptr in pointers:
+                user_id = ptr.get("user_id")
+                clone_id = ptr.get("clone_workstream_id")
+                if not user_id or not clone_id:
+                    continue
+                try:
+                    delivered = _fan_out_to_one_clone(
+                        template_id=template_id,
+                        user_id=user_id,
+                        clone_id=clone_id,
+                        pool_card_ids=pool_card_ids,
+                        now_iso=now_iso,
+                    )
+                    summary["clones_processed"] += 1
+                    summary["cards_delivered"] += delivered
+                except Exception as exc:  # noqa: BLE001 — best-effort per clone
+                    summary["failures"] += 1
+                    logger.exception(
+                        "Fan-out failed for clone %s (user %s, template %s): %s",
+                        clone_id,
+                        user_id,
+                        template_id,
+                        exc,
+                    )
+        except Exception as exc:  # noqa: BLE001 — best-effort per template
+            summary["failures"] += 1
+            logger.exception(
+                "Fan-out failed for template %s: %s", template_id, exc
+            )
+
+    logger.info(
+        "Workstream-clone fan-out complete: %d templates, %d clones, "
+        "%d cards delivered, %d failures",
+        summary["templates"],
+        summary["clones_processed"],
+        summary["cards_delivered"],
+        summary["failures"],
+    )
+    return summary
 
 
 def template_id_for_workstream(workstream_id: str) -> str | None:
