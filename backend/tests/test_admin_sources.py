@@ -204,6 +204,10 @@ def test_list_sources_joins_health_stats(monkeypatch):
 
     source_id = str(uuid.uuid4())
     rss_url = "https://example.com/feed"
+    # Single "now" reference so all three mock rows share one anchor and a
+    # midnight-rollover during fixture construction can't shift one row's day
+    # relative to the others.
+    now = datetime.now(timezone.utc)
     tables = {
         "discovery_sources_registry": [
             {
@@ -224,23 +228,17 @@ def test_list_sources_joins_health_stats(monkeypatch):
             {
                 "url": rss_url,
                 "triage_is_relevant": True,
-                "created_at": (
-                    datetime.now(timezone.utc) - timedelta(days=2)
-                ).isoformat(),
+                "created_at": (now - timedelta(days=2)).isoformat(),
             },
             {
                 "url": rss_url,
                 "triage_is_relevant": True,
-                "created_at": (
-                    datetime.now(timezone.utc) - timedelta(days=1)
-                ).isoformat(),
+                "created_at": (now - timedelta(days=1)).isoformat(),
             },
             {
                 "url": rss_url,
                 "triage_is_relevant": False,
-                "created_at": (
-                    datetime.now(timezone.utc) - timedelta(days=1)
-                ).isoformat(),
+                "created_at": (now - timedelta(days=1)).isoformat(),
             },
         ],
     }
