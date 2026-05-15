@@ -15,6 +15,9 @@
 --     to public.users from the auth schema without depending on the caller's
 --     search_path (matches the convention in 20260512000003).
 --   * Trigger drops and re-creates idempotently.
+--   * public.users.email is NOT NULL. The trigger skips auth rows with a NULL
+--     email rather than crashing the auth.users INSERT — this matches the
+--     backfill's `au.email IS NOT NULL` filter so legacy and new behavior agree.
 
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS TRIGGER
@@ -23,6 +26,12 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  -- Skip auth rows without an email. public.users.email is NOT NULL, so
+  -- attempting the insert would abort the surrounding auth.users INSERT.
+  IF NEW.email IS NULL THEN
+    RETURN NEW;
+  END IF;
+
   INSERT INTO public.users (id, email, account_type)
   VALUES (NEW.id, NEW.email, 'paid')
   ON CONFLICT (id) DO NOTHING;
