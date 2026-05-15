@@ -16,6 +16,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -215,10 +216,32 @@ def test_list_sources_joins_health_stats(monkeypatch):
                 "config": {},
             }
         ],
+        # Anchor the mock rows to "now" so all three fall inside the rolling
+        # 7-day window the production query uses (>= now() - 7 days). Fixed
+        # date literals drift outside the window after a week and turn this
+        # test into a date-relative flake.
         "discovered_sources": [
-            {"url": rss_url, "triage_is_relevant": True, "created_at": "2026-05-08"},
-            {"url": rss_url, "triage_is_relevant": True, "created_at": "2026-05-09"},
-            {"url": rss_url, "triage_is_relevant": False, "created_at": "2026-05-09"},
+            {
+                "url": rss_url,
+                "triage_is_relevant": True,
+                "created_at": (
+                    datetime.now(timezone.utc) - timedelta(days=2)
+                ).isoformat(),
+            },
+            {
+                "url": rss_url,
+                "triage_is_relevant": True,
+                "created_at": (
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ).isoformat(),
+            },
+            {
+                "url": rss_url,
+                "triage_is_relevant": False,
+                "created_at": (
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ).isoformat(),
+            },
         ],
     }
     mock_sb = _MockSupabase(tables)
