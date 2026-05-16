@@ -420,6 +420,39 @@ def test_followed_sort_filters_before_slice(patch_supabase):
     assert page1["next_offset"] == 2
 
 
+def test_followed_sort_excludes_archived_before_slice(patch_supabase):
+    """Archived cards must be excluded BEFORE slicing on the followed-sort
+    path, even when no search/pillar/horizon/quality_min filter is active.
+
+    Without the status=active prefilter, a page-size=2 fetch from
+    [active, archived, active] (in followed-by-recency order) would slice
+    [active, archived], then the row fetch's `status=active` clause would
+    drop the archived row → under-filled page and `has_more` could read
+    False even though more matching cards exist.
+    """
+    patch_supabase(
+        {
+            "cards": [
+                _make_card("c-active-1"),
+                _make_card("c-archived", status="archived"),
+                _make_card("c-active-2"),
+            ],
+            "card_follows": [
+                {"card_id": "c-active-1", "user_id": USER_ID, "created_at": "2026-05-15T00:00:00Z"},
+                {"card_id": "c-archived", "user_id": USER_ID, "created_at": "2026-05-14T00:00:00Z"},
+                {"card_id": "c-active-2", "user_id": USER_ID, "created_at": "2026-05-13T00:00:00Z"},
+            ],
+            "workstreams": [],
+        }
+    )
+    result = _call_feed(sort_by="followed", limit=2, offset=0)
+    feed_ids = [s["id"] for s in result["signals"]]
+    assert feed_ids == ["c-active-1", "c-active-2"], (
+        "unfiltered followed-sort must exclude archived cards before slicing"
+    )
+    assert result["has_more"] is False
+
+
 def test_stats_followed_and_created_counts_are_filter_aware(patch_supabase):
     """followed_count + created_count must honor the active filter set.
 

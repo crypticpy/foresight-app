@@ -876,33 +876,31 @@ async def _fetch_cards_page(
 
     # sort_by == "followed" — sort field lives on card_follows, not cards.
     # We must filter BEFORE slicing: filtering after the slice would under-fill
-    # pages and break `has_more` whenever a search/pillar/horizon/quality_min
-    # filter is active (a sliced ID can be rejected by the filter while later
-    # matching IDs become unreachable). Strategy: ask Postgres for the set of
-    # IDs that pass the filters, intersect with the in-memory followed order,
-    # then slice — so pagination + filtering stay aligned.
-    if search or pillar or horizon or (quality_min is not None and quality_min > 0):
-        def fetch_filtered_ids() -> List[str]:
-            q = (
-                supabase.table("cards")
-                .select("id")
-                .in_("id", ids)
-                .eq("status", "active")
-            )
-            q = _apply_card_filters(
-                q,
-                search=search,
-                pillar=pillar,
-                horizon=horizon,
-                quality_min=quality_min,
-            )
-            return [r["id"] for r in (q.execute().data or []) if r.get("id")]
+    # pages and break `has_more` whenever ANY predicate that lives on the row
+    # (status=active OR a search/pillar/horizon/quality_min filter) excludes a
+    # sliced ID — later matching IDs become unreachable. Strategy: ask Postgres
+    # for the set of IDs that pass status=active + the active filters,
+    # intersect with the in-memory followed order, then slice — so pagination
+    # stays aligned with the row predicate.
+    def fetch_filtered_ids() -> List[str]:
+        q = (
+            supabase.table("cards")
+            .select("id")
+            .in_("id", ids)
+            .eq("status", "active")
+        )
+        q = _apply_card_filters(
+            q,
+            search=search,
+            pillar=pillar,
+            horizon=horizon,
+            quality_min=quality_min,
+        )
+        return [r["id"] for r in (q.execute().data or []) if r.get("id")]
 
-        filtered_id_list = await asyncio.to_thread(fetch_filtered_ids)
-        filtered_id_set = set(filtered_id_list)
-        candidate_ids = [cid for cid in ids if cid in filtered_id_set]
-    else:
-        candidate_ids = ids
+    filtered_id_list = await asyncio.to_thread(fetch_filtered_ids)
+    filtered_id_set = set(filtered_id_list)
+    candidate_ids = [cid for cid in ids if cid in filtered_id_set]
 
     ordered = _order_ids_by_followed_at(candidate_ids, ctx)
     page_ids = ordered[offset : offset + limit]
