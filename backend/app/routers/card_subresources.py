@@ -546,11 +546,390 @@ async def get_following_cards(current_user: dict = Depends(get_current_user)):
     return response.data
 
 
+# ----------------------------------------------------------------------------
+# Personal Signals — shared context loader
+# ----------------------------------------------------------------------------
+#
+# Both /me/signals (paginated feed) and /me/signals/stats need the same four
+# "what cards does this user have any relationship with" reads. We load them
+# in parallel via asyncio.gather + asyncio.to_thread (Supabase's sync client
+# blocks the event loop, per CLAUDE.md) so a hub with hundreds of follows
+# doesn't pay four serial round-trips before returning anything.
+
+# Default page size for the paginated /me/signals feed. Sized to match the
+# initial viewport plus a comfortable read-ahead — small enough to keep first
+# paint fast, large enough that grid layouts don't have to load-more on mount.
+DEFAULT_SIGNALS_PAGE_LIMIT = 30
+MAX_SIGNALS_PAGE_LIMIT = 100
+
+# How "needs research" is defined in the stats panel. Kept here so the stats
+# query and the feed query can never drift.
+NEEDS_RESEARCH_QUALITY_THRESHOLD = 30
+
+
+_SOURCE_FILTERS = {"followed", "created", "workstream"}
+
+
+class _SignalContext:
+    """Pre-computed user/card relationship state shared between feed + stats."""
+
+    __slots__ = (
+        "followed_map",
+        "created_id_set",
+        "ws_card_map",
+        "workstreams",
+        "prefs_map",
+        "all_ids",
+        "filtered_ids",
+        "pinned_ids",
+    )
+
+    def __init__(
+        self,
+        followed_map: Dict[str, dict],
+        created_ids: List[str],
+        ws_card_map: Dict[str, List[str]],
+        workstreams: List[dict],
+        prefs_map: Dict[str, dict],
+        source: Optional[str],
+    ) -> None:
+        self.followed_map = followed_map
+        self.created_id_set = set(created_ids)
+        self.ws_card_map = ws_card_map
+        self.workstreams = workstreams
+        self.prefs_map = prefs_map
+
+        followed_ids = set(followed_map.keys())
+        ws_ids = set(ws_card_map.keys())
+
+        if source == "followed":
+            filtered = followed_ids
+        elif source == "created":
+            filtered = self.created_id_set
+        elif source == "workstream":
+            filtered = ws_ids
+        else:
+            filtered = followed_ids | self.created_id_set | ws_ids
+
+        self.all_ids = followed_ids | self.created_id_set | ws_ids
+        self.filtered_ids = filtered
+        self.pinned_ids = {
+            cid
+            for cid, pref in prefs_map.items()
+            if pref.get("is_pinned") and cid in filtered
+        }
+
+
+def _load_workstream_card_map(
+    workstreams: List[dict],
+) -> Dict[str, List[str]]:
+    """Map card_id -> list of workstream names the card sits in."""
+    if not workstreams:
+        return {}
+    ws_ids = [ws["id"] for ws in workstreams]
+    rows = (
+        supabase.table("workstream_cards")
+        .select("card_id, workstream_id")
+        .in_("workstream_id", ws_ids)
+        .execute()
+        .data
+        or []
+    )
+    name_by_id = {ws["id"]: ws["name"] for ws in workstreams}
+    out: Dict[str, List[str]] = {}
+    for row in rows:
+        cid = row.get("card_id")
+        if not cid:
+            continue
+        out.setdefault(cid, []).append(
+            name_by_id.get(row.get("workstream_id"), "Unknown")
+        )
+    return out
+
+
+def _load_user_prefs(user_id: str) -> Dict[str, dict]:
+    """Pin/notes preferences. Returns {} only when the table itself is missing;
+    other Supabase failures are re-raised so a transient auth/query error can't
+    silently strip every user's pins + notes from the response.
+    """
+    try:
+        rows = (
+            supabase.table("user_signal_preferences")
+            .select("card_id, is_pinned, notes")
+            .eq("user_id", user_id)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        # Postgres signals a missing table with SQLSTATE 42P01 (relation does
+        # not exist). Only swallow that — anything else must bubble up.
+        msg = str(exc)
+        if "user_signal_preferences" in msg or "42P01" in msg:
+            logger.warning(
+                "user_signal_preferences table may not exist; skipping pin data"
+            )
+            return {}
+        raise
+    return {r["card_id"]: r for r in rows if r.get("card_id")}
+
+
+async def _build_signal_context(
+    user_id: str, source: Optional[str]
+) -> _SignalContext:
+    """Run the four user-scoped reads in parallel."""
+
+    def follows():
+        return (
+            supabase.table("card_follows")
+            .select("card_id, created_at, priority")
+            .eq("user_id", user_id)
+            .execute()
+            .data
+            or []
+        )
+
+    def created():
+        return (
+            supabase.table("cards")
+            .select("id")
+            .eq("created_by", user_id)
+            .eq("status", "active")
+            .execute()
+            .data
+            or []
+        )
+
+    def workstreams_owned():
+        return (
+            supabase.table("workstreams")
+            .select("id, name")
+            .eq("user_id", user_id)
+            .execute()
+            .data
+            or []
+        )
+
+    follows_rows, created_rows, workstreams, prefs_map = await asyncio.gather(
+        asyncio.to_thread(follows),
+        asyncio.to_thread(created),
+        asyncio.to_thread(workstreams_owned),
+        asyncio.to_thread(_load_user_prefs, user_id),
+    )
+    # workstream_cards depends on workstreams, so it sequences after the gather.
+    ws_card_map = await asyncio.to_thread(_load_workstream_card_map, workstreams or [])
+
+    followed_map = {r["card_id"]: r for r in (follows_rows or []) if r.get("card_id")}
+    created_ids = [r["id"] for r in (created_rows or []) if r.get("id")]
+
+    return _SignalContext(
+        followed_map=followed_map,
+        created_ids=created_ids,
+        ws_card_map=ws_card_map,
+        workstreams=workstreams or [],
+        prefs_map=prefs_map,
+        source=source,
+    )
+
+
+def _count_in_set(
+    ids: List[str],
+    search: Optional[str],
+    pillar: Optional[str],
+    horizon: Optional[str],
+    quality_min: Optional[int],
+) -> int:
+    """Count active cards in `ids` that also pass the shared filters.
+
+    Used by /me/signals/stats to make followed_count / created_count honor the
+    same search/pillar/horizon/quality_min predicate as /me/signals — otherwise
+    a stats response can report followed_count > total, breaking the contract.
+    """
+    if not ids:
+        return 0
+    q = (
+        supabase.table("cards")
+        .select("id", count="exact")
+        .in_("id", ids)
+        .eq("status", "active")
+    )
+    q = _apply_card_filters(
+        q,
+        search=search,
+        pillar=pillar,
+        horizon=horizon,
+        quality_min=quality_min,
+    )
+    resp = q.range(0, 0).execute()
+    return getattr(resp, "count", None) or 0
+
+
+def _apply_card_filters(
+    query,
+    *,
+    search: Optional[str],
+    pillar: Optional[str],
+    horizon: Optional[str],
+    quality_min: Optional[int],
+):
+    """Apply the shared text/pillar/horizon/quality filters to a cards query."""
+    if search:
+        safe_search = re.sub(r"[,.()\[\]%_]", "", search)
+        if safe_search:
+            query = query.or_(
+                f"name.ilike.%{safe_search}%,summary.ilike.%{safe_search}%"
+            )
+    if pillar:
+        query = query.eq("pillar_id", pillar)
+    if horizon:
+        query = query.eq("horizon", horizon)
+    if quality_min is not None and quality_min > 0:
+        query = query.gte("signal_quality_score", quality_min)
+    return query
+
+
+def _personalize_card(card: dict, ctx: _SignalContext) -> dict:
+    cid = card["id"]
+    pref = ctx.prefs_map.get(cid, {})
+    follow = ctx.followed_map.get(cid)
+    return {
+        **card,
+        "is_followed": cid in ctx.followed_map,
+        "is_created": cid in ctx.created_id_set,
+        "is_pinned": bool(pref.get("is_pinned")),
+        "personal_notes": pref.get("notes"),
+        "follow_priority": follow.get("priority") if follow else None,
+        "followed_at": follow.get("created_at") if follow else None,
+        "workstream_names": ctx.ws_card_map.get(cid, []),
+    }
+
+
+def _order_ids_by_followed_at(ids: List[str], ctx: _SignalContext) -> List[str]:
+    """Sort IDs by follow created_at desc; cards the user hasn't followed
+    fall to the end (e.g. user-created or workstream cards under sort=followed).
+
+    Stable tiebreak by id keeps pagination deterministic.
+    """
+    def sort_key(cid: str):
+        follow = ctx.followed_map.get(cid)
+        if follow:
+            # Followed cards: bucket 0, then by created_at desc (newer first),
+            # then id desc for tiebreak.
+            return (0, follow.get("created_at") or "", cid)
+        return (1, "", cid)
+
+    # Bucket 0 (followed) before bucket 1; within bucket 0 we want NEWEST
+    # followed_at first, so sort that bucket descending and the bucket index
+    # ascending. Easiest: sort ascending, then reverse the followed bucket.
+    followed = sorted(
+        (cid for cid in ids if cid in ctx.followed_map), key=sort_key, reverse=True
+    )
+    unfollowed = sorted(cid for cid in ids if cid not in ctx.followed_map)
+    return followed + unfollowed
+
+
+async def _fetch_cards_page(
+    ids: List[str],
+    *,
+    sort_by: str,
+    search: Optional[str],
+    pillar: Optional[str],
+    horizon: Optional[str],
+    quality_min: Optional[int],
+    limit: int,
+    offset: int,
+    ctx: _SignalContext,
+) -> List[dict]:
+    """Return up to `limit` raw card rows from `ids` honoring sort + filters.
+
+    Caller is responsible for `enrich_cards_with_collab` + `_personalize_card`.
+    """
+    if not ids or limit <= 0:
+        return []
+
+    # For sorts that live on the cards table, push pagination into Postgres
+    # so we never materialize more than `limit` rows per page.
+    if sort_by in ("quality", "name", "updated"):
+        def fetch() -> List[dict]:
+            q = (
+                supabase.table("cards")
+                .select("*")
+                .in_("id", ids)
+                .eq("status", "active")
+            )
+            q = _apply_card_filters(
+                q,
+                search=search,
+                pillar=pillar,
+                horizon=horizon,
+                quality_min=quality_min,
+            )
+            if sort_by == "quality":
+                q = q.order("signal_quality_score", desc=True).order("id", desc=True)
+            elif sort_by == "name":
+                q = q.order("name").order("id")
+            else:  # updated
+                q = q.order("updated_at", desc=True).order("id", desc=True)
+            return q.range(offset, offset + limit - 1).execute().data or []
+
+        return await asyncio.to_thread(fetch)
+
+    # sort_by == "followed" — sort field lives on card_follows, not cards.
+    # We must filter BEFORE slicing: filtering after the slice would under-fill
+    # pages and break `has_more` whenever a search/pillar/horizon/quality_min
+    # filter is active (a sliced ID can be rejected by the filter while later
+    # matching IDs become unreachable). Strategy: ask Postgres for the set of
+    # IDs that pass the filters, intersect with the in-memory followed order,
+    # then slice — so pagination + filtering stay aligned.
+    if search or pillar or horizon or (quality_min is not None and quality_min > 0):
+        def fetch_filtered_ids() -> List[str]:
+            q = (
+                supabase.table("cards")
+                .select("id")
+                .in_("id", ids)
+                .eq("status", "active")
+            )
+            q = _apply_card_filters(
+                q,
+                search=search,
+                pillar=pillar,
+                horizon=horizon,
+                quality_min=quality_min,
+            )
+            return [r["id"] for r in (q.execute().data or []) if r.get("id")]
+
+        filtered_id_list = await asyncio.to_thread(fetch_filtered_ids)
+        filtered_id_set = set(filtered_id_list)
+        candidate_ids = [cid for cid in ids if cid in filtered_id_set]
+    else:
+        candidate_ids = ids
+
+    ordered = _order_ids_by_followed_at(candidate_ids, ctx)
+    page_ids = ordered[offset : offset + limit]
+    if not page_ids:
+        return []
+
+    def fetch() -> List[dict]:
+        # No need to reapply filters: page_ids is already the filtered set.
+        return (
+            supabase.table("cards")
+            .select("*")
+            .in_("id", page_ids)
+            .eq("status", "active")
+            .execute()
+            .data
+            or []
+        )
+
+    rows = await asyncio.to_thread(fetch)
+    # Postgres returned the slice in arbitrary order; reapply our explicit one.
+    order_idx = {cid: i for i, cid in enumerate(page_ids)}
+    rows.sort(key=lambda r: order_idx.get(r.get("id"), len(order_idx)))
+    return rows
+
+
 @router.get("/me/signals")
 async def get_my_signals(
-    group_by: Optional[str] = Query(
-        None, description="Group by: pillar, horizon, workstream"
-    ),
     sort_by: str = Query(
         "updated", description="Sort: updated, followed, quality, name"
     ),
@@ -561,170 +940,198 @@ async def get_my_signals(
         None, description="Filter by: followed, created, workstream"
     ),
     quality_min: Optional[int] = Query(None, ge=0, le=100),
+    limit: int = Query(
+        DEFAULT_SIGNALS_PAGE_LIMIT, ge=1, le=MAX_SIGNALS_PAGE_LIMIT
+    ),
+    offset: int = Query(0, ge=0),
+    include_pinned: bool = Query(
+        True,
+        description=(
+            "Include the user's pinned signals as a separate full list. "
+            "Pass false on subsequent pages to avoid retransmitting them."
+        ),
+    ),
     current_user: dict = Depends(get_current_user),
 ):
-    """Get user's personal intelligence hub: followed, created, and workstream signals."""
-    user_id = current_user["id"]
+    """Paginated personal signal feed.
 
-    # 1. Get followed card IDs
-    follows_resp = (
-        supabase.table("card_follows")
-        .select("card_id, created_at, priority, notes")
-        .eq("user_id", user_id)
-        .execute()
-    )
-    followed_map = {f["card_id"]: f for f in (follows_resp.data or [])}
-    followed_ids = list(followed_map.keys())
-
-    # 2. Get user-created card IDs
-    created_resp = (
-        supabase.table("cards")
-        .select("id")
-        .eq("created_by", user_id)
-        .eq("status", "active")
-        .execute()
-    )
-    created_ids = [c["id"] for c in (created_resp.data or [])]
-
-    # 3. Get cards in user's workstreams
-    ws_resp = (
-        supabase.table("workstreams")
-        .select("id, name")
-        .eq("user_id", user_id)
-        .execute()
-    )
-    workstreams = ws_resp.data or []
-    ws_ids = [ws["id"] for ws in workstreams]
-    ws_card_ids = []
-    ws_card_map: Dict[str, List[str]] = {}  # card_id -> list of workstream names
-    if ws_ids:
-        wc_resp = (
-            supabase.table("workstream_cards")
-            .select("card_id, workstream_id")
-            .in_("workstream_id", ws_ids)
-            .execute()
+    Returns:
+        signals: this page of the feed (pinned signals excluded — they ride
+            in the `pinned` field so the UI can show them as a top section
+            without paginating).
+        pinned: full pinned set (only when `include_pinned=true`); always
+            small (per-user, manually curated). Sorted by the same `sort_by`.
+        next_offset / has_more: cursor for the load-more sentinel.
+    """
+    if source is not None and source not in _SOURCE_FILTERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"source must be one of {sorted(_SOURCE_FILTERS)}",
         )
-        ws_name_map = {ws["id"]: ws["name"] for ws in workstreams}
-        for wc in wc_resp.data or []:
-            cid = wc["card_id"]
-            ws_card_ids.append(cid)
-            if cid not in ws_card_map:
-                ws_card_map[cid] = []
-            ws_card_map[cid].append(ws_name_map.get(wc["workstream_id"], "Unknown"))
+    if sort_by not in ("updated", "followed", "quality", "name"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="sort_by must be one of: updated, followed, quality, name",
+        )
 
-    # 4. Union unique card IDs, applying source filter if specified
-    if source == "followed":
-        all_ids = list(set(followed_ids))
-    elif source == "created":
-        all_ids = list(set(created_ids))
-    elif source == "workstream":
-        all_ids = list(set(ws_card_ids))
-    else:
-        all_ids = list(set(followed_ids + created_ids + ws_card_ids))
+    user_id = current_user["id"]
+    ctx = await _build_signal_context(user_id, source)
 
-    if not all_ids:
+    feed_ids = list(ctx.filtered_ids - ctx.pinned_ids)
+    pinned_ids = list(ctx.pinned_ids)
+
+    if not feed_ids and not pinned_ids:
         return {
             "signals": [],
+            "pinned": [] if include_pinned else None,
+            "next_offset": offset,
+            "has_more": False,
+        }
+
+    # Fetch one extra row to determine has_more without a separate count query.
+    feed_rows = await _fetch_cards_page(
+        feed_ids,
+        sort_by=sort_by,
+        search=search,
+        pillar=pillar,
+        horizon=horizon,
+        quality_min=quality_min,
+        limit=limit + 1,
+        offset=offset,
+        ctx=ctx,
+    )
+    has_more = len(feed_rows) > limit
+    feed_rows = feed_rows[:limit]
+
+    # Supabase sync client blocks the event loop — wrap collab enrichment.
+    enriched_feed = await asyncio.to_thread(
+        enrich_cards_with_collab, supabase, feed_rows, user_id
+    )
+    feed_signals = [_personalize_card(c, ctx) for c in enriched_feed]
+
+    pinned_signals: Optional[List[dict]]
+    if include_pinned and pinned_ids:
+        pinned_rows = await _fetch_cards_page(
+            pinned_ids,
+            sort_by=sort_by,
+            search=search,
+            pillar=pillar,
+            horizon=horizon,
+            quality_min=quality_min,
+            limit=len(pinned_ids),
+            offset=0,
+            ctx=ctx,
+        )
+        enriched_pinned = await asyncio.to_thread(
+            enrich_cards_with_collab, supabase, pinned_rows, user_id
+        )
+        pinned_signals = [_personalize_card(c, ctx) for c in enriched_pinned]
+    elif include_pinned:
+        pinned_signals = []
+    else:
+        pinned_signals = None
+
+    return {
+        "signals": feed_signals,
+        "pinned": pinned_signals,
+        "next_offset": offset + len(feed_signals),
+        "has_more": has_more,
+    }
+
+
+@router.get("/me/signals/stats")
+async def get_my_signals_stats(
+    search: Optional[str] = Query(None),
+    pillar: Optional[str] = Query(None),
+    horizon: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    quality_min: Optional[int] = Query(None, ge=0, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    """Counts + workstream list for the Signals hub.
+
+    Designed to be cheap: no `select("*")`, no enrichment. Mirrors the same
+    filters as `/me/signals` so the StatsRow numbers match what the user
+    actually sees in the feed.
+    """
+    if source is not None and source not in _SOURCE_FILTERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"source must be one of {sorted(_SOURCE_FILTERS)}",
+        )
+
+    user_id = current_user["id"]
+    ctx = await _build_signal_context(user_id, source)
+
+    filtered_ids = list(ctx.filtered_ids)
+    if not filtered_ids:
+        return {
             "stats": {
                 "total": 0,
                 "followed_count": 0,
                 "created_count": 0,
-                "workstream_count": len(workstreams),
+                "workstream_count": len(ctx.workstreams),
                 "updates_this_week": 0,
                 "needs_research": 0,
             },
-            "workstreams": workstreams,
+            "workstreams": ctx.workstreams,
         }
 
-    # 5. Fetch full card data for all IDs
-    cards_query = (
-        supabase.table("cards").select("*").in_("id", all_ids).eq("status", "active")
-    )
-
-    if search:
-        safe_search = re.sub(r"[,.()\[\]]", "", search)
-        cards_query = cards_query.or_(
-            f"name.ilike.%{safe_search}%,summary.ilike.%{safe_search}%"
-        )
-    if pillar:
-        cards_query = cards_query.eq("pillar_id", pillar)
-    if horizon:
-        cards_query = cards_query.eq("horizon", horizon)
-    if quality_min is not None and quality_min > 0:
-        cards_query = cards_query.gte("signal_quality_score", quality_min)
-
-    cards_resp = cards_query.execute()
-    cards = enrich_cards_with_collab(
-        supabase, cards_resp.data or [], current_user.get("id")
-    )
-
-    # 6. Get user signal preferences (pins) -- gracefully degrade if table missing
-    try:
-        prefs_resp = (
-            supabase.table("user_signal_preferences")
-            .select("*")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        prefs_map = {p["card_id"]: p for p in (prefs_resp.data or [])}
-    except Exception:
-        logger.warning("user_signal_preferences table may not exist; skipping pin data")
-        prefs_map = {}
-
-    # 7. Enrich cards with personal metadata
     one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    enriched = []
-    for card in cards:
-        cid = card["id"]
-        pref = prefs_map.get(cid, {})
-        follow_data = followed_map.get(cid)
-        enriched.append(
-            {
-                **card,
-                "is_followed": cid in followed_ids,
-                "is_created": cid in created_ids,
-                "is_pinned": pref.get("is_pinned", False),
-                "personal_notes": pref.get("notes"),
-                "follow_priority": follow_data.get("priority") if follow_data else None,
-                "followed_at": follow_data.get("created_at") if follow_data else None,
-                "workstream_names": ws_card_map.get(cid, []),
-            }
+
+    def count(extra_filter):
+        q = (
+            supabase.table("cards")
+            .select("id", count="exact")
+            .in_("id", filtered_ids)
+            .eq("status", "active")
         )
-
-    # 8. Sort
-    if sort_by == "quality":
-        enriched.sort(key=lambda c: c.get("signal_quality_score") or 0, reverse=True)
-    elif sort_by == "followed":
-        enriched.sort(key=lambda c: c.get("followed_at") or "", reverse=True)
-    elif sort_by == "name":
-        enriched.sort(key=lambda c: c.get("name", "").lower())
-    else:  # default: updated
-        enriched.sort(
-            key=lambda c: c.get("updated_at") or c.get("created_at") or "", reverse=True
+        q = _apply_card_filters(
+            q,
+            search=search,
+            pillar=pillar,
+            horizon=horizon,
+            quality_min=quality_min,
         )
+        q = extra_filter(q)
+        # `select("id", count="exact")` returns rows too — fetch just one to keep
+        # the response light; we only care about resp.count.
+        resp = q.range(0, 0).execute()
+        return getattr(resp, "count", None) or 0
 
-    # Pinned first
-    enriched.sort(key=lambda c: 0 if c.get("is_pinned") else 1)
+    # followed_count + created_count must mirror the feed's filter/status
+    # predicate — counting raw relationship sets would leak archived cards and
+    # cards filtered out by search/pillar/horizon/quality_min, breaking the
+    # invariant that total >= followed_count and total >= created_count.
+    followed_id_list = list(ctx.followed_map.keys() & ctx.filtered_ids)
+    created_id_list = list(ctx.created_id_set & ctx.filtered_ids)
 
-    # 9. Stats
-    updates_this_week = sum(
-        bool((c.get("updated_at") or "") >= one_week_ago) for c in enriched
-    )
-    needs_research = sum(
-        bool((c.get("signal_quality_score") or 0) < 30) for c in enriched
+    (
+        total,
+        updates_this_week,
+        needs_research,
+        followed_count,
+        created_count,
+    ) = await asyncio.gather(
+        asyncio.to_thread(count, lambda q: q),
+        asyncio.to_thread(count, lambda q: q.gte("updated_at", one_week_ago)),
+        asyncio.to_thread(
+            count, lambda q: q.lt("signal_quality_score", NEEDS_RESEARCH_QUALITY_THRESHOLD)
+        ),
+        asyncio.to_thread(_count_in_set, followed_id_list, search, pillar, horizon, quality_min),
+        asyncio.to_thread(_count_in_set, created_id_list, search, pillar, horizon, quality_min),
     )
 
     return {
-        "signals": enriched,
         "stats": {
-            "total": len(enriched),
-            "followed_count": sum(bool(c.get("is_followed")) for c in enriched),
-            "created_count": sum(bool(c.get("is_created")) for c in enriched),
-            "workstream_count": len(workstreams),
+            "total": total,
+            "followed_count": followed_count,
+            "created_count": created_count,
+            "workstream_count": len(ctx.workstreams),
             "updates_this_week": updates_this_week,
             "needs_research": needs_research,
         },
-        "workstreams": workstreams,
+        "workstreams": ctx.workstreams,
     }
 
 

@@ -36,8 +36,23 @@ export interface WorkstreamRef {
   name: string;
 }
 
-export interface MySignalsResponse {
+/** Response shape for GET /me/signals (paginated feed). */
+export interface MySignalsPage {
+  /** This page of the paginated feed. Pinned signals are excluded — they
+   * arrive in `pinned` instead so the UI can render them as a stable top
+   * section without paginating. */
   signals: PersonalSignal[];
+  /** Full pinned list on the first page; `null` on load-more pages where
+   * `include_pinned=false` was passed so we don't retransmit. */
+  pinned: PersonalSignal[] | null;
+  /** Offset to use for the next `loadMore()` call. */
+  next_offset: number;
+  /** True iff another page exists past `next_offset`. */
+  has_more: boolean;
+}
+
+/** Response shape for GET /me/signals/stats. */
+export interface MySignalsStatsResponse {
   stats: SignalStats;
   workstreams: WorkstreamRef[];
 }
