@@ -84,9 +84,13 @@ def get_card_artifacts(
 
     artifacts = {card_id: CardArtifacts() for card_id in ids}
 
+    # Rows arrive newest-first (ORDER BY updated_at DESC). We walk every row
+    # so we can surface the latest "generating" or "failed" attempt on cards
+    # that don't yet have a completed brief — the kanban needs to show
+    # in-flight progress and actionable errors, not just the happy path.
     brief_rows = (
         client.table("executive_briefs")
-        .select("card_id, status, generated_at, updated_at, created_at")
+        .select("card_id, status, error_message, generated_at, updated_at, created_at")
         .in_("card_id", ids)
         .order("updated_at", desc=True)
         .execute()
@@ -97,17 +101,23 @@ def get_card_artifacts(
         card_id = row.get("card_id")
         if not card_id or card_id not in artifacts:
             continue
-        if row.get("status") == "completed":
-            current = artifacts[card_id]
+        current = artifacts[card_id]
+        status = row.get("status")
+        if status == "completed":
             if not current.has_brief:
                 current.has_brief = True
                 current.brief_updated_at = (
                     row.get("generated_at") or row.get("updated_at") or row.get("created_at")
                 )
+        elif status == "generating" and not current.has_brief:
+            current.pending_brief = True
+        elif status == "failed" and not current.has_brief and not current.failed_brief:
+            current.failed_brief = True
+            current.brief_error_message = row.get("error_message")
 
     research_rows = (
         client.table("research_tasks")
-        .select("card_id, status, task_type, completed_at, created_at")
+        .select("card_id, status, task_type, error_message, completed_at, created_at")
         .in_("card_id", ids)
         .eq("task_type", "deep_research")
         .order("created_at", desc=True)
@@ -120,13 +130,21 @@ def get_card_artifacts(
         if not card_id or card_id not in artifacts:
             continue
         current = artifacts[card_id]
-        if row.get("status") in {"queued", "processing"}:
+        status = row.get("status")
+        if status in {"queued", "processing"}:
             current.pending_research = True
-        elif row.get("status") == "completed" and not current.has_deep_research:
+        elif status == "completed" and not current.has_deep_research:
             current.has_deep_research = True
             current.deep_research_updated_at = (
                 row.get("completed_at") or row.get("created_at")
             )
+        elif (
+            status == "failed"
+            and not current.has_deep_research
+            and not current.failed_research
+        ):
+            current.failed_research = True
+            current.research_error_message = row.get("error_message")
 
     # Workstream scans add new cards to a workstream's inbox. There is no
     # explicit per-card scan join, so we approximate by checking that the

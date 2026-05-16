@@ -17,10 +17,7 @@ import {
   Check,
   Eye,
   EyeOff,
-  FileText,
-  FlaskConical,
   StickyNote,
-  Zap,
 } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -32,9 +29,7 @@ import { QualityBadge } from "../QualityBadge";
 import { VelocityBadge, type VelocityTrend } from "../VelocityBadge";
 import { ExploratoryBadge } from "../badges/ExploratoryBadge";
 import { Tooltip } from "../ui/Tooltip";
-import { ArtifactFolderTab, ArtifactRibbon } from "../ArtifactIndicator";
 import { CardActions } from "./CardActions";
-import { formatRelativeTime } from "../CardDetail/utils";
 import type {
   CardActionCallbacks,
   KanbanStatus,
@@ -42,13 +37,9 @@ import type {
 } from "./types";
 
 import { AddedFromTooltipContent } from "./KanbanCard/AddedFromTooltipContent";
+import { ArtifactStrip } from "./KanbanCard/ArtifactStrip";
 import { InboxQuickActions } from "./KanbanCard/InboxQuickActions";
-import { ResearchStatusIndicator } from "./KanbanCard/ResearchStatusIndicator";
-import {
-  getAccentBorderClass,
-  getBriefChip,
-  parseStageNumber,
-} from "./KanbanCard/helpers";
+import { getAccentBorderClass, parseStageNumber } from "./KanbanCard/helpers";
 import { useQuickTriageKeyboard } from "./KanbanCard/useQuickTriageKeyboard";
 
 export interface KanbanCardProps {
@@ -142,23 +133,6 @@ export const KanbanCard = memo(function KanbanCard({
     setOptimisticWatching,
   });
 
-  const briefChip = getBriefChip(card.brief_status);
-
-  const freshnessChip =
-    card.last_research_depth !== "none" && card.last_research_at
-      ? {
-          icon:
-            card.last_research_depth === "deep" ? (
-              <FlaskConical className="h-3 w-3" />
-            ) : (
-              <Zap className="h-3 w-3" />
-            ),
-          label: `${
-            card.last_research_depth === "deep" ? "Deep" : "Quick"
-          } · ${formatRelativeTime(card.last_research_at)}`,
-        }
-      : null;
-
   const handleClick = (e: React.MouseEvent) => {
     if (isDragging) {
       e.preventDefault();
@@ -201,17 +175,9 @@ export const KanbanCard = memo(function KanbanCard({
         isDragOverlay && "shadow-xl scale-105 rotate-2 cursor-grabbing",
         isSelected &&
           "ring-2 ring-brand-blue ring-offset-1 dark:ring-offset-dark-surface-deep",
-        embeddedCard.artifacts?.has_deep_research && "mt-4",
         "touch-none cursor-grab active:cursor-grabbing",
       )}
     >
-      <ArtifactFolderTab visible={embeddedCard.artifacts?.has_deep_research} />
-      <ArtifactRibbon
-        artifacts={embeddedCard.artifacts}
-        hideDeepResearch={embeddedCard.artifacts?.has_deep_research}
-        className="right-9"
-      />
-
       {/* Selection checkbox — top-left. Always visible once any card is
           selected, otherwise revealed on hover so cards stay clean. */}
       {onToggleSelect && !isDragOverlay && (
@@ -271,7 +237,7 @@ export const KanbanCard = memo(function KanbanCard({
         tabIndex={0}
         className="p-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-inset rounded-lg"
       >
-        <h4 className="text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-7 break-words">
+        <h4 className="text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-9 break-words">
           {embeddedCard.name}
         </h4>
 
@@ -325,37 +291,10 @@ export const KanbanCard = memo(function KanbanCard({
             </div>
           )}
 
-        {card.research_status && (
-          <ResearchStatusIndicator
-            status={card.research_status}
-            isDragOverlay={isDragOverlay}
-          />
-        )}
-
-        {(briefChip || freshnessChip) && (
-          <div className="flex items-center gap-1.5 flex-wrap mb-2">
-            {briefChip && (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border",
-                  briefChip.className,
-                )}
-              >
-                <FileText className="h-3 w-3" />
-                {briefChip.label}
-              </span>
-            )}
-            {freshnessChip && (
-              <span
-                className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800"
-                title="Last research run"
-              >
-                {freshnessChip.icon}
-                {freshnessChip.label}
-              </span>
-            )}
-          </div>
-        )}
+        <ArtifactStrip
+          artifacts={embeddedCard.artifacts}
+          isDragOverlay={isDragOverlay}
+        />
 
         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
           {cardActions?.onToggleWatching && !isDragOverlay && (
