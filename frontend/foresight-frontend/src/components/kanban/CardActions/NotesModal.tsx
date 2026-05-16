@@ -8,6 +8,7 @@
  */
 
 import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, StickyNote, X } from "lucide-react";
 import { cn } from "../../../lib/utils";
 
@@ -98,7 +99,11 @@ export const NotesModal = memo(function NotesModal({
 
   if (!isOpen) return null;
 
-  return (
+  // Portal to <body> so keydown events from the textarea don't bubble up to
+  // the parent KanbanCard root, which has dnd-kit drag listeners attached.
+  // Without the portal, typing Space in the textarea triggers KeyboardSensor
+  // and starts a drag, which unmounts the modal mid-edit.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
@@ -207,6 +212,7 @@ export const NotesModal = memo(function NotesModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 });
