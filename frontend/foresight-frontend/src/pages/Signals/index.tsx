@@ -1,40 +1,35 @@
 /**
- * Personal Signals page composer: owns filter / sort / group / view state,
- * coordinates the data fetch via `fetchMySignals`, runs the optimistic-update
- * pin handler, and renders the hero / stats / filter / group sections.
+ * Personal Signals page composer.
+ *
+ * Owns the filter / sort / group / view state for the page and delegates the
+ * data fetch + pagination to `useSignalsFeed`. Pinned signals render as a
+ * stable top section (loaded once on the first page); the paginated feed
+ * renders below, with an IntersectionObserver sentinel that calls
+ * `loadMore()` when it scrolls into view.
  *
  * @module pages/Signals
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw, X } from "lucide-react";
+
 import { CreateSignalModal } from "../../components/CreateSignal";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useDebouncedValue } from "../../hooks/useDebounce";
-import { fetchMySignals, togglePin } from "./api";
+import { togglePin } from "./api";
 import { EmptyState } from "./EmptyState";
 import { FilterBar } from "./FilterBar";
 import { HeroHeader } from "./HeroHeader";
 import { SignalGroup } from "./SignalGroup";
 import { StatsRow } from "./StatsRow";
+import { useSignalsFeed } from "./useSignalsFeed";
 import type {
   GroupBy,
   PersonalSignal,
-  SignalStats,
   SortOption,
   SourceFilter,
   ViewMode,
-  WorkstreamRef,
 } from "./types";
-
-const INITIAL_STATS: SignalStats = {
-  total: 0,
-  followed_count: 0,
-  created_count: 0,
-  workstream_count: 0,
-  updates_this_week: 0,
-  needs_research: 0,
-};
 
 const SORT_PARAM_MAP: Record<SortOption, string> = {
   recently_updated: "updated",
@@ -46,13 +41,6 @@ const SORT_PARAM_MAP: Record<SortOption, string> = {
 export default function Signals() {
   useAuthContext();
 
-  const [signals, setSignals] = useState<PersonalSignal[]>([]);
-  const [stats, setStats] = useState<SignalStats>(INITIAL_STATS);
-  // Stored for potential filter enhancements; currently workstream grouping
-  // reads workstream_names from each signal directly.
-  const [, setWorkstreams] = useState<WorkstreamRef[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [showCreateSignal, setShowCreateSignal] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
@@ -63,46 +51,26 @@ export default function Signals() {
   const [qualityMin, setQualityMin] = useState(0);
   const [sortOption, setSortOption] = useState<SortOption>("recently_updated");
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { debouncedValue: debouncedSearch } = useDebouncedValue(
     searchTerm,
     300,
   );
 
-  const uniquePillars = useMemo(() => {
-    const set = new Set<string>();
-    signals.forEach((s) => {
-      if (s.pillar_id) set.add(s.pillar_id);
-    });
-    return Array.from(set).sort();
-  }, [signals]);
-
-  const loadSignals = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: Record<string, string> = {};
-      if (debouncedSearch) params.search = debouncedSearch;
-      if (selectedPillar) params.pillar = selectedPillar;
-      if (selectedHorizon) params.horizon = selectedHorizon;
-      if (sourceFilter) params.source = sourceFilter;
-      if (qualityMin > 0) params.quality_min = String(qualityMin);
-      params.sort_by = SORT_PARAM_MAP[sortOption];
-
-      const data = await fetchMySignals(params);
-      setSignals(data.signals);
-      setStats(data.stats);
-      setWorkstreams(data.workstreams);
-    } catch (err) {
-      console.error("Error loading signals:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to load signals. Please try again.",
-      );
-    } finally {
-      setLoading(false);
-    }
+  // Materialize the query params object so identity is stable across renders
+  // that don't change a filter — keeps `useSignalsFeed` from refetching on
+  // every keystroke (the debounced search handles that).
+  const queryParams = useMemo<Record<string, string>>(() => {
+    const params: Record<string, string> = {
+      sort_by: SORT_PARAM_MAP[sortOption],
+    };
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (selectedPillar) params.pillar = selectedPillar;
+    if (selectedHorizon) params.horizon = selectedHorizon;
+    if (sourceFilter) params.source = sourceFilter;
+    if (qualityMin > 0) params.quality_min = String(qualityMin);
+    return params;
   }, [
     debouncedSearch,
     selectedPillar,
@@ -112,67 +80,68 @@ export default function Signals() {
     sortOption,
   ]);
 
+  const {
+    signals,
+    pinned,
+    stats,
+    loading,
+    isFetchingMore,
+    hasMore,
+    error,
+    loadMore,
+    refresh,
+    patchSignal,
+    patchStats,
+  } = useSignalsFeed(queryParams);
+
+  // Infinite scroll sentinel — calls loadMore when the bottom marker enters
+  // the viewport. Re-binds whenever loadMore's identity changes (which
+  // happens on filter change, intentionally).
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    loadSignals();
-  }, [loadSignals]);
+    const node = sentinelRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "240px 0px" }, // start fetching slightly before the user reaches the bottom
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   const handleTogglePin = useCallback(
     async (cardId: string, currentlyPinned: boolean) => {
-      // Optimistic update — togglePin also follows/unfollows, so reflect both
-      // is_followed and the followed_count stat alongside is_pinned.
-      const wasFollowed = signals.find((s) => s.id === cardId)?.is_followed;
-      setSignals((prev) =>
-        prev.map((s) =>
-          s.id === cardId
-            ? {
-                ...s,
-                is_pinned: !currentlyPinned,
-                is_followed: !currentlyPinned,
-              }
-            : s,
-        ),
-      );
-      setStats((prev) => {
-        const delta = !currentlyPinned
-          ? wasFollowed
-            ? 0
-            : 1
-          : wasFollowed
-            ? -1
-            : 0;
-        return delta === 0
-          ? prev
-          : {
-              ...prev,
-              followed_count: Math.max(0, prev.followed_count + delta),
-            };
+      const target =
+        signals.find((s) => s.id === cardId) ??
+        pinned.find((s) => s.id === cardId);
+      const wasFollowed = target?.is_followed ?? false;
+
+      // Optimistic patch: pin + follow flip together.
+      patchSignal(cardId, {
+        is_pinned: !currentlyPinned,
+        is_followed: !currentlyPinned,
       });
+      const followDelta = !currentlyPinned
+        ? wasFollowed
+          ? 0
+          : 1
+        : wasFollowed
+          ? -1
+          : 0;
+      if (followDelta !== 0) patchStats({ followed_count: followDelta });
+
       try {
         await togglePin(cardId, !currentlyPinned);
       } catch (err) {
-        setSignals((prev) =>
-          prev.map((s) =>
-            s.id === cardId
-              ? { ...s, is_pinned: currentlyPinned, is_followed: !!wasFollowed }
-              : s,
-          ),
-        );
-        setStats((prev) => {
-          const delta = !currentlyPinned
-            ? wasFollowed
-              ? 0
-              : -1
-            : wasFollowed
-              ? 1
-              : 0;
-          return delta === 0
-            ? prev
-            : {
-                ...prev,
-                followed_count: Math.max(0, prev.followed_count + delta),
-              };
+        // Roll back optimistic update.
+        patchSignal(cardId, {
+          is_pinned: currentlyPinned,
+          is_followed: wasFollowed,
         });
-        setError(
+        if (followDelta !== 0) patchStats({ followed_count: -followDelta });
+        setActionError(
           err instanceof Error
             ? err.message
             : currentlyPinned
@@ -181,30 +150,28 @@ export default function Signals() {
         );
       }
     },
-    [signals],
+    [signals, pinned, patchSignal, patchStats],
   );
 
-  // Pinned signals always come first within their group (stable sort).
-  const sortedSignals = useMemo(() => {
-    const copy = [...signals];
-    copy.sort((a, b) => {
-      if (a.is_pinned && !b.is_pinned) return -1;
-      if (!a.is_pinned && b.is_pinned) return 1;
-      return 0;
-    });
-    return copy;
-  }, [signals]);
+  // Pillar facet options come from whatever's currently loaded. With
+  // pagination this is "everything loaded so far" — good enough for the
+  // filter dropdown, since users typically pick from a small set of pillars.
+  const uniquePillars = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of signals) if (s.pillar_id) set.add(s.pillar_id);
+    for (const s of pinned) if (s.pillar_id) set.add(s.pillar_id);
+    return Array.from(set).sort();
+  }, [signals, pinned]);
 
   const groupedSignals = useMemo<
     { key: string; label: string; signals: PersonalSignal[] }[]
   >(() => {
     if (groupBy === "none") {
-      return [{ key: "all", label: "", signals: sortedSignals }];
+      return [{ key: "all", label: "", signals }];
     }
 
     const groups = new Map<string, PersonalSignal[]>();
-
-    sortedSignals.forEach((signal) => {
+    for (const signal of signals) {
       let keys: string[] = [];
       if (groupBy === "pillar") {
         keys = [signal.pillar_id || "Unknown"];
@@ -216,16 +183,15 @@ export default function Signals() {
             ? signal.workstream_names
             : ["No Workstream"];
       }
-      keys.forEach((k) => {
+      for (const k of keys) {
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k)!.push(signal);
-      });
-    });
-
+      }
+    }
     return Array.from(groups.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, sigs]) => ({ key, label: key, signals: sigs }));
-  }, [sortedSignals, groupBy]);
+  }, [signals, groupBy]);
 
   const hasActiveFilters =
     searchTerm !== "" ||
@@ -241,6 +207,13 @@ export default function Signals() {
     setSourceFilter("");
     setQualityMin(0);
   };
+
+  const displayedError = actionError ?? error;
+  const isEmpty = !loading && pinned.length === 0 && signals.length === 0;
+  // FilterBar's result count reflects what's currently loaded plus the
+  // server-known total — leaving stats.total as the canonical "you have N
+  // signals" answer (matches the empty-vs-filtered messaging in EmptyState).
+  const resultCount = pinned.length + signals.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -266,23 +239,23 @@ export default function Signals() {
         onGroupByChange={setGroupBy}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
-        resultCount={sortedSignals.length}
+        resultCount={resultCount}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
       />
 
-      {error && (
+      {displayedError && (
         <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="font-medium text-red-700 dark:text-red-300">
-                {error}
+                {displayedError}
               </p>
               <button
                 onClick={() => {
-                  setError(null);
-                  loadSignals();
+                  setActionError(null);
+                  refresh();
                 }}
                 className="mt-2 inline-flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors"
               >
@@ -291,8 +264,9 @@ export default function Signals() {
               </button>
             </div>
             <button
-              onClick={() => setError(null)}
+              onClick={() => setActionError(null)}
               className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+              aria-label="Dismiss error"
             >
               <X className="h-5 w-5" />
             </button>
@@ -307,10 +281,24 @@ export default function Signals() {
             Loading your signals...
           </p>
         </div>
-      ) : sortedSignals.length === 0 ? (
+      ) : isEmpty ? (
         <EmptyState hasFilters={hasActiveFilters} />
       ) : (
         <div className="space-y-8">
+          {pinned.length > 0 && (
+            <SignalGroup
+              key="pinned"
+              label="Pinned"
+              // "workstream" hits the plain-text header branch in SignalGroup
+              // (PillarBadge / HorizonBadge would try to map "Pinned" to a
+              // real pillar/horizon code). Any non-"none"/"pillar"/"horizon"
+              // value would do; this is the most semantically neutral choice.
+              groupBy="workstream"
+              signals={pinned}
+              viewMode={viewMode}
+              onTogglePin={handleTogglePin}
+            />
+          )}
           {groupedSignals.map((group) => (
             <SignalGroup
               key={group.key}
@@ -321,6 +309,24 @@ export default function Signals() {
               onTogglePin={handleTogglePin}
             />
           ))}
+          {/* Infinite-scroll sentinel + load-more indicator. */}
+          <div
+            ref={sentinelRef}
+            className="h-12 flex items-center justify-center"
+            aria-hidden={!hasMore}
+          >
+            {isFetchingMore && (
+              <span className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading more…
+              </span>
+            )}
+            {!hasMore && signals.length > 0 && (
+              <span className="text-xs text-gray-400 dark:text-gray-500">
+                You're all caught up.
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -328,7 +334,7 @@ export default function Signals() {
         isOpen={showCreateSignal}
         onClose={() => setShowCreateSignal(false)}
         onSuccess={() => {
-          loadSignals();
+          refresh();
           setShowCreateSignal(false);
         }}
       />

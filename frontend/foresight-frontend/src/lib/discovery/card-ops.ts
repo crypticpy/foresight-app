@@ -7,7 +7,7 @@
  * @module lib/discovery/card-ops
  */
 
-import { apiRequest, type Card } from "./shared";
+import { apiRequest } from "./shared";
 
 // ----------------------------------------------------------------------------
 // Source preferences (used by signal creation + my-signals)
@@ -135,71 +135,11 @@ export function suggestKeywords(
 }
 
 // ----------------------------------------------------------------------------
-// My Signals (Personal Intelligence Hub)
-// ----------------------------------------------------------------------------
-
-export interface MySignalCard extends Card {
-  is_followed: boolean;
-  is_created: boolean;
-  is_pinned: boolean;
-  personal_notes: string | null;
-  follow_priority: string | null;
-  followed_at: string | null;
-  workstream_names: string[];
-  source_preferences?: SourcePreferences;
-}
-
-export interface MySignalsStats {
-  total: number;
-  followed_count: number;
-  created_count: number;
-  workstream_count: number;
-  updates_this_week: number;
-  needs_research: number;
-}
-
-export interface MySignalsResponse {
-  signals: MySignalCard[];
-  stats: MySignalsStats;
-  workstreams: Array<{ id: string; name: string }>;
-}
-
-export function fetchMySignals(
-  token: string,
-  options?: {
-    sort_by?: string;
-    search?: string;
-    pillar?: string;
-    horizon?: string;
-    quality_min?: number;
-  },
-): Promise<MySignalsResponse> {
-  const params = new URLSearchParams();
-  if (options?.sort_by) params.append("sort_by", options.sort_by);
-  if (options?.search) params.append("search", options.search);
-  if (options?.pillar) params.append("pillar", options.pillar);
-  if (options?.horizon) params.append("horizon", options.horizon);
-  if (options?.quality_min !== undefined && options.quality_min > 0)
-    params.append("quality_min", String(options.quality_min));
-
-  const queryString = params.toString();
-  const endpoint = `/api/v1/me/signals${queryString ? `?${queryString}` : ""}`;
-  return apiRequest<MySignalsResponse>(endpoint, token);
-}
-
-export function pinSignal(
-  token: string,
-  cardId: string,
-): Promise<{ is_pinned: boolean }> {
-  return apiRequest<{ is_pinned: boolean }>(
-    `/api/v1/me/signals/${cardId}/pin`,
-    token,
-    { method: "POST" },
-  );
-}
-
-// ----------------------------------------------------------------------------
 // Card snapshots (description/summary version history)
+//
+// The Personal Signals client moved to `pages/Signals/api.ts` (paginated feed
+// + split stats endpoint). The old monolithic fetchMySignals helper and its
+// supporting types used to live here; they were unused after that refactor.
 // ----------------------------------------------------------------------------
 
 export interface CardSnapshot {
