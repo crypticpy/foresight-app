@@ -376,3 +376,45 @@ def test_followed_sort_orders_by_follow_created_at(patch_supabase):
     assert feed_ids == ["c-new", "c-old"], (
         "sort_by=followed must order by follow created_at desc"
     )
+
+
+def test_followed_sort_filters_before_slice(patch_supabase):
+    """Regression for the "filter before slice" fix on the followed-sort path.
+
+    The first two followed cards (by recency) are pillar=CH and should NOT
+    appear when the caller filters to pillar=MC. If filtering happened AFTER
+    the slice, page-1 (limit=2) of the followed order would be ['c-ch-new',
+    'c-ch-old'], both get dropped, the page comes back empty, and `has_more`
+    is wrongly False. The fix slices the FILTERED followed order, so page-1
+    should return ['c-mc-new', 'c-mc-old'] with `has_more=False`.
+    """
+    patch_supabase(
+        {
+            "cards": [
+                _make_card("c-ch-new", pillar="CH"),
+                _make_card("c-ch-old", pillar="CH"),
+                _make_card("c-mc-new", pillar="MC"),
+                _make_card("c-mc-old", pillar="MC"),
+            ],
+            "card_follows": [
+                # Order by followed_at desc: ch-new, mc-new, ch-old, mc-old.
+                # An unfiltered page-1 of size 2 would be [ch-new, ch-old]
+                # (after re-sorting the slice), both of which would be
+                # filtered out by pillar=MC if filters ran after the slice.
+                {"card_id": "c-ch-new", "user_id": USER_ID, "created_at": "2026-05-15T00:00:00Z"},
+                {"card_id": "c-mc-new", "user_id": USER_ID, "created_at": "2026-05-14T00:00:00Z"},
+                {"card_id": "c-ch-old", "user_id": USER_ID, "created_at": "2026-05-13T00:00:00Z"},
+                {"card_id": "c-mc-old", "user_id": USER_ID, "created_at": "2026-05-12T00:00:00Z"},
+            ],
+            "workstreams": [],
+        }
+    )
+
+    page1 = _call_feed(sort_by="followed", pillar="MC", limit=2, offset=0)
+    feed_ids = [s["id"] for s in page1["signals"]]
+    assert feed_ids == ["c-mc-new", "c-mc-old"], (
+        "filtering must be applied before slicing on the followed-sort path"
+    )
+    # Only two MC follows total ⇒ has_more must be False, not "more on next page".
+    assert page1["has_more"] is False
+    assert page1["next_offset"] == 2

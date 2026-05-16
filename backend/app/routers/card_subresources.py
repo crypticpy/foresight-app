@@ -648,7 +648,10 @@ def _load_workstream_card_map(
 
 
 def _load_user_prefs(user_id: str) -> Dict[str, dict]:
-    """Pin/notes preferences. Returns {} if the table isn't present yet."""
+    """Pin/notes preferences. Returns {} only when the table itself is missing;
+    other Supabase failures are re-raised so a transient auth/query error can't
+    silently strip every user's pins + notes from the response.
+    """
     try:
         rows = (
             supabase.table("user_signal_preferences")
@@ -658,9 +661,16 @@ def _load_user_prefs(user_id: str) -> Dict[str, dict]:
             .data
             or []
         )
-    except Exception:
-        logger.warning("user_signal_preferences table may not exist; skipping pin data")
-        return {}
+    except Exception as exc:
+        # Postgres signals a missing table with SQLSTATE 42P01 (relation does
+        # not exist). Only swallow that — anything else must bubble up.
+        msg = str(exc)
+        if "user_signal_preferences" in msg or "42P01" in msg:
+            logger.warning(
+                "user_signal_preferences table may not exist; skipping pin data"
+            )
+            return {}
+        raise
     return {r["card_id"]: r for r in rows if r.get("card_id")}
 
 
