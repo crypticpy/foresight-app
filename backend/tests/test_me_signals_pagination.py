@@ -418,3 +418,45 @@ def test_followed_sort_filters_before_slice(patch_supabase):
     # Only two MC follows total ⇒ has_more must be False, not "more on next page".
     assert page1["has_more"] is False
     assert page1["next_offset"] == 2
+
+
+def test_stats_followed_and_created_counts_are_filter_aware(patch_supabase):
+    """followed_count + created_count must honor the active filter set.
+
+    Otherwise /me/signals/stats can report `total < followed_count` (or
+    `created_count`), which breaks the StatsRow's "matches the feed body"
+    contract and confuses the user when a pillar filter is active.
+    """
+    patch_supabase(
+        {
+            "cards": [
+                _make_card("c-ch-1", pillar="CH"),
+                _make_card("c-mc-1", pillar="MC"),
+                _make_card("c-mc-2", pillar="MC", created_by=USER_ID),
+                # Archived card: must not be counted even when followed.
+                _make_card("c-archived", pillar="MC", status="archived"),
+            ],
+            "card_follows": [
+                {"card_id": "c-ch-1", "user_id": USER_ID, "created_at": "2026-05-10T00:00:00Z"},
+                {"card_id": "c-mc-1", "user_id": USER_ID, "created_at": "2026-05-10T00:00:00Z"},
+                {"card_id": "c-mc-2", "user_id": USER_ID, "created_at": "2026-05-10T00:00:00Z"},
+                {"card_id": "c-archived", "user_id": USER_ID, "created_at": "2026-05-10T00:00:00Z"},
+            ],
+            "workstreams": [],
+        }
+    )
+    # No filter: all 3 active cards count.
+    unfiltered = _call_stats()
+    assert unfiltered["stats"]["total"] == 3
+    assert unfiltered["stats"]["followed_count"] == 3
+    assert unfiltered["stats"]["created_count"] == 1
+
+    # pillar=MC: only c-mc-1 + c-mc-2 are active+MC; c-archived is excluded.
+    filtered = _call_stats(pillar="MC")
+    assert filtered["stats"]["total"] == 2
+    assert filtered["stats"]["followed_count"] == 2, (
+        "followed_count must exclude cards filtered out by pillar"
+    )
+    assert filtered["stats"]["created_count"] == 1, (
+        "created_count must exclude cards filtered out by pillar"
+    )

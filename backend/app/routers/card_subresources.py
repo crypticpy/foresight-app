@@ -732,6 +732,38 @@ async def _build_signal_context(
     )
 
 
+def _count_in_set(
+    ids: List[str],
+    search: Optional[str],
+    pillar: Optional[str],
+    horizon: Optional[str],
+    quality_min: Optional[int],
+) -> int:
+    """Count active cards in `ids` that also pass the shared filters.
+
+    Used by /me/signals/stats to make followed_count / created_count honor the
+    same search/pillar/horizon/quality_min predicate as /me/signals — otherwise
+    a stats response can report followed_count > total, breaking the contract.
+    """
+    if not ids:
+        return 0
+    q = (
+        supabase.table("cards")
+        .select("id", count="exact")
+        .in_("id", ids)
+        .eq("status", "active")
+    )
+    q = _apply_card_filters(
+        q,
+        search=search,
+        pillar=pillar,
+        horizon=horizon,
+        quality_min=quality_min,
+    )
+    resp = q.range(0, 0).execute()
+    return getattr(resp, "count", None) or 0
+
+
 def _apply_card_filters(
     query,
     *,
@@ -1036,8 +1068,8 @@ async def get_my_signals_stats(
         return {
             "stats": {
                 "total": 0,
-                "followed_count": len(ctx.followed_map),
-                "created_count": len(ctx.created_id_set),
+                "followed_count": 0,
+                "created_count": 0,
                 "workstream_count": len(ctx.workstreams),
                 "updates_this_week": 0,
                 "needs_research": 0,
@@ -1067,19 +1099,34 @@ async def get_my_signals_stats(
         resp = q.range(0, 0).execute()
         return getattr(resp, "count", None) or 0
 
-    total, updates_this_week, needs_research = await asyncio.gather(
+    # followed_count + created_count must mirror the feed's filter/status
+    # predicate — counting raw relationship sets would leak archived cards and
+    # cards filtered out by search/pillar/horizon/quality_min, breaking the
+    # invariant that total >= followed_count and total >= created_count.
+    followed_id_list = list(ctx.followed_map.keys() & ctx.filtered_ids)
+    created_id_list = list(ctx.created_id_set & ctx.filtered_ids)
+
+    (
+        total,
+        updates_this_week,
+        needs_research,
+        followed_count,
+        created_count,
+    ) = await asyncio.gather(
         asyncio.to_thread(count, lambda q: q),
         asyncio.to_thread(count, lambda q: q.gte("updated_at", one_week_ago)),
         asyncio.to_thread(
             count, lambda q: q.lt("signal_quality_score", NEEDS_RESEARCH_QUALITY_THRESHOLD)
         ),
+        asyncio.to_thread(_count_in_set, followed_id_list, search, pillar, horizon, quality_min),
+        asyncio.to_thread(_count_in_set, created_id_list, search, pillar, horizon, quality_min),
     )
 
     return {
         "stats": {
             "total": total,
-            "followed_count": len(ctx.followed_map),
-            "created_count": len(ctx.created_id_set),
+            "followed_count": followed_count,
+            "created_count": created_count,
             "workstream_count": len(ctx.workstreams),
             "updates_this_week": updates_this_week,
             "needs_research": needs_research,
