@@ -237,7 +237,15 @@ export const KanbanCard = memo(function KanbanCard({
         tabIndex={0}
         className="p-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-inset rounded-lg"
       >
-        <h4 className="text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-9 break-words">
+        <h4
+          className={cn(
+            "text-sm font-medium leading-snug text-gray-900 dark:text-white mb-2 pr-9 break-words",
+            // Reserve room for the absolutely-positioned selection checkbox
+            // (top-2 left-2, w-5) so its hover/selected state never lands on
+            // the first word of the title.
+            onToggleSelect && "pl-6",
+          )}
+        >
           {embeddedCard.name}
         </h4>
 
