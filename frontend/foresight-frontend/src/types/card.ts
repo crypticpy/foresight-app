@@ -61,6 +61,11 @@ export interface CardArtifacts {
   brief_updated_at?: string | null;
   scan_updated_at?: string | null;
   pending_research?: boolean;
+  pending_brief?: boolean;
+  failed_research?: boolean;
+  failed_brief?: boolean;
+  research_error_message?: string | null;
+  brief_error_message?: string | null;
 }
 
 /**
