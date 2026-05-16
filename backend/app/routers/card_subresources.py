@@ -833,28 +833,51 @@ async def _fetch_cards_page(
         return await asyncio.to_thread(fetch)
 
     # sort_by == "followed" — sort field lives on card_follows, not cards.
-    # Pre-sort the ID list in Python (every follow row is already in ctx),
-    # slice the page, then fetch only that slice.
-    ordered = _order_ids_by_followed_at(ids, ctx)
+    # We must filter BEFORE slicing: filtering after the slice would under-fill
+    # pages and break `has_more` whenever a search/pillar/horizon/quality_min
+    # filter is active (a sliced ID can be rejected by the filter while later
+    # matching IDs become unreachable). Strategy: ask Postgres for the set of
+    # IDs that pass the filters, intersect with the in-memory followed order,
+    # then slice — so pagination + filtering stay aligned.
+    if search or pillar or horizon or (quality_min is not None and quality_min > 0):
+        def fetch_filtered_ids() -> List[str]:
+            q = (
+                supabase.table("cards")
+                .select("id")
+                .in_("id", ids)
+                .eq("status", "active")
+            )
+            q = _apply_card_filters(
+                q,
+                search=search,
+                pillar=pillar,
+                horizon=horizon,
+                quality_min=quality_min,
+            )
+            return [r["id"] for r in (q.execute().data or []) if r.get("id")]
+
+        filtered_id_list = await asyncio.to_thread(fetch_filtered_ids)
+        filtered_id_set = set(filtered_id_list)
+        candidate_ids = [cid for cid in ids if cid in filtered_id_set]
+    else:
+        candidate_ids = ids
+
+    ordered = _order_ids_by_followed_at(candidate_ids, ctx)
     page_ids = ordered[offset : offset + limit]
     if not page_ids:
         return []
 
     def fetch() -> List[dict]:
-        q = (
+        # No need to reapply filters: page_ids is already the filtered set.
+        return (
             supabase.table("cards")
             .select("*")
             .in_("id", page_ids)
             .eq("status", "active")
+            .execute()
+            .data
+            or []
         )
-        q = _apply_card_filters(
-            q,
-            search=search,
-            pillar=pillar,
-            horizon=horizon,
-            quality_min=quality_min,
-        )
-        return q.execute().data or []
 
     rows = await asyncio.to_thread(fetch)
     # Postgres returned the slice in arbitrary order; reapply our explicit one.
@@ -938,8 +961,9 @@ async def get_my_signals(
     has_more = len(feed_rows) > limit
     feed_rows = feed_rows[:limit]
 
-    enriched_feed = enrich_cards_with_collab(
-        supabase, feed_rows, user_id
+    # Supabase sync client blocks the event loop — wrap collab enrichment.
+    enriched_feed = await asyncio.to_thread(
+        enrich_cards_with_collab, supabase, feed_rows, user_id
     )
     feed_signals = [_personalize_card(c, ctx) for c in enriched_feed]
 
@@ -956,7 +980,9 @@ async def get_my_signals(
             offset=0,
             ctx=ctx,
         )
-        enriched_pinned = enrich_cards_with_collab(supabase, pinned_rows, user_id)
+        enriched_pinned = await asyncio.to_thread(
+            enrich_cards_with_collab, supabase, pinned_rows, user_id
+        )
         pinned_signals = [_personalize_card(c, ctx) for c in enriched_pinned]
     elif include_pinned:
         pinned_signals = []

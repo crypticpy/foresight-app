@@ -52,6 +52,8 @@ export interface UseSignalsFeedResult {
   loadMore: () => void;
   /** Forced full refetch (e.g. after creating a new signal). */
   refresh: () => void;
+  /** Clear the current load/loadMore error without retrying. */
+  clearError: () => void;
   /** Optimistic in-place patch for pin/follow toggles. */
   patchSignal: (cardId: string, patch: Partial<PersonalSignal>) => void;
   /** Optimistic stat counter delta — keeps StatsRow numbers honest after pin. */
@@ -110,6 +112,9 @@ export function useSignalsFeed(
 
   const loadMore = useCallback(async () => {
     if (loading || isFetchingMore || !hasMore) return;
+    // Snapshot the same token loadFirstPage uses so a late loadMore from a
+    // previous filter set can't append into the freshly reset feed.
+    const token = inflightTokenRef.current;
     setIsFetchingMore(true);
     try {
       const page: MySignalsPage = await fetchSignalsPage({
@@ -118,6 +123,7 @@ export function useSignalsFeed(
         limit: PAGE_SIZE,
         includePinned: false,
       });
+      if (token !== inflightTokenRef.current) return; // superseded
       // Dedupe by id — defensive against rare timing where a new card was
       // created between pages.
       setSignals((prev) => {
@@ -128,11 +134,12 @@ export function useSignalsFeed(
       setHasMore(page.has_more);
       offsetRef.current = page.next_offset;
     } catch (err) {
+      if (token !== inflightTokenRef.current) return;
       setError(
         err instanceof Error ? err.message : "Failed to load more signals.",
       );
     } finally {
-      setIsFetchingMore(false);
+      if (token === inflightTokenRef.current) setIsFetchingMore(false);
     }
   }, [loading, isFetchingMore, hasMore, params]);
 
@@ -144,11 +151,36 @@ export function useSignalsFeed(
     (cardId: string, patch: Partial<PersonalSignal>) => {
       const apply = (list: PersonalSignal[]) =>
         list.map((s) => (s.id === cardId ? { ...s, ...patch } : s));
-      setSignals(apply);
-      setPinned(apply);
+
+      // Patch the feed list, then mirror the change into `pinned` so an
+      // optimistic pin inserts the card and an optimistic unpin removes it.
+      // Without this the pinned section can show stale entries after unpin
+      // or fail to show a freshly pinned card from the feed.
+      setSignals((prevSignals) => {
+        const nextSignals = apply(prevSignals);
+
+        setPinned((prevPinned) => {
+          const patchedPinned = apply(prevPinned);
+          if (patch.is_pinned === false) {
+            return patchedPinned.filter((s) => s.id !== cardId);
+          }
+          if (
+            patch.is_pinned === true &&
+            !patchedPinned.some((s) => s.id === cardId)
+          ) {
+            const fromFeed = nextSignals.find((s) => s.id === cardId);
+            if (fromFeed) return [fromFeed, ...patchedPinned];
+          }
+          return patchedPinned;
+        });
+
+        return nextSignals;
+      });
     },
     [],
   );
+
+  const clearError = useCallback(() => setError(null), []);
 
   const patchStats = useCallback((delta: Partial<SignalStats>) => {
     setStats((prev) => {
@@ -175,6 +207,7 @@ export function useSignalsFeed(
     error,
     loadMore,
     refresh: loadFirstPage,
+    clearError,
     patchSignal,
     patchStats,
   };

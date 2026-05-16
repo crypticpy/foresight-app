@@ -16,6 +16,7 @@ import { AlertTriangle, Loader2, RefreshCw, X } from "lucide-react";
 import { CreateSignalModal } from "../../components/CreateSignal";
 import { useAuthContext } from "../../hooks/useAuthContext";
 import { useDebouncedValue } from "../../hooks/useDebounce";
+import { PILLAR_CODES } from "../../lib/lens-api";
 import { togglePin } from "./api";
 import { EmptyState } from "./EmptyState";
 import { FilterBar } from "./FilterBar";
@@ -90,6 +91,7 @@ export default function Signals() {
     error,
     loadMore,
     refresh,
+    clearError,
     patchSignal,
     patchStats,
   } = useSignalsFeed(queryParams);
@@ -153,15 +155,11 @@ export default function Signals() {
     [signals, pinned, patchSignal, patchStats],
   );
 
-  // Pillar facet options come from whatever's currently loaded. With
-  // pagination this is "everything loaded so far" — good enough for the
-  // filter dropdown, since users typically pick from a small set of pillars.
-  const uniquePillars = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of signals) if (s.pillar_id) set.add(s.pillar_id);
-    for (const s of pinned) if (s.pillar_id) set.add(s.pillar_id);
-    return Array.from(set).sort();
-  }, [signals, pinned]);
+  // Pillar facet options come from the canonical 6-pillar taxonomy, not from
+  // the currently-loaded pages. Sourcing from loaded data would hide pillars
+  // that exist later in the result set (regressing filtering for large
+  // accounts under pagination).
+  const uniquePillars = useMemo(() => [...PILLAR_CODES].sort(), []);
 
   const groupedSignals = useMemo<
     { key: string; label: string; signals: PersonalSignal[] }[]
@@ -264,7 +262,10 @@ export default function Signals() {
               </button>
             </div>
             <button
-              onClick={() => setActionError(null)}
+              onClick={() => {
+                setActionError(null);
+                clearError();
+              }}
               className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
               aria-label="Dismiss error"
             >
@@ -309,20 +310,29 @@ export default function Signals() {
               onTogglePin={handleTogglePin}
             />
           ))}
-          {/* Infinite-scroll sentinel + load-more indicator. */}
+          {/* Infinite-scroll sentinel + load-more indicator.
+              The sentinel itself stays visible (no aria-hidden) so the
+              status text below it remains discoverable by assistive tech. */}
           <div
             ref={sentinelRef}
             className="h-12 flex items-center justify-center"
-            aria-hidden={!hasMore}
           >
             {isFetchingMore && (
-              <span className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <span
+                role="status"
+                aria-live="polite"
+                className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"
+              >
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading more…
               </span>
             )}
             {!hasMore && signals.length > 0 && (
-              <span className="text-xs text-gray-400 dark:text-gray-500">
+              <span
+                role="status"
+                aria-live="polite"
+                className="text-xs text-gray-400 dark:text-gray-500"
+              >
                 You're all caught up.
               </span>
             )}
