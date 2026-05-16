@@ -109,9 +109,25 @@ def get_card_artifacts(
                 current.brief_updated_at = (
                     row.get("generated_at") or row.get("updated_at") or row.get("created_at")
                 )
-        elif status == "generating" and not current.has_brief:
+        # Rows are newest-first. Once we've captured a non-completed state
+        # for this card (pending OR failed), older rows must not overwrite
+        # it — otherwise an older `generating` attempt would mask the
+        # newest `failed` attempt (ArtifactStrip resolves pending before
+        # failed, so the user would see a spinner for a brief that already
+        # errored).
+        elif (
+            status == "generating"
+            and not current.has_brief
+            and not current.pending_brief
+            and not current.failed_brief
+        ):
             current.pending_brief = True
-        elif status == "failed" and not current.has_brief and not current.failed_brief:
+        elif (
+            status == "failed"
+            and not current.has_brief
+            and not current.pending_brief
+            and not current.failed_brief
+        ):
             current.failed_brief = True
             current.brief_error_message = row.get("error_message")
 
@@ -131,16 +147,25 @@ def get_card_artifacts(
             continue
         current = artifacts[card_id]
         status = row.get("status")
-        if status in {"queued", "processing"}:
-            current.pending_research = True
-        elif status == "completed" and not current.has_deep_research:
+        if status == "completed" and not current.has_deep_research:
             current.has_deep_research = True
             current.deep_research_updated_at = (
                 row.get("completed_at") or row.get("created_at")
             )
+        # Same newest-first guard as the brief loop above: once a card has
+        # a non-completed state captured, an older row must not flip it
+        # back to pending.
+        elif (
+            status in {"queued", "processing"}
+            and not current.has_deep_research
+            and not current.pending_research
+            and not current.failed_research
+        ):
+            current.pending_research = True
         elif (
             status == "failed"
             and not current.has_deep_research
+            and not current.pending_research
             and not current.failed_research
         ):
             current.failed_research = True
