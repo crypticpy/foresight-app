@@ -66,8 +66,10 @@ async def get_cards(
     if horizon:
         query = query.eq("horizon", horizon)
 
-    response = (
-        query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+    response = await asyncio.to_thread(
+        lambda: query.order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
     )
 
     enriched = await asyncio.to_thread(
@@ -113,8 +115,10 @@ async def get_pending_review_cards(
             "ai_confidence", desc=True
         )
 
-    response = (
-        query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+    response = await asyncio.to_thread(
+        lambda: query.order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
     )
 
     return response.data
@@ -284,7 +288,9 @@ async def create_card(
         }
     )
 
-    response = supabase.table("cards").insert(card_dict).execute()
+    response = await asyncio.to_thread(
+        lambda: supabase.table("cards").insert(card_dict).execute()
+    )
     if response.data:
         return Card(**response.data[0])
     else:
@@ -328,16 +334,18 @@ async def search_cards(
                 # Vector similarity search returns id, name, summary,
                 # pillar_id, horizon, similarity.  We hydrate the matched
                 # IDs with only the columns needed for SearchResultItem.
-                search_response = supabase.rpc(
-                    "find_similar_cards",
-                    {
-                        "query_embedding": query_embedding,
-                        "match_threshold": 0.5,
-                        "match_count": request.limit
-                        + request.offset
-                        + 100,  # Get extra for filtering
-                    },
-                ).execute()
+                search_response = await asyncio.to_thread(
+                    lambda: supabase.rpc(
+                        "find_similar_cards",
+                        {
+                            "query_embedding": query_embedding,
+                            "match_threshold": 0.5,
+                            "match_count": request.limit
+                            + request.offset
+                            + 100,  # Get extra for filtering
+                        },
+                    ).execute()
+                )
 
                 if matched := search_response.data or []:
                     similarity_map = {
@@ -351,8 +359,8 @@ async def search_cards(
                         "opportunity_score, status, created_at, updated_at, "
                         "signal_quality_score, top25_relevance, origin, is_exploratory"
                     )
-                    cards_response = (
-                        supabase.table("cards")
+                    cards_response = await asyncio.to_thread(
+                        lambda: supabase.table("cards")
                         .select(_SEARCH_HYDRATE_COLS)
                         .in_("id", matched_ids)
                         .execute()
@@ -383,9 +391,11 @@ async def search_cards(
                     f"name.ilike.%{request.query}%,summary.ilike.%{request.query}%"
                 )
 
-            response = query_builder.limit(
-                request.limit + request.offset + 100
-            ).execute()
+            response = await asyncio.to_thread(
+                lambda: query_builder.limit(
+                    request.limit + request.offset + 100
+                ).execute()
+            )
             results = response.data or []
 
             # Add placeholder relevance for text search
@@ -395,8 +405,8 @@ async def search_cards(
         # If no query provided, fetch all cards (for filter-only searches)
         if not request.query:
             search_type = "filter"
-            response = (
-                supabase.table("cards")
+            response = await asyncio.to_thread(
+                lambda: supabase.table("cards")
                 .select("*")
                 .limit(request.limit + request.offset + 100)
                 .execute()
@@ -482,8 +492,8 @@ async def get_similar_cards(
         List of similar cards with similarity scores
     """
     # Get the source card's embedding
-    card_check = (
-        supabase.table("cards")
+    card_check = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("id, name, embedding")
         .eq("id", card_id)
         .execute()
@@ -500,14 +510,16 @@ async def get_similar_cards(
 
     try:
         # Use RPC function for vector similarity search
-        response = supabase.rpc(
-            "match_cards_by_embedding",
-            {
-                "query_embedding": card["embedding"],
-                "match_threshold": 0.7,
-                "match_count": limit + 1,  # +1 to exclude self
-            },
-        ).execute()
+        response = await asyncio.to_thread(
+            lambda: supabase.rpc(
+                "match_cards_by_embedding",
+                {
+                    "query_embedding": card["embedding"],
+                    "match_threshold": 0.7,
+                    "match_count": limit + 1,  # +1 to exclude self
+                },
+            ).execute()
+        )
 
         return [
             SimilarCard(
@@ -543,8 +555,8 @@ async def list_blocked_topics(
     Returns:
         List of blocked topic records
     """
-    response = (
-        supabase.table("discovery_blocks")
+    response = await asyncio.to_thread(
+        lambda: supabase.table("discovery_blocks")
         .select("*")
         .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
@@ -594,7 +606,9 @@ async def preview_filter_count(
         query = query.eq("horizon", filters.horizon)
 
     # Fetch cards (limit to reasonable amount for performance)
-    response = query.order("created_at", desc=True).limit(500).execute()
+    response = await asyncio.to_thread(
+        lambda: query.order("created_at", desc=True).limit(500).execute()
+    )
     cards = response.data or []
 
     # Apply stage filtering client-side
@@ -612,8 +626,8 @@ async def preview_filter_count(
     # Apply keyword filtering (need to fetch full text for this)
     if filters.keywords and cards:
         card_ids = [c["id"] for c in cards]
-        full_response = (
-            supabase.table("cards")
+        full_response = await asyncio.to_thread(
+            lambda: supabase.table("cards")
             .select("id, name, summary, description, pillar_id, horizon, stage_id")
             .in_("id", card_ids)
             .execute()
