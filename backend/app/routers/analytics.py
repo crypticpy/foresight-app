@@ -598,12 +598,14 @@ async def get_analytics_insights(
         try:
             prompt = INSIGHTS_GENERATION_PROMPT.format(trends_data=trends_data)
 
-            ai_response = openai_client.chat.completions.create(
-                model=get_chat_mini_deployment(),
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=1000,
-                timeout=30,
+            ai_response = await asyncio.to_thread(
+                lambda: openai_client.chat.completions.create(
+                    model=get_chat_mini_deployment(),
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    max_completion_tokens=1000,
+                    timeout=30,
+                )
             )
 
             result = json.loads(ai_response.choices[0].message.content)
