@@ -181,6 +181,13 @@ from .discovery_models import (
     get_discovery_max_sources,
 )
 
+from .admin_sources import (
+    AdminSourceRow,
+    AdminSourcesListResponse,
+    AdminSourceCategory,
+    AdminSourceCategoriesResponse,
+)
+
 from .review import (
     CardReviewRequest,
     BulkReviewRequest,
@@ -433,6 +440,11 @@ __all__ = [
     "DiscoveryRun",
     "get_discovery_max_queries",
     "get_discovery_max_sources",
+    # admin_sources
+    "AdminSourceRow",
+    "AdminSourcesListResponse",
+    "AdminSourceCategory",
+    "AdminSourceCategoriesResponse",
     # review
     "CardReviewRequest",
     "BulkReviewRequest",
