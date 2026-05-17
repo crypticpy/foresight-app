@@ -506,5 +506,62 @@ describe("VirtualizedGrid", () => {
         scrollTopSpy.mockRestore();
       }
     });
+
+    // Locks in the underfilled-viewport pagination contract: if the first
+    // appended page still doesn't push the content out of the end-reached
+    // band, the items-changed effect must reset the fired flag and re-fire
+    // `onEndReached`. Without that re-check, pagination would stall after the
+    // first auto-load because the scroll listener only fires on user scroll.
+    it("re-fires onEndReached when items grow but content is still within threshold", () => {
+      const scrollHeightSpy = vi
+        .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+        .mockReturnValue(2000);
+      const clientHeightSpy = vi
+        .spyOn(HTMLElement.prototype, "clientHeight", "get")
+        .mockReturnValue(400);
+      const scrollTopSpy = vi
+        .spyOn(HTMLElement.prototype, "scrollTop", "get")
+        .mockReturnValue(1550);
+
+      try {
+        const onEndReached = vi.fn();
+        const initialItems = createTestItems(30);
+        const { rerender } = renderVirtualizedGrid({
+          items: initialItems,
+          onEndReached,
+          endReachedThreshold: 100,
+        });
+
+        // Initial in-band fire from the mount-time check.
+        expect(onEndReached).toHaveBeenCalledTimes(1);
+
+        // Simulate a page appended by the parent (items.length changes,
+        // dims unchanged — content still inside the threshold band).
+        const grownItems = createTestItems(60);
+        rerender(
+          <div style={{ height: "400px", overflow: "auto" }}>
+            <VirtualizedGrid
+              items={grownItems}
+              renderItem={(item, index) => (
+                <div data-testid={`item-${index}`}>
+                  {String((item as TestItem).name)}
+                </div>
+              )}
+              getItemKey={(item) => (item as TestItem).id}
+              estimatedRowHeight={100}
+              onEndReached={onEndReached}
+              endReachedThreshold={100}
+            />
+          </div>,
+        );
+
+        // items.length effect resets the fired flag and re-fires once.
+        expect(onEndReached).toHaveBeenCalledTimes(2);
+      } finally {
+        scrollHeightSpy.mockRestore();
+        clientHeightSpy.mockRestore();
+        scrollTopSpy.mockRestore();
+      }
+    });
   });
 });
