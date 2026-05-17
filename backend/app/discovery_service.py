@@ -1492,8 +1492,11 @@ class DiscoveryService:
             # Step 3b: Clear domain reputation batch cache (Task 2.7)
             try:
                 domain_reputation_service.clear_batch_cache()
-            except Exception:
-                pass  # Non-fatal
+            except Exception as exc:
+                # Non-fatal — cache will eventually time out on its own.
+                logger.debug(
+                    "discovery: clear_batch_cache failed: %s", exc
+                )
 
             # Step 4: Check blocked topics
             await self._update_progress_simple(
@@ -1823,8 +1826,13 @@ class DiscoveryService:
                     self.supabase, source.url or ""
                 ):
                     _domain_rep_id = _rep.get("id")
-            except Exception:
-                pass  # Non-fatal
+            except Exception as exc:
+                # Non-fatal — missing rep just means no quality bonus on the row.
+                logger.debug(
+                    "discovery: get_reputation failed for %s: %s",
+                    source.url,
+                    exc,
+                )
 
             record = {
                 "discovery_run_id": run_id,
@@ -3866,8 +3874,13 @@ class DiscoveryService:
                     self.supabase, source.raw.url or ""
                 ):
                     _domain_reputation_id = _rep.get("id")
-            except Exception:
-                pass  # Non-fatal
+            except Exception as exc:
+                # Non-fatal — source row still gets stored without rep linkage.
+                logger.debug(
+                    "discovery: get_reputation failed for %s: %s",
+                    source.raw.url,
+                    exc,
+                )
 
             from app.source_quality import extract_domain
 
