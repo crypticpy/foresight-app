@@ -351,8 +351,8 @@ async def search_chat_conversations(
     try:
         # Search conversation titles
         safe_q = sanitize_ilike(q)
-        title_result = (
-            supabase.table("chat_conversations")
+        title_result = await asyncio.to_thread(
+            lambda: supabase.table("chat_conversations")
             .select("id, scope, scope_id, title, created_at, updated_at")
             .eq("user_id", user_id)
             .ilike("title", f"%{safe_q}%")
@@ -361,23 +361,62 @@ async def search_chat_conversations(
             .execute()
         )
 
-        # Search message content
-        msg_result = (
-            supabase.table("chat_messages")
-            .select("conversation_id, content")
-            .ilike("content", f"%{safe_q}%")
-            .limit(50)
-            .execute()
-        )
+        # Pre-scope the message content search to the caller's conversations.
+        # Without this guard the ILIKE scans every user's chat_messages and
+        # pulls matching bodies into memory / error logs / telemetry, even
+        # though the downstream re-fetch only displays the caller's own
+        # conversations. (Sentinel P1 #6.)
+        #
+        # Paginate the prefetch: PostgREST caps a single .execute() at ~1000
+        # rows by default. Without paging, a power user with >1000
+        # conversations would only have their first page of ids fed into the
+        # subsequent .in_() filter, silently dropping matches from older
+        # conversations AND (worse) creating a partial-scope situation that
+        # is easy to mistake for the empty-IN footgun this fix already
+        # guards against. `.order("id")` makes the paging deterministic —
+        # without it Postgres can return the same row on two different pages
+        # or skip a row entirely between pages.
+        user_conv_ids: List[str] = []
+        page_size = 1000
+        start = 0
+        while True:
+            user_conv_resp = await asyncio.to_thread(
+                lambda s=start: supabase.table("chat_conversations")
+                .select("id")
+                .eq("user_id", user_id)
+                .order("id")
+                .range(s, s + page_size - 1)
+                .execute()
+            )
+            page = user_conv_resp.data or []
+            user_conv_ids.extend(c["id"] for c in page)
+            if len(page) < page_size:
+                break
+            start += page_size
 
-        # Get unique conversation IDs from message matches
-        msg_conv_ids = list(set(m["conversation_id"] for m in (msg_result.data or [])))
+        # CRITICAL: never call `.in_("conversation_id", [])` — PostgREST
+        # treats an empty IN list as "match everything", which would re-open
+        # the same cross-user leak this fix exists to close.
+        msg_conv_ids: List[str] = []
+        if user_conv_ids:
+            msg_result = await asyncio.to_thread(
+                lambda: supabase.table("chat_messages")
+                .select("conversation_id")
+                .in_("conversation_id", user_conv_ids)
+                .ilike("content", f"%{safe_q}%")
+                .limit(50)
+                .execute()
+            )
+            # Get unique conversation IDs from message matches
+            msg_conv_ids = list(
+                set(m["conversation_id"] for m in (msg_result.data or []))
+            )
 
-        # Fetch those conversations (with ownership check)
+        # Fetch those conversations (with ownership check, defense in depth)
         msg_conversations = []
         if msg_conv_ids:
-            conv_result = (
-                supabase.table("chat_conversations")
+            conv_result = await asyncio.to_thread(
+                lambda: supabase.table("chat_conversations")
                 .select("id, scope, scope_id, title, created_at, updated_at")
                 .eq("user_id", user_id)
                 .in_("id", msg_conv_ids)
