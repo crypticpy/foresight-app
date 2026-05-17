@@ -152,12 +152,17 @@ class WorkstreamCreateResponse(BaseModel):
 # Valid status values for workstream cards (Kanban columns).
 # v2: collapsed from 6 stages (inbox/screening/research/brief/watching/archived)
 # to 4. See docs/16_PRD_Kanban_Redesign_and_Sharing.md.
-VALID_WORKSTREAM_CARD_STATUSES = {
+#
+# Declared as a tuple (not a set) so it doubles as the canonical *ordered*
+# column list — the kanban pagination endpoints rely on this order when
+# zipping fetched pages back to their column key. Membership tests
+# (`status in VALID_WORKSTREAM_CARD_STATUSES`) and `sorted(...)` still work.
+VALID_WORKSTREAM_CARD_STATUSES: tuple[str, ...] = (
     "inbox",
     "working",
     "ready",
     "archived",
-}
+)
 
 VALID_BRIEF_STATUSES = {"none", "draft", "ready", "exported"}
 VALID_RESEARCH_DEPTHS = {"none", "quick", "deep"}
