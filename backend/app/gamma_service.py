@@ -47,6 +47,12 @@ GAMMA_API_ENABLED = os.getenv("GAMMA_API_ENABLED", "true").lower() == "true"
 GAMMA_THEME_ID = os.getenv("GAMMA_THEME_ID")  # e.g., "abc123def456"
 GAMMA_FOLDER_ID = os.getenv("GAMMA_FOLDER_ID")  # e.g., "xyz789folder"
 
+# Image model identifier passed to Gamma's `imageOptions.model` field. This is
+# a Gamma selector string (Gamma proxies to the upstream image provider), not
+# an OpenAI chat-tier model — hence why it lives here instead of openai_provider.
+# Override via env without redeploy when Gamma updates the supported set.
+GAMMA_IMAGE_MODEL = os.getenv("GAMMA_IMAGE_MODEL", "gpt-image-2")
+
 # Polling configuration
 GAMMA_POLL_INTERVAL_SECONDS = 3
 GAMMA_POLL_MAX_ATTEMPTS = 60  # 3 minutes max wait time
@@ -1013,7 +1019,7 @@ CONTENT APPROACH:
         if include_images:
             request["imageOptions"] = {
                 "source": "aiGenerated",
-                "model": "gpt-image-2",
+                "model": GAMMA_IMAGE_MODEL,
                 # style: max 500 chars - using full budget for precise visual direction
                 "style": "professional photography, clean modern corporate design, sophisticated minimalist aesthetic, high-quality editorial imagery, suitable for government executive presentations, contemporary urban planning visuals, technology and innovation themes, civic infrastructure, blue and green color accents matching City of Austin brand",
             }
@@ -1674,7 +1680,7 @@ Create a presentation that a City Manager would proudly share with Council."""
         if include_images:
             request["imageOptions"] = {
                 "source": "aiGenerated",
-                "model": "gpt-image-2",
+                "model": GAMMA_IMAGE_MODEL,
                 "style": "premium executive photography, clean minimalist corporate design, municipal government imagery, smart city technology, urban innovation, professional blue and green color palette, editorial quality, strategic planning visuals, data visualization aesthetics, modern Austin Texas cityscape",
             }
         else:

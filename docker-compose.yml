@@ -40,7 +40,7 @@ services:
       - PORT=8000
       # Point to SearXNG sidecar for self-hosted search
       - SEARXNG_BASE_URL=http://searxng:8080
-      # Use SearXNG as primary search provider (auto | searxng | serper | tavily)
+      # Use SearXNG as primary search provider (auto | searxng | serper)
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-auto}
     depends_on:
       searxng:
@@ -80,7 +80,7 @@ services:
   # SearXNG — Self-Hosted Meta-Search Engine
   # ---------------------------------------------------------------------------
   # Aggregates results from Google, Bing, DuckDuckGo, Brave, and others.
-  # No API keys required. Replaces Serper/Tavily for zero-cost search.
+  # No API keys required. The zero-cost alternative to the paid Serper API.
   #
   # Web UI (optional): http://localhost:8888
   # JSON API:          http://searxng:8080/search?q=query&format=json

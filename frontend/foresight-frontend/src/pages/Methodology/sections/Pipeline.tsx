@@ -29,7 +29,8 @@ export function Pipeline() {
           <li>RSS feeds from curated publications and government outlets</li>
           <li>NewsAPI for real-time global news coverage</li>
           <li>
-            Tavily web search for emerging topics not yet in traditional feeds
+            Serper / SearXNG web search for emerging topics not yet in
+            traditional feeds
           </li>
           <li>Academic databases for peer-reviewed research</li>
         </ul>

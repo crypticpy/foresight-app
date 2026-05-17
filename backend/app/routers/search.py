@@ -129,8 +129,10 @@ async def get_saved_search(
         SavedSearch object
 
     Raises:
-        HTTPException 404: Saved search not found
-        HTTPException 403: Saved search belongs to another user
+        HTTPException 404: Saved search not found OR belongs to another user.
+            We return 404 (not 403) for the ownership-mismatch case so the
+            response does not leak whether the id exists. See CLAUDE.md
+            "API & Data Conventions" — same pattern used for workstreams.
     """
     # Fetch the saved search
     try:
@@ -156,11 +158,8 @@ async def get_saved_search(
 
     saved_search = response.data[0]
 
-    # Verify ownership
     if saved_search["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this saved search"
-        )
+        raise HTTPException(status_code=404, detail="Saved search not found")
 
     # Update last_used_at timestamp
     try:
@@ -211,8 +210,8 @@ async def update_saved_search(
         Updated SavedSearch object
 
     Raises:
-        HTTPException 404: Saved search not found
-        HTTPException 403: Saved search belongs to another user
+        HTTPException 404: Saved search not found OR belongs to another user.
+            See ownership-leak note on `get_saved_search`.
     """
     # First check if saved search exists
     try:
@@ -236,11 +235,8 @@ async def update_saved_search(
     if not ss_check.data:
         raise HTTPException(status_code=404, detail="Saved search not found")
 
-    # Verify ownership
     if ss_check.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to update this saved search"
-        )
+        raise HTTPException(status_code=404, detail="Saved search not found")
 
     # Build update dict with only non-None values
     update_dict = {k: v for k, v in saved_search_data.dict().items() if v is not None}
@@ -295,8 +291,8 @@ async def delete_saved_search(
         Success message
 
     Raises:
-        HTTPException 404: Saved search not found
-        HTTPException 403: Saved search belongs to another user
+        HTTPException 404: Saved search not found OR belongs to another user.
+            See ownership-leak note on `get_saved_search`.
     """
     # First check if saved search exists
     try:
@@ -320,11 +316,8 @@ async def delete_saved_search(
     if not ss_check.data:
         raise HTTPException(status_code=404, detail="Saved search not found")
 
-    # Verify ownership
     if ss_check.data[0]["user_id"] != current_user["id"]:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to delete this saved search"
-        )
+        raise HTTPException(status_code=404, detail="Saved search not found")
 
     # Perform delete
     try:

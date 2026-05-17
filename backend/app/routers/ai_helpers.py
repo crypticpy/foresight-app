@@ -1,5 +1,6 @@
 """AI helper and card creation router."""
 
+import asyncio
 import json
 import logging
 import uuid
@@ -51,7 +52,9 @@ async def create_card_from_topic(
                 exclude_none=True
             )
 
-        result = supabase.table("cards").insert(card_data).execute()
+        result = await asyncio.to_thread(
+            lambda: supabase.table("cards").insert(card_data).execute()
+        )
 
         if not result.data:
             raise HTTPException(
@@ -62,13 +65,17 @@ async def create_card_from_topic(
         # If workstream specified, add to workstream
         if body.workstream_id:
             try:
-                supabase.table("workstream_cards").insert(
-                    {
-                        "workstream_id": body.workstream_id,
-                        "card_id": card_id,
-                        "column_name": "inbox",
-                    }
-                ).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("workstream_cards")
+                    .insert(
+                        {
+                            "workstream_id": body.workstream_id,
+                            "card_id": card_id,
+                            "column_name": "inbox",
+                        }
+                    )
+                    .execute()
+                )
             except Exception as ws_err:
                 logger.warning(
                     f"Card {card_id} created but failed to add to workstream "

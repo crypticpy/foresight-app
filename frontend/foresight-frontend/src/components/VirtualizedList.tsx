@@ -289,34 +289,67 @@ function VirtualizedListInner<T>(
   // end-reached band so `onEndReached` re-fires only when they re-enter it
   // (rather than continuously while the scrollbar sits near the bottom).
   const endReachedFiredRef = useRef(false);
+
+  // Stable scroll handler shared between the listener and the items-changed
+  // re-check below. Reads `parentRef.current` each call so a late-mounting
+  // scroll container still works after the first render.
+  const handleScrollRef = useRef<(() => void) | null>(null);
+  handleScrollRef.current = () => {
+    const container = parentRef.current;
+    if (!container) return;
+    const distanceFromEnd =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromEnd <= endReachedThreshold) {
+      if (!endReachedFiredRef.current) {
+        endReachedFiredRef.current = true;
+        onEndReached?.();
+      }
+    } else {
+      endReachedFiredRef.current = false;
+    }
+  };
+
   useEffect(() => {
     const container = parentRef.current;
     if (!container || !onEndReached) return;
 
-    const handleScroll = () => {
-      const distanceFromEnd =
-        container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromEnd <= endReachedThreshold) {
-        if (!endReachedFiredRef.current) {
-          endReachedFiredRef.current = true;
-          onEndReached();
-        }
-      } else {
-        endReachedFiredRef.current = false;
-      }
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
+    const listener = () => handleScrollRef.current?.();
+    container.addEventListener("scroll", listener, { passive: true });
     // Run once on attach so an initially-underfilled list (content shorter
     // than viewport) can still trigger `onEndReached` — without this short
     // first pages would deadlock pagination because there's nothing to
     // scroll. Guard on `scrollHeight > 0` so we don't fire before layout has
     // measured the container.
     if (container.scrollHeight > 0) {
-      handleScroll();
+      listener();
     }
-    return () => container.removeEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", listener);
   }, [onEndReached, endReachedThreshold]);
+
+  // After a new page lands, items.length grows but the user hasn't scrolled,
+  // so the scroll listener doesn't re-fire. If the new content still doesn't
+  // fill the viewport, pagination would deadlock — `onEndReached` was already
+  // marked fired on the previous page and there are no scroll events to reset
+  // it. Reset the fired flag so we can fire once more, then re-run the check
+  // synchronously after layout.
+  //
+  // Skip the first run: the scroll-listener effect already fires the initial
+  // mount-time check, and running this effect once at mount would cause a
+  // double-fire when content is already inside the threshold band.
+  const prevItemsLengthRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevItemsLengthRef.current === null) {
+      prevItemsLengthRef.current = items.length;
+      return;
+    }
+    if (prevItemsLengthRef.current === items.length) return;
+    prevItemsLengthRef.current = items.length;
+    if (!onEndReached) return;
+    const container = parentRef.current;
+    if (!container || container.scrollHeight === 0) return;
+    endReachedFiredRef.current = false;
+    handleScrollRef.current?.();
+  }, [items.length, onEndReached]);
 
   // Loading state
   if (isLoading) {

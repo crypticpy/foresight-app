@@ -8,6 +8,7 @@ belongs to.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -166,13 +167,13 @@ async def list_portfolios(
     if workstream_id is not None:
         query = query.eq("workstream_id", workstream_id)
 
-    res = query.execute()
+    res = await asyncio.to_thread(query.execute)
     rows = res.data or []
     if not rows:
         return []
 
-    counts_res = (
-        supabase.table("portfolio_items")
+    counts_res = await asyncio.to_thread(
+        lambda: supabase.table("portfolio_items")
         .select("portfolio_id")
         .in_("portfolio_id", [r["id"] for r in rows])
         .execute()
@@ -279,7 +280,12 @@ async def delete_portfolio(
     portfolio_id: str, current_user: dict = Depends(get_current_user)
 ):
     _fetch_portfolio_or_404(portfolio_id, current_user["id"])
-    supabase.table("portfolios").delete().eq("id", portfolio_id).execute()
+    await asyncio.to_thread(
+        lambda: supabase.table("portfolios")
+        .delete()
+        .eq("id", portfolio_id)
+        .execute()
+    )
     return None
 
 
