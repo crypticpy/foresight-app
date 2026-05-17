@@ -341,3 +341,85 @@ def test_search_returns_title_match_even_without_message_matches(stub, monkeypat
     returned_ids = [c["id"] for c in result]
     assert CONV_A in returned_ids
     assert CONV_B not in returned_ids
+
+
+def test_search_paginates_prefetch_for_power_user(monkeypatch):
+    """Power-user regression: when the caller owns >1000 conversations, the
+    prefetch loop must page until exhausted so the .in_() scope on
+    chat_messages sees every owned id. Asserts (a) multiple range() calls
+    were issued on chat_conversations, (b) the second page's range starts at
+    1000, (c) the messages query's scoped id set contains a conversation
+    that only exists on page 2 — proving the loop actually progressed past
+    page 1 instead of stopping at the first 1000-row chunk."""
+    # Build 1001 conversations for USER_A so the prefetch needs exactly two
+    # pages (page 1 = rows 0..999, page 2 = row 1000). The needle-matching
+    # message lives on the row that lands on page 2, so a single-page
+    # prefetch would silently exclude it from the scoped .in_() filter.
+    page_size = 1000
+    total = page_size + 1  # forces a second iteration
+    overflow_conv_id = f"conv-a-{total - 1:04d}"  # last id, lands on page 2
+    conversations = [
+        {
+            "id": f"conv-a-{i:04d}",
+            "user_id": USER_A,
+            "scope": "global",
+            "scope_id": None,
+            "title": f"User A thread {i}",
+            "created_at": "2026-05-01T00:00:00Z",
+            "updated_at": "2026-05-01T00:00:00Z",
+        }
+        for i in range(total)
+    ]
+    messages = [
+        {
+            "id": "msg-overflow",
+            "conversation_id": overflow_conv_id,
+            "role": "user",
+            "content": f"Discussion of {NEEDLE} on the overflow page",
+        },
+    ]
+    big_stub = _SupabaseStub(conversations=conversations, messages=messages)
+    monkeypatch.setattr(chat_router, "supabase", big_stub)
+
+    user_a = {"id": USER_A, "role": "user", "account_type": "paid"}
+    result = _run(
+        chat_router.search_chat_conversations(
+            q=NEEDLE,
+            limit=20,
+            current_user=user_a,
+        )
+    )
+
+    # The overflow conversation must surface — proves the prefetch loop ran
+    # at least twice and the page-2 id reached the messages .in_() scope.
+    returned_ids = {c["id"] for c in result}
+    assert overflow_conv_id in returned_ids, (
+        "Power-user regression: search missed the overflow-page conversation, "
+        "meaning the prefetch loop stopped at page 1 and silently dropped "
+        f"{overflow_conv_id} from the .in_('conversation_id', ...) scope."
+    )
+
+    # The chat_conversations table must have been paged at least twice with
+    # the page-2 range starting at page_size — without this, an off-by-one
+    # in the range arithmetic would also pass the previous assertion.
+    conv_range_calls = [
+        c for c in big_stub.calls
+        if c["table"] == "chat_conversations" and c["range"] is not None
+    ]
+    assert len(conv_range_calls) >= 2, (
+        f"Expected at least 2 paginated range calls on chat_conversations, "
+        f"got {len(conv_range_calls)}. Loop did not advance past page 1."
+    )
+    assert conv_range_calls[1]["range"] == (page_size, 2 * page_size - 1), (
+        f"Page-2 range must start at {page_size} (exclusive of page 1), got "
+        f"{conv_range_calls[1]['range']}"
+    )
+
+    # The messages query must have been scoped via .in_() containing
+    # `total` conversation ids — proving the loop concatenated both pages.
+    msg_calls = [c for c in big_stub.calls if c["table"] == "chat_messages"]
+    assert len(msg_calls) == 1
+    assert len(msg_calls[0]["in"]["conversation_id"]) == total, (
+        f"chat_messages scope received {len(msg_calls[0]['in']['conversation_id'])} "
+        f"ids, expected {total} (both pages concatenated)."
+    )
