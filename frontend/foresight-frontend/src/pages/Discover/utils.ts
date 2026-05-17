@@ -7,6 +7,7 @@
 import { format, formatDistanceToNow } from "date-fns";
 import type { SavedSearchQueryConfig } from "../../lib/discovery-api";
 import type { SortOption } from "./types";
+import type { QualityFilter } from "./hooks/useCardLoader";
 
 /**
  * Get color classes for score values
@@ -88,6 +89,7 @@ export interface SavedSearchInputs {
   relevanceMin: number;
   noveltyMin: number;
   useSemanticSearch: boolean;
+  qualityFilter: QualityFilter;
 }
 
 /**
@@ -109,6 +111,7 @@ export const buildSavedSearchConfig = (
     relevanceMin,
     noveltyMin,
     useSemanticSearch,
+    qualityFilter,
   } = inputs;
 
   const config: SavedSearchQueryConfig = {
@@ -136,6 +139,9 @@ export const buildSavedSearchConfig = (
       ...(relevanceMin > 0 && { relevance_score: { min: relevanceMin } }),
       ...(noveltyMin > 0 && { novelty_score: { min: noveltyMin } }),
     };
+  }
+  if (qualityFilter && qualityFilter !== "all") {
+    filters.quality_filter = qualityFilter;
   }
 
   if (Object.keys(filters).length > 0) {

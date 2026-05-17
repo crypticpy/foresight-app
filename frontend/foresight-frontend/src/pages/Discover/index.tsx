@@ -144,6 +144,7 @@ const Discover: React.FC = () => {
         relevanceMin,
         noveltyMin,
         useSemanticSearch,
+        qualityFilter,
       }),
     [
       searchTerm,
@@ -156,6 +157,7 @@ const Discover: React.FC = () => {
       relevanceMin,
       noveltyMin,
       useSemanticSearch,
+      qualityFilter,
     ],
   );
 
@@ -256,6 +258,17 @@ const Discover: React.FC = () => {
       setImpactMin(filters.score_thresholds?.impact_score?.min ?? 0);
       setRelevanceMin(filters.score_thresholds?.relevance_score?.min ?? 0);
       setNoveltyMin(filters.score_thresholds?.novelty_score?.min ?? 0);
+      // Restore the saved quality tier; default to "all" when the payload
+      // predates the field or stored an unknown value.
+      const savedQuality = filters.quality_filter;
+      setQualityFilter(
+        savedQuality === "high" ||
+          savedQuality === "moderate" ||
+          savedQuality === "low" ||
+          savedQuality === "all"
+          ? savedQuality
+          : "all",
+      );
 
       setSearchParams({});
       setIsSidebarOpen(false);
@@ -327,6 +340,7 @@ const Discover: React.FC = () => {
     setRelevanceMin(0);
     setNoveltyMin(0);
     setUseSemanticSearch(false);
+    setQualityFilter("all");
   };
 
   const clearLensFilters = () => {
