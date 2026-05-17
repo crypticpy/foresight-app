@@ -189,6 +189,16 @@ from .admin_sources import (
     AdminSourceCategoriesResponse,
 )
 
+from .admin_coverage import (
+    AdminPillarCoverageBucket,
+    AdminPillarCoverageResponse,
+    CoverageGapCell,
+    CoverageGapTotals,
+    CoverageGapsResponse,
+    WorkstreamFreshnessRow,
+    WorkstreamCoverageResponse,
+)
+
 from .review import (
     CardReviewRequest,
     BulkReviewRequest,
@@ -448,6 +458,14 @@ __all__ = [
     "AdminSourcesListResponse",
     "AdminSourceCategory",
     "AdminSourceCategoriesResponse",
+    # admin_coverage
+    "AdminPillarCoverageBucket",
+    "AdminPillarCoverageResponse",
+    "CoverageGapCell",
+    "CoverageGapTotals",
+    "CoverageGapsResponse",
+    "WorkstreamFreshnessRow",
+    "WorkstreamCoverageResponse",
     # review
     "CardReviewRequest",
     "BulkReviewRequest",
