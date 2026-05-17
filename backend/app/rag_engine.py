@@ -19,6 +19,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.authz import accessible_workstream_ids
+from app.clone_service import ensure_user_clones_for_templates
 from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import (
     azure_openai_async_client,
@@ -56,6 +58,8 @@ class RAGEngine:
         scope_id: Optional[str] = None,
         mentions: Optional[List[Dict[str, Any]]] = None,
         max_context_chars: Optional[int] = None,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Tuple[str, dict]:
         """
         Orchestrate the full hybrid-RAG pipeline.
@@ -72,6 +76,13 @@ class RAGEngine:
             Structured ``@mention`` references from the frontend.
         max_context_chars : int | None
             Override for :pyattr:`MAX_CONTEXT_CHARS`.
+        user_id : str | None
+            Authenticated caller id. Required to scope ``@workstream`` mention
+            resolution to workstreams the caller can read. ``None`` paired with
+            ``is_admin=False`` makes private-workstream mentions silently miss
+            rather than leak metadata.
+        is_admin : bool
+            When True, mention resolution skips the per-user workstream ACL.
 
         Returns
         -------
@@ -111,7 +122,9 @@ class RAGEngine:
         # Step 6: resolve @mentions
         mention_data: List[Dict[str, Any]] = []
         if mentions or _extract_mention_titles(query):
-            mention_data = await self._resolve_mentions(query, mentions)
+            mention_data = await self._resolve_mentions(
+                query, mentions, user_id=user_id, is_admin=is_admin
+            )
 
         # Step 7: assemble final context
         context_text, metadata = self._assemble_context(
@@ -431,10 +444,17 @@ class RAGEngine:
         self,
         message: str,
         mentions: Optional[List[Dict[str, Any]]] = None,
+        *,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Resolve ``@[Title]`` patterns or structured mentions and return
         a list of context dicts for each resolved entity.
+
+        ``user_id`` / ``is_admin`` scope ``@workstream`` resolution to
+        workstreams the caller can read; without them, private workstream
+        mentions silently miss rather than leak metadata.
         """
         mention_refs: List[Dict[str, Any]] = []
 
@@ -455,11 +475,38 @@ class RAGEngine:
         if not mention_refs:
             return []
 
+        # Resolve the caller's accessible workstream ids exactly once per
+        # retrieve pass, off the event loop. Without this, each workstream
+        # mention would issue its own synchronous owned+member scan inside
+        # the async loop. `None` is the admin sentinel ("no filter"); a
+        # missing user_id with non-admin yields an empty set so workstream
+        # lookups short-circuit and never enumerate other users' titles.
+        accessible_ids: Optional[set[str]]
+        if is_admin:
+            accessible_ids = None
+        elif not user_id:
+            accessible_ids = set()
+        else:
+            # Materialize missing org-template clones first so a user who
+            # chats before hitting /api/v1/me/workstreams can still @-mention
+            # their org workstreams. Cheap when clones already exist.
+            await asyncio.to_thread(
+                ensure_user_clones_for_templates, user_id
+            )
+            accessible_ids = await asyncio.to_thread(
+                accessible_workstream_ids,
+                self.supabase,
+                user_id,
+                False,
+            )
+
         resolved: List[Dict[str, Any]] = []
 
         for ref in mention_refs:
             try:
-                entity = await self._resolve_single_mention(ref)
+                entity = await self._resolve_single_mention(
+                    ref, accessible_ids=accessible_ids
+                )
                 if entity:
                     resolved.append(entity)
             except Exception:
@@ -470,9 +517,19 @@ class RAGEngine:
         return resolved
 
     async def _resolve_single_mention(
-        self, ref: Dict[str, Any]
+        self,
+        ref: Dict[str, Any],
+        *,
+        accessible_ids: Optional[set[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Resolve one mention reference to a card or workstream dict."""
+        """Resolve one mention reference to a card or workstream dict.
+
+        ``accessible_ids`` carries the caller's workstream ACL precomputed
+        once by ``_resolve_mentions``: ``None`` = admin (no filter), a set
+        (possibly empty) = the workstream ids the caller can read. An empty
+        set short-circuits workstream lookups so non-admin callers can't
+        enumerate other users' private workstreams.
+        """
         entity_type = ref.get("type")
         entity_id = ref.get("id")
         title = ref.get("title", "")
@@ -498,7 +555,9 @@ class RAGEngine:
 
         # Try workstream resolution
         if entity_type in ("workstream", None):
-            ws = await self._lookup_workstream(entity_id, title)
+            ws = await self._lookup_workstream(
+                entity_id, title, accessible_ids=accessible_ids
+            )
             if ws:
                 try:
                     wc_result = (
@@ -1056,11 +1115,33 @@ class RAGEngine:
         return None
 
     async def _lookup_workstream(
-        self, workstream_id: Optional[str], title: str
+        self,
+        workstream_id: Optional[str],
+        title: str,
+        *,
+        accessible_ids: Optional[set[str]],
     ) -> Optional[Dict[str, Any]]:
-        """Look up a workstream by ID or by ILIKE name search."""
+        """Look up a workstream by ID or by ILIKE name search.
+
+        Scoped via the pre-resolved ``accessible_ids`` set:
+          - ``None`` is the admin sentinel — no scoping, see everything.
+          - A populated set restricts both id and title lookups.
+          - An empty set short-circuits to a miss (non-admin caller with no
+            accessible workstreams). Emitting ``in_([])`` would still return
+            every row in PostgREST, so we must early-return instead.
+
+        Callers resolve the ACL once via
+        ``accessible_workstream_ids(...)`` (typically inside
+        ``_resolve_mentions`` via ``asyncio.to_thread``) and pass the result
+        down to avoid a synchronous Supabase scan per mention.
+        """
         try:
+            if accessible_ids is not None and not accessible_ids:
+                return None
+
             if workstream_id:
+                if accessible_ids is not None and workstream_id not in accessible_ids:
+                    return None
                 result = (
                     self.supabase.table("workstreams")
                     .select("id, name, description")
@@ -1071,13 +1152,14 @@ class RAGEngine:
                     return result.data[0]
 
             if title:
-                result = (
+                query = (
                     self.supabase.table("workstreams")
                     .select("id, name, description")
                     .ilike("name", f"%{sanitize_ilike(title)}%")
-                    .limit(1)
-                    .execute()
                 )
+                if accessible_ids is not None:
+                    query = query.in_("id", list(accessible_ids))
+                result = query.limit(1).execute()
                 if result.data:
                     return result.data[0]
         except Exception:

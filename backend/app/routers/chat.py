@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
-from app.authz import is_admin, require_workstream_access
+from app.authz import accessible_workstream_ids, is_admin, require_workstream_access
+from app.clone_service import ensure_user_clones_for_templates
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -890,26 +891,54 @@ async def search_mentions(
         except Exception as exc:
             logger.warning(f"Mention search: cards query failed: {exc}")
 
-        # Search workstreams by name
+        # Search workstreams by name — scope to ones the caller can read so
+        # mention autocomplete doesn't enumerate other users' private titles.
         remaining = limit - len(results)
         if remaining > 0:
             try:
-                ws_result = (
-                    supabase.table("workstreams")
-                    .select("id, name")
-                    .ilike("name", search_term)
-                    .order("name")
-                    .limit(remaining)
-                    .execute()
-                )
-                for ws in ws_result.data or []:
-                    results.append(
-                        {
-                            "id": ws["id"],
-                            "type": "workstream",
-                            "title": ws["name"],
-                        }
+                # Materialize any missing org-template clones first so a user
+                # who hits chat before /api/v1/me/workstreams still sees their
+                # org workstreams in autocomplete. Cheap when clones already
+                # exist (one SELECT, no writes). Admins skip — they query the
+                # raw templates directly.
+                if not is_admin(current_user):
+                    await asyncio.to_thread(
+                        ensure_user_clones_for_templates, current_user["id"]
                     )
+                accessible_ids = await asyncio.to_thread(
+                    accessible_workstream_ids,
+                    supabase,
+                    current_user["id"],
+                    is_admin(current_user),
+                )
+                # Empty set for a non-admin = nothing to show; admin sentinel
+                # (None) skips the filter entirely.
+                if accessible_ids is None or accessible_ids:
+                    def _run_workstream_query():
+                        # Wrap the sync Supabase build+execute in to_thread to
+                        # avoid blocking the event loop (the ACL lookup above
+                        # already offloads its query; this kept the actual
+                        # autocomplete read on the loop).
+                        query = (
+                            supabase.table("workstreams")
+                            .select("id, name")
+                            .ilike("name", search_term)
+                            .order("name")
+                            .limit(remaining)
+                        )
+                        if accessible_ids is not None:
+                            query = query.in_("id", list(accessible_ids))
+                        return query.execute()
+
+                    ws_result = await asyncio.to_thread(_run_workstream_query)
+                    for ws in ws_result.data or []:
+                        results.append(
+                            {
+                                "id": ws["id"],
+                                "type": "workstream",
+                                "title": ws["name"],
+                            }
+                        )
             except Exception as exc:
                 logger.warning(f"Mention search: workstreams query failed: {exc}")
 
