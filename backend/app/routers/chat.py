@@ -30,6 +30,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
+async def _gate_workstream_scope(scope: str, scope_id: Optional[str], current_user: dict) -> None:
+    """Ownership gate for workstream-scoped chat surfaces.
+
+    `require_workstream_access` raises 403 when a workstream exists but the
+    caller lacks access. At these read surfaces we translate that to 404 so a
+    caller can't distinguish a valid-but-private workstream id from a bogus
+    one (matches the user-vs-org read pattern documented in CLAUDE.md).
+    """
+    if scope != "workstream" or not scope_id:
+        return
+    try:
+        await asyncio.to_thread(
+            require_workstream_access,
+            supabase,
+            scope_id,
+            current_user,
+            "read",
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workstream not found",
+            ) from exc
+        raise
+
+
 @router.get("/chat/stats")
 async def chat_stats(
     current_user: dict = Depends(get_current_user),
@@ -229,14 +256,7 @@ async def chat_endpoint(
 
     # Gate workstream scope behind ownership before any RAG/LLM work runs.
     # Cards (signal scope) are a shared global library per product design.
-    if request.scope == "workstream":
-        await asyncio.to_thread(
-            require_workstream_access,
-            supabase,
-            request.scope_id,
-            current_user,
-            "read",
-        )
+    await _gate_workstream_scope(request.scope, request.scope_id, current_user)
 
     # Convert MentionRef models to dicts for the service layer
     mention_dicts = None
@@ -560,14 +580,7 @@ async def chat_suggestions(
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
         )
 
-    if scope == "workstream" and scope_id:
-        await asyncio.to_thread(
-            require_workstream_access,
-            supabase,
-            scope_id,
-            current_user,
-            "read",
-        )
+    await _gate_workstream_scope(scope, scope_id, current_user)
 
     try:
         return await chat_generate_suggestions(
@@ -610,14 +623,7 @@ async def smart_chat_suggestions(
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
         )
 
-    if scope == "workstream" and scope_id:
-        await asyncio.to_thread(
-            require_workstream_access,
-            supabase,
-            scope_id,
-            current_user,
-            "read",
-        )
+    await _gate_workstream_scope(scope, scope_id, current_user)
 
     try:
         conversation_summary = ""

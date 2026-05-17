@@ -101,7 +101,11 @@ def stub_supabase(monkeypatch):
 
 
 def _run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +124,9 @@ def test_chat_endpoint_rejects_cross_tenant_workstream(stub_supabase):
     with pytest.raises(HTTPException) as exc:
         _run(chat_router.chat_endpoint(request, current_user=attacker))
 
-    assert exc.value.status_code == 403
+    # 404 (not 403) — masks existence of private workstreams, matching the
+    # user-vs-org read pattern documented in CLAUDE.md.
+    assert exc.value.status_code == 404
 
 
 def test_chat_endpoint_allows_workstream_owner(stub_supabase, monkeypatch):
@@ -162,7 +168,7 @@ def test_chat_suggestions_rejects_cross_tenant_workstream(stub_supabase):
             )
         )
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -183,4 +189,60 @@ def test_smart_chat_suggestions_rejects_cross_tenant_workstream(stub_supabase):
             )
         )
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
+
+
+def test_chat_suggestions_allows_workstream_owner(stub_supabase, monkeypatch):
+    async def _stub_generate(**_kw):
+        return {"suggestions": []}
+
+    monkeypatch.setattr(chat_router, "chat_generate_suggestions", _stub_generate)
+
+    owner = {"id": OWNER_ID, "role": "user", "account_type": "paid"}
+    result = _run(
+        chat_router.chat_suggestions(
+            scope="workstream",
+            scope_id=VICTIM_WS_ID,
+            current_user=owner,
+        )
+    )
+    # Owner reached the suggestion service — authz did not block.
+    assert result == {"suggestions": []}
+
+
+def test_smart_chat_suggestions_allows_workstream_owner(stub_supabase, monkeypatch):
+    # Patch the OpenAI client used by the smart suggestions endpoint so we
+    # don't need a real API call; we only care that authz let the owner pass.
+    class _StubChoice:
+        def __init__(self):
+            self.message = type("M", (), {"content": '{"suggestions": []}'})()
+
+    class _StubCompletion:
+        def __init__(self):
+            self.choices = [_StubChoice()]
+
+    class _StubChatCompletions:
+        async def create(self, **_kw):
+            return _StubCompletion()
+
+    class _StubChat:
+        def __init__(self):
+            self.completions = _StubChatCompletions()
+
+    class _StubClient:
+        def __init__(self):
+            self.chat = _StubChat()
+
+    monkeypatch.setattr(chat_router, "azure_openai_async_client", _StubClient())
+
+    owner = {"id": OWNER_ID, "role": "user", "account_type": "paid"}
+    result = _run(
+        chat_router.smart_chat_suggestions(
+            scope="workstream",
+            scope_id=VICTIM_WS_ID,
+            conversation_id=None,
+            current_user=owner,
+        )
+    )
+    # Owner reached the suggestion generator — authz did not block.
+    assert result is not None
