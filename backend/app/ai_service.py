@@ -18,6 +18,7 @@ import openai
 
 # Azure OpenAI deployment names
 from app.openai_provider import (
+    EMBEDDING_DIM,
     get_chat_agent_deployment,
     get_chat_mini_deployment,
     get_chat_nano_deployment,
@@ -469,26 +470,41 @@ class AIService:
         """
         self.client = openai_client
 
-    @with_retry(max_retries=MAX_RETRIES)
     async def generate_embedding(self, text: str) -> List[float]:
         """
         Generate embedding vector for text using OpenAI.
+
+        After retries are exhausted, falls back to a zero vector so callers
+        (pgvector RPCs in particular) don't crash on an empty list. The same
+        pattern is used in ``rag_engine._generate_embedding``.
 
         Args:
             text: Text to embed (will be truncated to ~8000 chars)
 
         Returns:
-            1536-dimensional embedding vector
+            1536-dimensional embedding vector (zero vector on final failure)
         """
-        # Truncate to stay within token limits
         truncated = text[:8000] if len(text) > 8000 else text
-
         logger.debug(f"Generating embedding for text ({len(truncated)} chars)")
+        try:
+            return await self._embedding_api_call(truncated)
+        except asyncio.CancelledError:
+            # Cooperative cancellation must propagate so the surrounding task
+            # actually shuts down — don't swallow it as a generic API failure.
+            raise
+        except Exception:
+            logger.error(
+                "Embedding generation failed after retries; falling back to zero vector",
+                exc_info=True,
+            )
+            return [0.0] * EMBEDDING_DIM
 
-        response = self.client.embeddings.create(
-            model=get_embedding_deployment(), input=truncated, timeout=REQUEST_TIMEOUT
+    @with_retry(max_retries=MAX_RETRIES)
+    async def _embedding_api_call(self, text: str) -> List[float]:
+        """Inner embedding call wrapped with @with_retry; raises on failure."""
+        response = await self.client.embeddings.create(
+            model=get_embedding_deployment(), input=text, timeout=REQUEST_TIMEOUT
         )
-
         return response.data[0].embedding
 
     @with_retry(max_retries=MAX_RETRIES)

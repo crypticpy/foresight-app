@@ -68,6 +68,17 @@ DEFAULT_CHAT_MINI_MODEL = "gpt-5.4-mini-2026-03-17"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
 DEFAULT_REASONING_EFFORT = "medium"
 
+# Dimensionality of the embedding vectors produced by DEFAULT_EMBEDDING_MODEL.
+# Used as the size of the zero-vector fallback in ai_service / recovery_service
+# / rag_engine when the embedding API call ultimately fails — pgvector RPCs
+# crash on an empty list, so callers need a same-shape stand-in.
+#
+# IMPORTANT: this must match the vector(N) column width in the cards/sources
+# tables (currently 1536, set in supabase/migrations/). If the embedding model
+# ever changes to a different dimensionality, the existing rows have to be
+# re-embedded *and* the column type rewritten — there is no partial migration.
+EMBEDDING_DIM = 1536
+
 # Production allowlist for admin-settable model overrides. Anything outside
 # this set is rejected before it can be persisted into admin_settings or
 # pushed into os.environ — guards against an admin pointing the prod chat
@@ -468,6 +479,7 @@ __all__ = [
     "DEFAULT_CHAT_MINI_MODEL",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_REASONING_EFFORT",
+    "EMBEDDING_DIM",
     # Production allowlists (used by admin setting validation)
     "ALLOWED_CHAT_MODELS",
     "ALLOWED_EMBEDDING_MODELS",

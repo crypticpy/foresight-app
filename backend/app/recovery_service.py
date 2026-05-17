@@ -16,6 +16,7 @@ from typing import List, Optional
 
 from app.ai_service import AnalysisResult, TriageResult
 from app.openai_provider import (
+    EMBEDDING_DIM,
     azure_openai_async_embedding_client,
     get_embedding_deployment,
 )
@@ -25,14 +26,30 @@ logger = logging.getLogger(__name__)
 
 
 async def _generate_embedding(text: str) -> List[float]:
-    """Generate an embedding vector for the given text."""
+    """Generate an embedding vector for the given text.
+
+    Falls back to a zero vector on failure so downstream pgvector calls
+    don't crash on an empty list. Mirrors the pattern in
+    ``rag_engine._generate_embedding`` and ``AIService.generate_embedding``.
+    """
     truncated = text[:8000]
-    resp = await azure_openai_async_embedding_client.embeddings.create(
-        model=get_embedding_deployment(),
-        input=truncated,
-        timeout=60,
-    )
-    return resp.data[0].embedding
+    try:
+        resp = await azure_openai_async_embedding_client.embeddings.create(
+            model=get_embedding_deployment(),
+            input=truncated,
+            timeout=60,
+        )
+        return resp.data[0].embedding
+    except asyncio.CancelledError:
+        # Cooperative cancellation must propagate so the surrounding task
+        # actually shuts down — don't swallow it as a generic API failure.
+        raise
+    except Exception:
+        logger.error(
+            "Embedding generation failed; falling back to zero vector",
+            exc_info=True,
+        )
+        return [0.0] * EMBEDDING_DIM
 
 
 def _reconstruct_processed_source(ds: dict) -> Optional[ProcessedSource]:
