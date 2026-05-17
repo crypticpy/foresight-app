@@ -4057,34 +4057,48 @@ class DiscoveryService:
 
             updated_report = existing_report | final_report
 
-            self.supabase.table("discovery_runs").update(
-                {
-                    "status": result.status.value,
-                    "completed_at": (
-                        result.completed_at.isoformat() if result.completed_at else None
-                    ),
-                    "queries_generated": result.queries_generated,
-                    "sources_found": result.sources_discovered,
-                    "sources_relevant": result.sources_triaged,
-                    "cards_created": (
-                        len(result.cards_created)
-                        if isinstance(result.cards_created, list)
-                        else result.cards_created
-                    ),
-                    "cards_enriched": (
-                        len(result.cards_enriched)
-                        if isinstance(result.cards_enriched, list)
-                        else result.cards_enriched
-                    ),
-                    "cards_deduplicated": result.sources_duplicate,
-                    "estimated_cost": result.estimated_cost,
-                    "error_message": result.errors[0] if result.errors else None,
-                    "error_details": (
-                        {"errors": result.errors} if result.errors else None
-                    ),
-                    "summary_report": updated_report,
-                }
-            ).eq("id", run_id).execute()
+            terminal_payload = {
+                "status": result.status.value,
+                "completed_at": (
+                    result.completed_at.isoformat()
+                    if result.completed_at
+                    else None
+                ),
+                "queries_generated": result.queries_generated,
+                "sources_found": result.sources_discovered,
+                "sources_relevant": result.sources_triaged,
+                "cards_created": (
+                    len(result.cards_created)
+                    if isinstance(result.cards_created, list)
+                    else result.cards_created
+                ),
+                "cards_enriched": (
+                    len(result.cards_enriched)
+                    if isinstance(result.cards_enriched, list)
+                    else result.cards_enriched
+                ),
+                "cards_deduplicated": result.sources_duplicate,
+                "estimated_cost": result.estimated_cost,
+                "error_message": result.errors[0] if result.errors else None,
+                "error_details": (
+                    {"errors": result.errors} if result.errors else None
+                ),
+                "summary_report": updated_report,
+            }
+            terminal_update = await asyncio.to_thread(
+                lambda: self.supabase.table("discovery_runs")
+                .update(terminal_payload)
+                .eq("id", run_id)
+                .eq("status", "running")
+                .execute()
+            )
+            if not (terminal_update.data or []):
+                logger.warning(
+                    "Discovery run %s already in a terminal state; "
+                    "skipped writing %s",
+                    run_id,
+                    result.status.value,
+                )
         except Exception as e:
             logger.warning(f"Failed to update run record: {e}")
 

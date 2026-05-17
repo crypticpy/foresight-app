@@ -351,13 +351,31 @@ async def execute_workstream_scan_background(scan_id: str, config: dict):
             f"{len(result.cards_created)} created, {len(result.cards_added_to_workstream)} added to workstream"
         )
 
-    except Exception as e:
-        logger.exception(f"Workstream scan {scan_id} failed: {e}")
-        # Update scan status to failed
-        supabase.table("workstream_scans").update(
-            {
-                "status": "failed",
-                "error_message": str(e),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", scan_id).execute()
+    except Exception as exc:
+        logger.exception(f"Workstream scan {scan_id} failed: {exc}")
+        # Update scan status to failed — allow non-terminal states (queued
+        # or running) so startup exceptions that fire before the running
+        # flip don't leave the scan stuck in queued indefinitely. Terminal
+        # states (completed/failed/cancelled) are still protected from a
+        # late overwrite.
+        error_text = str(exc)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        failure_update = await asyncio.to_thread(
+            lambda: supabase.table("workstream_scans")
+            .update(
+                {
+                    "status": "failed",
+                    "error_message": error_text,
+                    "completed_at": completed_at,
+                }
+            )
+            .eq("id", scan_id)
+            .in_("status", ["queued", "running"])
+            .execute()
+        )
+        if not (failure_update.data or []):
+            logger.warning(
+                "Workstream scan %s already in a terminal state; "
+                "skipped writing background-task failure",
+                scan_id,
+            )
