@@ -12,7 +12,7 @@ Supports:
 - WorkstreamExportRequest: Options for workstream report generation
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, validator
@@ -122,7 +122,7 @@ class ExportResponse(BaseModel):
         description="Size of the generated file in bytes"
     )
     generated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the export was generated"
     )
     card_id: Optional[str] = Field(
@@ -216,7 +216,7 @@ class WorkstreamExportResponse(BaseModel):
         description="Size of the generated file in bytes"
     )
     generated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the export was generated"
     )
     workstream_id: str = Field(
