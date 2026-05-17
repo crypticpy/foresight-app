@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, HttpUrl
 
 from app.authz import require_admin
-from app.deps import get_current_user, limiter, supabase
+from app.deps import _safe_error, get_current_user, limiter, supabase
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin-discovery"])
@@ -248,7 +248,7 @@ async def list_admin_sources(
         return await asyncio.to_thread(load)
     except Exception as e:
         logger.exception("Failed to list admin sources")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("list admin sources", e))
 
 
 _MAX_VALIDATION_REDIRECTS = 5
@@ -412,7 +412,7 @@ async def create_admin_source(
                 detail="A source with this category and URL already exists",
             )
         logger.exception("Failed to create admin source")
-        raise HTTPException(status_code=500, detail=message)
+        raise HTTPException(status_code=500, detail=_safe_error("create admin source", e))
 
     # Audit-log the create. Done after the insert so we never write an
     # audit row for a failed mutation. Best-effort: a failure here must not
@@ -481,7 +481,7 @@ async def update_admin_source(
         raise
     except Exception as e:
         logger.exception("Failed to update admin source")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("update admin source", e))
 
     await _safe_audit_log(
         actor=current_user,
@@ -533,7 +533,7 @@ async def delete_admin_source(
         raise
     except Exception as e:
         logger.exception("Failed to delete admin source")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("delete admin source", e))
 
     await _safe_audit_log(
         actor=current_user,
@@ -809,7 +809,7 @@ async def get_pillar_coverage(
         return await asyncio.to_thread(load)
     except Exception as e:
         logger.exception("Failed to compute pillar coverage")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("compute pillar coverage", e))
 
 
 # Drift-score thresholds for the gap detector. A drift_score of -1.0 means
@@ -1005,7 +1005,7 @@ async def get_coverage_gaps(
         return await asyncio.to_thread(load)
     except Exception as e:
         logger.exception("Failed to compute coverage gaps")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("compute coverage gaps", e))
 
 
 def _aggregate_workstream_freshness(
@@ -1137,7 +1137,7 @@ async def get_workstream_coverage(
         return await asyncio.to_thread(load)
     except Exception as e:
         logger.exception("Failed to compute workstream coverage")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("compute workstream coverage", e))
 
 
 @router.post("/admin/csp-goals/{goal_id}/refresh-queries")
@@ -1185,7 +1185,7 @@ async def admin_refresh_goal_queries(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to refresh queries for goal %s", goal_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=_safe_error("refresh goal queries", exc)) from exc
 
     return {"goal_id": goal_id, "queries": queries, "count": len(queries)}
 
@@ -1500,7 +1500,7 @@ async def admin_balance_dispatch(
     except Exception as exc:
         logger.exception("Failed to enqueue balance discovery run")
         raise HTTPException(
-            status_code=500, detail=f"failed to enqueue run: {exc}"
+            status_code=500, detail=_safe_error("enqueue balance discovery run", exc)
         ) from exc
 
     return {
@@ -1592,7 +1592,7 @@ async def admin_force_workstream_scan(
         raise
     except Exception as e:
         logger.exception("Failed to force-scan workstream")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("force-scan workstream", e))
 
     from app.routers.admin import _log_admin_action
 
@@ -1803,7 +1803,7 @@ async def get_discovery_run_detail(
         raise
     except Exception as e:
         logger.exception("Failed to load discovery run detail")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("load discovery run detail", e))
 
 
 # ---------------------------------------------------------------------------
@@ -1960,7 +1960,7 @@ async def list_admin_schedules(
         return await asyncio.to_thread(load)
     except Exception as e:
         logger.exception("Failed to list discovery schedules")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("list discovery schedules", e))
 
 
 def _coerce_schedule_payload(body: AdminScheduleBase) -> dict[str, Any]:
@@ -2017,7 +2017,7 @@ async def create_admin_schedule(
         raise
     except Exception as e:
         logger.exception("Failed to create discovery schedule")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("create discovery schedule", e))
 
     from app.routers.admin import _log_admin_action
 
@@ -2087,7 +2087,7 @@ async def update_admin_schedule(
         raise
     except Exception as e:
         logger.exception("Failed to update discovery schedule")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("update discovery schedule", e))
 
     from app.routers.admin import _log_admin_action
 
@@ -2148,7 +2148,7 @@ async def delete_admin_schedule(
         raise
     except Exception as e:
         logger.exception("Failed to delete discovery schedule")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error("delete discovery schedule", e))
 
     from app.routers.admin import _log_admin_action
 
