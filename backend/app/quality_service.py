@@ -201,7 +201,7 @@ def _calculate_source_diversity(sources: list[dict]) -> int:
 
     Scoring examples
     ----------------
-    - Sources from rss, newsapi, tavily, academic, gov: 5 categories -> 100
+    - Sources from rss, newsapi, serper, academic, gov: 5 categories -> 100
     - Sources from rss, newsapi: 2 categories -> 50
     - All sources from rss only: 1 category -> 20
     - No sources: 0

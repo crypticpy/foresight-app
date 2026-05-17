@@ -92,8 +92,6 @@ async def debug_gpt_researcher(current_user: dict = Depends(get_current_user)):
         "AZURE_OPENAI_API_KEY": (
             "SET" if os.getenv("AZURE_OPENAI_API_KEY") else "NOT SET"
         ),
-        "TAVILY_API_KEY": "SET" if os.getenv("TAVILY_API_KEY") else "NOT SET",
-        "FIRECRAWL_API_KEY": "SET" if os.getenv("FIRECRAWL_API_KEY") else "NOT SET",
         "SERPER_API_KEY": "SET" if os.getenv("SERPER_API_KEY") else "NOT SET",
         "SEARXNG_BASE_URL": os.getenv("SEARXNG_BASE_URL", "NOT SET"),
         "SEARCH_PROVIDER": os.getenv("SEARCH_PROVIDER", "auto"),
