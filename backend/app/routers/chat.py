@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
 from app.authz import accessible_workstream_ids, is_admin, require_workstream_access
+from app.clone_service import ensure_user_clones_for_templates
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -895,6 +896,15 @@ async def search_mentions(
         remaining = limit - len(results)
         if remaining > 0:
             try:
+                # Materialize any missing org-template clones first so a user
+                # who hits chat before /api/v1/me/workstreams still sees their
+                # org workstreams in autocomplete. Cheap when clones already
+                # exist (one SELECT, no writes). Admins skip — they query the
+                # raw templates directly.
+                if not is_admin(current_user):
+                    await asyncio.to_thread(
+                        ensure_user_clones_for_templates, current_user["id"]
+                    )
                 accessible_ids = await asyncio.to_thread(
                     accessible_workstream_ids,
                     supabase,

@@ -25,6 +25,26 @@ from app.rag_engine import RAGEngine
 from app.routers import chat as chat_router
 
 
+@pytest.fixture(autouse=True)
+def _stub_ensure_clones(monkeypatch):
+    """No-op org-clone materialization for every test in this module.
+
+    Chat mention surfaces now call ``ensure_user_clones_for_templates`` before
+    computing the accessible-id set so users who hit chat first still see
+    their org workstreams. These tests exercise the ACL scoping itself, not
+    the clone materialization path, so we stub it to keep the existing
+    Supabase stub minimal.
+    """
+    monkeypatch.setattr(
+        chat_router, "ensure_user_clones_for_templates", lambda _user_id: {}
+    )
+    monkeypatch.setattr(
+        rag_engine_module,
+        "ensure_user_clones_for_templates",
+        lambda _user_id: {},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Supabase stub — supports the subset of query builder methods exercised by
 # `_lookup_workstream`, `accessible_workstream_ids`, and `search_mentions`.
@@ -328,3 +348,85 @@ def test_mentions_search_still_returns_cards_globally(stub, monkeypatch):
     )
     card_titles = [r["title"] for r in result["results"] if r["type"] == "signal"]
     assert "Global Card" in card_titles
+
+
+# ---------------------------------------------------------------------------
+# Org-clone materialization — chat must trigger first-touch clone creation
+# so a user who chats before /api/v1/me/workstreams still sees their org
+# workstreams via @mention. Regression for the Codex P2 finding on PR #113.
+# ---------------------------------------------------------------------------
+
+
+def test_mentions_search_materializes_clones_for_non_admin(stub, monkeypatch):
+    """A non-admin caller triggers ``ensure_user_clones_for_templates``
+    before the ACL set is computed, so org-template clones are visible in
+    autocomplete even on a user's very first chat hit."""
+    monkeypatch.setattr(chat_router, "supabase", stub)
+
+    calls: List[str] = []
+
+    def _spy(user_id: str) -> Dict[str, str]:
+        calls.append(user_id)
+        return {}
+
+    monkeypatch.setattr(chat_router, "ensure_user_clones_for_templates", _spy)
+
+    owner_user = {"id": OWNER_ID, "role": "user", "account_type": "paid"}
+    _run(
+        chat_router.search_mentions(
+            q="owner public",
+            limit=8,
+            current_user=owner_user,
+        )
+    )
+    assert calls == [OWNER_ID]
+
+
+def test_mentions_search_skips_clone_materialization_for_admin(stub, monkeypatch):
+    """Admins bypass clone materialization — they see raw org templates."""
+    monkeypatch.setattr(chat_router, "supabase", stub)
+
+    calls: List[str] = []
+
+    def _spy(user_id: str) -> Dict[str, str]:
+        calls.append(user_id)
+        return {}
+
+    monkeypatch.setattr(chat_router, "ensure_user_clones_for_templates", _spy)
+
+    admin_user = {"id": "admin-1", "role": "admin", "account_type": "paid"}
+    _run(
+        chat_router.search_mentions(
+            q="anything",
+            limit=8,
+            current_user=admin_user,
+        )
+    )
+    assert calls == []
+
+
+def test_rag_engine_materializes_clones_before_mention_resolution(stub, monkeypatch):
+    """``RAGEngine._resolve_mentions`` calls clone materialization before
+    computing accessible ids so chat @mention can resolve a user's org
+    workstreams on first hit."""
+    monkeypatch.setattr(rag_engine_module, "azure_openai_async_client", None)
+
+    calls: List[str] = []
+
+    def _spy(user_id: str) -> Dict[str, str]:
+        calls.append(user_id)
+        return {}
+
+    monkeypatch.setattr(
+        rag_engine_module, "ensure_user_clones_for_templates", _spy
+    )
+
+    engine = RAGEngine(stub)
+    _run(
+        engine._resolve_mentions(
+            "Tell me about @[owner public name](workstream:ws-owner)",
+            user_id=OWNER_ID,
+            is_admin=False,
+        )
+    )
+    assert calls == [OWNER_ID]

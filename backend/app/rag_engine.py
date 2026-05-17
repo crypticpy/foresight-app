@@ -20,6 +20,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.authz import accessible_workstream_ids
+from app.clone_service import ensure_user_clones_for_templates
 from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import (
     azure_openai_async_client,
@@ -486,6 +487,12 @@ class RAGEngine:
         elif not user_id:
             accessible_ids = set()
         else:
+            # Materialize missing org-template clones first so a user who
+            # chats before hitting /api/v1/me/workstreams can still @-mention
+            # their org workstreams. Cheap when clones already exist.
+            await asyncio.to_thread(
+                ensure_user_clones_for_templates, user_id
+            )
             accessible_ids = await asyncio.to_thread(
                 accessible_workstream_ids,
                 self.supabase,
