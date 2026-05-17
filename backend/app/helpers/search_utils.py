@@ -12,13 +12,28 @@ from app.models.search import SearchFilters
 def sanitize_ilike(value: str) -> str:
     """Escape LIKE metacharacters in user input before passing to ``.ilike()``.
 
-    Supabase's ``.ilike()`` does not escape ``%`` / ``_`` / ``\\``, so a caller
-    that interpolates raw user input into the pattern turns those characters
-    into wildcards. ``q="%"`` would match every row; ``q="_"`` would match
-    every single-character value. Escape with the default ``\\`` escape char
-    so they're treated as literal characters.
+    Supabase / PostgREST's ``.ilike()`` does not escape wildcard chars, so a
+    caller that interpolates raw user input into the pattern turns them into
+    wildcards. ``q="%"`` (or ``q="*"``) would match every row; ``q="_"`` would
+    match every single-character value.
+
+    Characters escaped (with the default ``\\`` escape char so Postgres treats
+    them literally):
+
+    - ``\\`` — the escape char itself; must be escaped *first* so the
+      backslashes we add below aren't themselves re-escaped.
+    - ``%`` — LIKE "any string" wildcard.
+    - ``_`` — LIKE "any single character" wildcard.
+    - ``*`` — PostgREST accepts ``*`` as an alias for ``%`` inside ``ilike``
+      filter values, so a bare ``q="*"`` would otherwise still match
+      everything even after the other escapes. Escape it the same way.
     """
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+        .replace("*", "\\*")
+    )
 
 
 def _apply_search_filters(

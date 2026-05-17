@@ -25,6 +25,13 @@ def test_escapes_underscore():
     assert sanitize_ilike("a_b") == "a\\_b"
 
 
+def test_escapes_star_wildcard():
+    # PostgREST treats "*" as an alias for "%" inside ilike values, so an
+    # attacker passing "*" must be escaped the same way as "%".
+    assert sanitize_ilike("a*b") == "a\\*b"
+    assert sanitize_ilike("*") == "\\*"
+
+
 def test_escapes_backslash_first():
     # Backslash must be escaped *before* %/_ are escaped, otherwise the
     # backslashes we add to escape them would themselves be re-escaped.
@@ -32,9 +39,9 @@ def test_escapes_backslash_first():
 
 
 def test_handles_combined_metacharacters():
-    # Order matters: a single input with all three metacharacters round-trips
+    # Order matters: a single input with every metacharacter round-trips
     # to a single, well-formed escaped pattern.
-    assert sanitize_ilike("50%_done\\") == "50\\%\\_done\\\\"
+    assert sanitize_ilike("50%_*done\\") == "50\\%\\_\\*done\\\\"
 
 
 def test_attacker_wildcard_becomes_literal():
