@@ -8,6 +8,7 @@
 
 import { getAuthToken } from "../../lib/auth";
 import { API_BASE_URL } from "../../lib/config";
+import { sanitizeForOrIlike } from "../../lib/postgrest-utils";
 import { supabase } from "../../lib/supabase";
 import type { Card, Workstream } from "./types";
 
@@ -49,26 +50,6 @@ export interface WorkstreamFeedPage {
 
 const DEFAULT_FEED_PAGE_SIZE = 30;
 
-/**
- * Escape a keyword for inclusion in a Supabase PostgREST `.or()` chain.
- * - `%` and `_` are PostgreSQL `LIKE` metachars (Supabase `.ilike` does not
- *   escape them); they would otherwise act as wildcards.
- * - `,` would be parsed as a delimiter between OR branches.
- * - `(` and `)` are reserved by the PostgREST OR-expression grammar.
- * We drop the latter three rather than try to escape them — the workstream
- * keyword field is short user-controlled text and these characters are
- * effectively noise inside a substring match.
- */
-function escapeKeywordForOr(raw: string): string {
-  // Also neutralize `\` — PostgreSQL LIKE/ILIKE uses backslash as the default
-  // escape char, so a stray `\%` or `\_` would match a literal `%`/`_`
-  // instead of being treated as user noise.
-  return raw
-    .replace(/[%_\\]/g, " ")
-    .replace(/[,()]/g, " ")
-    .trim();
-}
-
 export async function fetchWorkstreamFeed(
   workstream: Workstream,
   offset = 0,
@@ -98,7 +79,7 @@ export async function fetchWorkstreamFeed(
   // flat OR chain: `name.ilike.%k1%,summary.ilike.%k1%,name.ilike.%k2%,...`
   if (workstream.keywords && workstream.keywords.length > 0) {
     const branches = workstream.keywords
-      .map((k) => escapeKeywordForOr(k))
+      .map((k) => sanitizeForOrIlike(k))
       .filter((k) => k.length > 0)
       .flatMap((k) => [`name.ilike.%${k}%`, `summary.ilike.%${k}%`]);
     if (branches.length > 0) {
