@@ -340,7 +340,8 @@ class ConnectionService:
         card_b_summary: str,
     ) -> dict:
         """
-        Use GPT-4o-mini to classify the relationship between two cards.
+        Use the mini chat tier (see openai_provider) to classify the
+        relationship between two cards.
 
         Args:
             card_a_name: Name of the first card.

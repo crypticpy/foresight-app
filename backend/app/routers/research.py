@@ -75,8 +75,8 @@ async def execute_research_task_background(
 
     Research Pipeline (hybrid approach):
     1. Discovery: GPT Researcher with municipal-focused queries
-    2. Triage: Quick relevance check (gpt-4o-mini)
-    3. Analysis: Full classification and scoring (gpt-4o)
+    2. Triage: Quick relevance check (mini chat tier)
+    3. Analysis: Full classification and scoring (chat tier)
     4. Matching: Vector similarity to existing cards
     5. Storage: Persist with entities for graph building
     """

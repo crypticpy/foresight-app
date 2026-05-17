@@ -4,7 +4,7 @@ SearXNG self-hosted meta-search engine fetcher.
 Queries a local or remote SearXNG instance for web and news results.
 SearXNG aggregates results from Google, Bing, DuckDuckGo, and others
 without requiring any API keys — the zero-cost, self-hosted alternative
-to Serper and Tavily.
+to paid search APIs like Serper.
 
 Configure via:
     SEARXNG_BASE_URL  — e.g. http://localhost:8888  (no trailing slash)

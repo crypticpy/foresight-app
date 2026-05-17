@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from app.openai_provider import get_chat_deployment
+
 logger = logging.getLogger(__name__)
 
 
@@ -730,17 +732,17 @@ class GammaService:
             sections.append(f"# {section_title}\n\n{clean_content}")
 
         # AI Disclosure slide
-        ai_disclosure = """# About This Report
+        ai_disclosure = f"""# About This Report
 
-This strategic intelligence brief was generated using the FORESIGHT platform, 
+This strategic intelligence brief was generated using the FORESIGHT platform,
 powered by advanced AI technologies:
 
-- Anthropic Claude for strategic analysis and synthesis
-- OpenAI GPT-4o for classification and scoring
-- GPT Researcher for autonomous deep research
-- Exa AI and Firecrawl for source discovery
+- OpenAI {get_chat_deployment()} for strategic analysis, classification, and scoring
+- GPT Researcher for autonomous deep research orchestration
+- SearXNG and Serper for web search aggregation
+- trafilatura for article extraction from source URLs
 
-The City of Austin is committed to transparent and responsible use of AI 
+The City of Austin is committed to transparent and responsible use of AI
 technology in public service."""
         sections.append(ai_disclosure)
 
@@ -1548,14 +1550,14 @@ What Austin should do in the next 90 days:
         sections.append(risk_opp_section)
 
         # ===== SLIDE N+4: AI Disclosure =====
-        disclosure_section = """# About This Portfolio
+        disclosure_section = f"""# About This Portfolio
 
 This strategic intelligence portfolio was generated using the FORESIGHT platform:
 
-• **AI Analysis**: Anthropic Claude & OpenAI GPT-4
+• **AI Analysis**: OpenAI {get_chat_deployment()}
 • **Presentation**: Gamma.app AI
-• **Deep Research**: GPT Researcher with Exa AI & Tavily
-• **Source Discovery**: Firecrawl web extraction
+• **Deep Research**: GPT Researcher with SearXNG & Serper
+• **Source Extraction**: trafilatura
 
 The City of Austin is committed to transparent and responsible use of AI in public service. All AI-generated content is reviewed for accuracy and relevance.
 
