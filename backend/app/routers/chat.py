@@ -361,19 +361,38 @@ async def search_chat_conversations(
             .execute()
         )
 
-        # Search message content
-        msg_result = (
-            supabase.table("chat_messages")
-            .select("conversation_id, content")
-            .ilike("content", f"%{safe_q}%")
-            .limit(50)
+        # Pre-scope the message content search to the caller's conversations.
+        # Without this guard the ILIKE scans every user's chat_messages and
+        # pulls matching bodies into memory / error logs / telemetry, even
+        # though the downstream re-fetch only displays the caller's own
+        # conversations. (Sentinel P1 #6.)
+        user_conv_resp = (
+            supabase.table("chat_conversations")
+            .select("id")
+            .eq("user_id", user_id)
             .execute()
         )
+        user_conv_ids = [c["id"] for c in (user_conv_resp.data or [])]
 
-        # Get unique conversation IDs from message matches
-        msg_conv_ids = list(set(m["conversation_id"] for m in (msg_result.data or [])))
+        # CRITICAL: never call `.in_("conversation_id", [])` — PostgREST
+        # treats an empty IN list as "match everything", which would re-open
+        # the same cross-user leak this fix exists to close.
+        msg_conv_ids: List[str] = []
+        if user_conv_ids:
+            msg_result = (
+                supabase.table("chat_messages")
+                .select("conversation_id")
+                .in_("conversation_id", user_conv_ids)
+                .ilike("content", f"%{safe_q}%")
+                .limit(50)
+                .execute()
+            )
+            # Get unique conversation IDs from message matches
+            msg_conv_ids = list(
+                set(m["conversation_id"] for m in (msg_result.data or []))
+            )
 
-        # Fetch those conversations (with ownership check)
+        # Fetch those conversations (with ownership check, defense in depth)
         msg_conversations = []
         if msg_conv_ids:
             conv_result = (
