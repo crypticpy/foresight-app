@@ -20,7 +20,7 @@ import time
 import logging
 import ipaddress
 from typing import Callable, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
@@ -498,7 +498,7 @@ def log_security_event(
         "client_ip": client_ip,
         "path": request.url.path,
         "method": request.method,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     if details:

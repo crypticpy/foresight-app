@@ -22,7 +22,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from functools import wraps
 from dataclasses import dataclass
@@ -436,7 +436,7 @@ class ExecutiveBriefService:
         if version_result.data:
             next_version = version_result.data[0]["version"] + 1
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         brief_record = {
             "workstream_card_id": workstream_card_id,
             "card_id": card_id,
@@ -585,7 +585,7 @@ class ExecutiveBriefService:
         """
         update_data = {
             "status": status,
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
 
         if error_message:
@@ -906,7 +906,7 @@ class ExecutiveBriefService:
                 content=result.content_json,
                 content_markdown=result.content_markdown,
                 summary=result.summary,
-                generated_at=datetime.utcnow().isoformat(),
+                generated_at=datetime.now(timezone.utc).isoformat(),
                 generation_time_ms=generation_time_ms,
                 model_used=result.model_used,
                 prompt_tokens=result.prompt_tokens,

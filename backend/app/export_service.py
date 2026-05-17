@@ -1981,7 +1981,7 @@ class ExportService:
         if card_data.updated_at:
             footer_parts.append(f"Updated: {card_data.updated_at.strftime('%Y-%m-%d')}")
         footer_parts.append(
-            f"Export Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+            f"Export Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
         )
 
         footer_text = " | ".join(footer_parts)
@@ -2588,7 +2588,7 @@ class ExportService:
             )
 
             footer_text = (
-                f"Export Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+                f"Export Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
             )
             elements.append(Paragraph(footer_text, styles["SmallText"]))
 
@@ -3818,7 +3818,7 @@ class ExportService:
                 )
             )
             footer_text = (
-                f"Export Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+                f"Export Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
             )
             elements.extend(
                 (
