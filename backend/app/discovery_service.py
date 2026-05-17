@@ -4095,7 +4095,7 @@ class DiscoveryService:
             )
             if not (terminal_update.data or []):
                 logger.warning(
-                    "Discovery run %s already terminal (cancelled or failed); "
+                    "Discovery run %s already in a terminal state; "
                     "skipped writing %s",
                     run_id,
                     result.status.value,

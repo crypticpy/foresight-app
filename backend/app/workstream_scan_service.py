@@ -1537,12 +1537,13 @@ Example: ["query 1", "query 2", ...]"""
                     }
                 )
                 .eq("id", scan_id)
-                .eq("status", "running")
+                .in_("status", ["queued", "running"])
                 .execute()
             )
             if not (finalize_res.data or []):
                 logger.warning(
-                    "Workstream scan %s already terminal; skipped writing %s",
+                    "Workstream scan %s already in a terminal state; "
+                    "skipped writing %s",
                     scan_id,
                     result.status,
                 )
