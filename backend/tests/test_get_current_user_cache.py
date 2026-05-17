@@ -70,7 +70,11 @@ class _UsersQuery:
         if self._id_filter is None:
             return _Resp([])
         row = self._stub.profiles.get(self._id_filter)
-        return _Resp([row] if row else [])
+        # Real PostgREST returns freshly-deserialized rows, not references
+        # into a server-side dict — return a shallow copy so test mutations
+        # of ``stub.profiles`` only affect *subsequent* fetches, never
+        # already-returned (and now-cached) payloads.
+        return _Resp([dict(row)] if row else [])
 
 
 class _SupabaseStub:
@@ -192,6 +196,14 @@ def test_cache_hit_within_ttl_skips_supabase_lookup(monkeypatch):
         f"Expected exactly 1 profile fetch (second call should be cached), "
         f"got {stub.profile_calls}. TTL cache regressed."
     )
+    # Auth verification is intentionally NOT cached — JWT revocation must
+    # take effect on the next request. Pin that invariant explicitly so a
+    # regression that starts caching auth gets caught here.
+    assert stub.auth_calls == 2, (
+        f"Expected Supabase Auth to run on both requests (token verification "
+        f"must NOT be cached), got {stub.auth_calls}. Auth caching regressed — "
+        "revoked tokens would keep working until TTL expiry."
+    )
 
 
 def test_cache_expires_after_ttl(monkeypatch):
@@ -206,18 +218,36 @@ def test_cache_expires_after_ttl(monkeypatch):
     fake_now = {"t": 2_000_000.0}
     monkeypatch.setattr(deps.time, "time", lambda: fake_now["t"])
 
-    _run(deps.get_current_user(_make_request(), _make_creds(TOKEN_A)))
+    first = _run(deps.get_current_user(_make_request(), _make_creds(TOKEN_A)))
     assert stub.profile_calls == 1
+    assert first["role"] == "user"
+
+    # Simulate an out-of-band profile mutation (e.g. admin demotion) while
+    # the cached entry is still resident. Without TTL eviction the second
+    # call would keep returning the stale ``role`` value.
+    stub.profiles[USER_A]["role"] = "admin"
 
     # Advance past the TTL boundary. ``_CACHE_TTL`` is read from the
     # module so this test stays correct if the constant is tuned.
     fake_now["t"] += deps._CACHE_TTL + 1
 
-    _run(deps.get_current_user(_make_request(), _make_creds(TOKEN_A)))
+    second = _run(deps.get_current_user(_make_request(), _make_creds(TOKEN_A)))
     assert stub.profile_calls == 2, (
         f"Expected the post-TTL call to re-fetch the profile, but profile "
         f"fetch count is {stub.profile_calls}. TTL eviction is broken — "
         "stale role / account_type values will be served indefinitely."
+    )
+    # The post-TTL response must reflect the underlying mutation. Without
+    # this, a regression that re-increments ``profile_calls`` but still
+    # serves the cached payload (e.g. eviction firing after the read) would
+    # slip through the count-only check above.
+    assert second["role"] == "admin", (
+        f"Post-TTL call returned stale role {second['role']!r} — the cache "
+        "evicted the count but kept serving the old payload."
+    )
+    assert first != second, (
+        "Pre-TTL and post-TTL payloads are identical despite an underlying "
+        "profile mutation; cache is serving a stale snapshot."
     )
 
     # And the stale entry must have been evicted by ``_get_cached_profile``
