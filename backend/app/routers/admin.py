@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
@@ -19,6 +18,7 @@ from app.deps import (
     evict_cached_profile,
 )
 from app import cost_guardrail
+from app.audit_service import log_admin_action as _log_admin_action
 from app.openai_provider import (
     ALLOWED_CHAT_MODELS,
     ALLOWED_EMBEDDING_MODELS,
@@ -433,72 +433,6 @@ def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
 # the before/after snapshots, so adding a new updatable field cannot silently
 # log None for its prior value.
 _AUDITABLE_USER_FIELDS: tuple[str, ...] = ("role", "account_type", "display_name")
-
-# Defense-in-depth: even though current SETTING_DEFINITIONS don't include
-# secrets, redact any audit payload key (or setting target_id) that looks
-# sensitive so a future addition can't leak via the audit table.
-_SENSITIVE_KEY_PATTERN = re.compile(
-    r"(password|secret|api[_-]?key|token|credential)", re.IGNORECASE
-)
-_REDACTED = "***REDACTED***"
-
-
-def _redact_for_audit(target_id: str, payload: Any) -> Any:
-    """Mask sensitive values in an audit payload.
-
-    Two triggers: the target_id itself looks sensitive (e.g. a setting whose
-    key contains "api_key") OR an individual field name does. Non-dict
-    payloads pass through — we only know how to redact key/value maps.
-    """
-    if not isinstance(payload, dict):
-        return payload
-    target_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(target_id or ""))
-    redacted: dict[str, Any] = {}
-    for key, value in payload.items():
-        field_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(str(key)))
-        if (target_is_sensitive or field_is_sensitive) and value is not None:
-            redacted[key] = _REDACTED
-        else:
-            redacted[key] = value
-    return redacted
-
-
-def _log_admin_action(
-    *,
-    actor: dict,
-    action: str,
-    target_type: str,
-    target_id: str,
-    before: Any,
-    after: Any,
-    request: Optional[Request] = None,
-) -> None:
-    """Insert an admin_audit_log row.
-
-    Failures are logged but never raised — the caller's mutation has already
-    succeeded by the time we get here, so a missed audit row should not
-    surface as an HTTP error. Operators monitor via the logger.
-    """
-    try:
-        supabase.table("admin_audit_log").insert(
-            {
-                "actor_id": actor.get("id"),
-                "actor_email": actor.get("email"),
-                "action": action,
-                "target_type": target_type,
-                "target_id": target_id,
-                "before": _redact_for_audit(target_id, before),
-                "after": _redact_for_audit(target_id, after),
-                "request_ip": request.client.host if request and request.client else None,
-            }
-        ).execute()
-    except Exception:
-        logger.exception(
-            "Failed to write admin_audit_log entry: action=%s target=%s/%s",
-            action,
-            target_type,
-            target_id,
-        )
 
 
 @router.get("/admin/overview")
