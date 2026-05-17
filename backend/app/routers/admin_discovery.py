@@ -28,6 +28,11 @@ from pydantic import BaseModel, Field, HttpUrl
 from app.audit_service import log_admin_action
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, limiter, supabase
+from app.models import (
+    AdminSourceCategoriesResponse,
+    AdminSourceRow,
+    AdminSourcesListResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin-discovery"])
@@ -201,7 +206,7 @@ def _attach_health(
     return decorated
 
 
-@router.get("/admin/sources")
+@router.get("/admin/sources", response_model=AdminSourcesListResponse)
 async def list_admin_sources(
     category: Optional[CategoryLiteral] = None,
     enabled_only: bool = False,
@@ -355,7 +360,12 @@ async def _validate_rss_url(url: str) -> None:
         )
 
 
-@router.post("/admin/sources", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/admin/sources",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AdminSourceRow,
+    response_model_exclude_none=True,
+)
 @limiter.limit("10/minute")
 async def create_admin_source(
     request: Request,
@@ -428,7 +438,11 @@ async def create_admin_source(
     return row
 
 
-@router.patch("/admin/sources/{source_id}")
+@router.patch(
+    "/admin/sources/{source_id}",
+    response_model=AdminSourceRow,
+    response_model_exclude_none=True,
+)
 @limiter.limit("30/minute")
 async def update_admin_source(
     request: Request,
@@ -546,7 +560,10 @@ async def delete_admin_source(
     return None
 
 
-@router.get("/admin/sources/categories")
+@router.get(
+    "/admin/sources/categories",
+    response_model=AdminSourceCategoriesResponse,
+)
 async def list_source_categories(
     current_user: dict = Depends(get_current_user),
 ):
