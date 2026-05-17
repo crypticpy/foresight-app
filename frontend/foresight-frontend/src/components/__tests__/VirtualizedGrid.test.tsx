@@ -174,13 +174,29 @@ describe("VirtualizedGrid", () => {
     });
   });
 
+  // Single source of truth for "is this the VirtualizedGrid scroll container?".
+  // Both mockContainerWidth and mockContainerLayout scope their spies to this
+  // predicate so the stubs don't bleed into wrappers, item nodes, or
+  // `virtualizer.measureElement` (which would corrupt `getTotalSize()` /
+  // per-row measurements).
+  const isScrollContainer = (el: unknown): boolean =>
+    el instanceof HTMLElement && el.classList.contains("overflow-auto");
+
+  // Locates the virtual sizer — the inner div the grid renders to hold the
+  // full scroll height (`virtualizer.getTotalSize()`). It is structurally the
+  // first child of the scroll container (see VirtualizedGrid.tsx). Wrapping
+  // the lookup in a helper keeps tests insulated from the underlying selector
+  // shape: if the production component changes how the sizer is identified
+  // (e.g. swaps to a `data-testid`), only this helper needs to update.
+  function getSizer(container: HTMLElement): HTMLElement | null {
+    return container.querySelector<HTMLElement>(".overflow-auto > div");
+  }
+
   // In jsdom the container reports offsetWidth=0, so VirtualizedGrid bails
   // out to a placeholder div (containerWidth === 0). Stub offsetWidth so
-  // the real render path runs. Scope to the scroll container (which carries
-  // `overflow-auto`) to avoid affecting wrappers or item nodes.
+  // the real render path runs. Scope to the scroll container to avoid
+  // affecting wrappers or item nodes.
   function mockContainerWidth(width: number) {
-    const isScrollContainer = (el: unknown): boolean =>
-      el instanceof HTMLElement && el.classList.contains("overflow-auto");
     const widthSpy = vi
       .spyOn(HTMLElement.prototype, "offsetWidth", "get")
       .mockImplementation(function (this: HTMLElement) {
@@ -194,11 +210,9 @@ describe("VirtualizedGrid", () => {
   // scroll container — @tanstack/virtual-core reads viewport size via
   // `element.offsetHeight` (see virtual-core: `const { offsetWidth,
   // offsetHeight } = element`), not `clientHeight` or
-  // `getBoundingClientRect()`. Scope to overflow-auto so it doesn't bleed
-  // into per-row measurements (which would corrupt `getTotalSize()`).
+  // `getBoundingClientRect()`. Scope to the scroll container so it doesn't
+  // bleed into per-row measurements (which would corrupt `getTotalSize()`).
   function mockContainerLayout(width: number, viewportHeight = 600) {
-    const isScrollContainer = (el: unknown): boolean =>
-      el instanceof HTMLElement && el.classList.contains("overflow-auto");
     const restoreWidth = mockContainerWidth(width);
     const heightSpy = vi
       .spyOn(HTMLElement.prototype, "offsetHeight", "get")
@@ -281,9 +295,7 @@ describe("VirtualizedGrid", () => {
           columns: { sm: 1, md: 1, lg: 1 },
         });
         // rowCount = ceil(10 / 1) = 10; totalSize = 10 * (200 + 50) = 2500.
-        const sizer = container.querySelector<HTMLElement>(
-          '[style*="position: relative"]',
-        );
+        const sizer = getSizer(container);
         expect(sizer?.style.height).toBe("2500px");
       } finally {
         restoreLayout();
@@ -388,9 +400,7 @@ describe("VirtualizedGrid", () => {
           </div>,
         );
         // rowCount = ceil(5 / 1) = 5; totalSize = 5 * (280 + 24) = 1520.
-        const sizer = container.querySelector<HTMLElement>(
-          '[style*="position: relative"]',
-        );
+        const sizer = getSizer(container);
         expect(sizer?.style.height).toBe("1520px");
       } finally {
         restoreLayout();
