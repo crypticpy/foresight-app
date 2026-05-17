@@ -236,12 +236,22 @@ async def execute_discovery_run_background(
             "estimated_cost": result.estimated_cost,
         }
 
-        def _update_success() -> None:
-            supabase.table("discovery_runs").update(success_payload).eq(
-                "id", run_id
-            ).execute()
+        def _update_success() -> int:
+            res = (
+                supabase.table("discovery_runs")
+                .update(success_payload)
+                .eq("id", run_id)
+                .eq("status", "running")
+                .execute()
+            )
+            return len(res.data or [])
 
-        await asyncio.to_thread(_update_success)
+        updated = await asyncio.to_thread(_update_success)
+        if not updated:
+            logger.warning(
+                "Discovery run %s already terminal; skipped success status write",
+                run_id,
+            )
 
         logger.info(
             f"Discovery run {run_id} completed: {len(result.cards_created)} cards created, {len(result.cards_enriched)} enriched"
@@ -490,7 +500,8 @@ async def cancel_discovery_run(
             detail=f"Cannot cancel run with status '{run['status']}'. Only 'running' runs can be cancelled.",
         )
 
-    # Update status to cancelled
+    # Update status to cancelled — guard against late writes resurrecting a
+    # run that already reached a terminal state.
     update_response = await asyncio.to_thread(
         lambda: supabase.table("discovery_runs")
         .update(
@@ -501,6 +512,7 @@ async def cancel_discovery_run(
             }
         )
         .eq("id", run_id)
+        .eq("status", "running")
         .execute()
     )
 

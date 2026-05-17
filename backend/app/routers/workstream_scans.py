@@ -353,11 +353,12 @@ async def execute_workstream_scan_background(scan_id: str, config: dict):
 
     except Exception as e:
         logger.exception(f"Workstream scan {scan_id} failed: {e}")
-        # Update scan status to failed
+        # Update scan status to failed — only when still running so a late
+        # error path can't overwrite a previously-terminal status.
         supabase.table("workstream_scans").update(
             {
                 "status": "failed",
                 "error_message": str(e),
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
-        ).eq("id", scan_id).execute()
+        ).eq("id", scan_id).eq("status", "running").execute()
