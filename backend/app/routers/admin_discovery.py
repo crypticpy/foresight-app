@@ -29,6 +29,7 @@ from app.audit_service import log_admin_action
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, limiter, supabase
 from app.models import (
+    AdminCspGoalRefreshQueriesResponse,
     AdminPillarCoverageResponse,
     AdminScheduleRow,
     AdminSchedulesListResponse,
@@ -1168,7 +1169,10 @@ async def get_workstream_coverage(
         raise HTTPException(status_code=500, detail=_safe_error("compute workstream coverage", e))
 
 
-@router.post("/admin/csp-goals/{goal_id}/refresh-queries")
+@router.post(
+    "/admin/csp-goals/{goal_id}/refresh-queries",
+    response_model=AdminCspGoalRefreshQueriesResponse,
+)
 @limiter.limit("10/minute")
 async def admin_refresh_goal_queries(
     request: Request,
