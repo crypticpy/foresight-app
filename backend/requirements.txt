@@ -21,9 +21,10 @@ python-dotenv>=1.0.0
 slowapi>=0.1.9
 
 # GPT Researcher for deep research functionality
+# Tavily/Firecrawl are decommissioned (see CLAUDE.md "Tech Stack" / "Web search
+# providers"). gpt-researcher and chat web_search both go through Serper +
+# self-hosted SearXNG. Do not re-add tavily-python or firecrawl-py.
 gpt-researcher>=0.9.0
-tavily-python>=0.3.0
-firecrawl-py>=4.12.0
 
 # Export and reporting functionality
 python-pptx>=0.6.21

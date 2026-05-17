@@ -14,7 +14,7 @@ import { apiRequest } from "./shared";
  * Stored alongside the run record for reproducibility.
  */
 export interface DiscoveryRunConfig {
-  /** Source types to include (e.g., 'rss', 'newsapi', 'tavily') */
+  /** Source types to include (e.g., 'rss', 'newsapi', 'serper') */
   source_types?: string[];
   /** Strategic pillar codes to focus on (e.g., ['CH', 'MC']) */
   pillar_focus?: string[];

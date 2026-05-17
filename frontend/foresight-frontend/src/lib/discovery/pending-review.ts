@@ -21,7 +21,7 @@ export interface PendingCard extends Card {
   discovered_at: string;
   /** URL of the primary source that generated this card */
   source_url?: string;
-  /** Type of the source (e.g., 'rss', 'newsapi', 'tavily') */
+  /** Type of the source (e.g., 'rss', 'newsapi', 'serper') */
   source_type?: string;
   /** ID of the discovery run that created this card */
   discovery_run_id?: string;
