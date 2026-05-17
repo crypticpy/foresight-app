@@ -127,6 +127,17 @@ class SearchFilters(BaseModel):
         None,
         description="Filter by card status (e.g., 'active')"
     )
+    quality_filter: Optional[str] = Field(
+        None,
+        pattern=r"^(all|high|moderate|low)$",
+        description=(
+            "Filter by signal_quality_score tier: 'high' (>=75), 'moderate' "
+            "(50-74), 'low' (<50 OR null). 'all' (or None) disables the "
+            "filter. Mirrors the Discover quality-tier chip applied on the "
+            "standard Supabase path so the semantic-search branch enforces "
+            "the same constraint server-side."
+        ),
+    )
 
     @validator('pillar_ids', 'goal_ids', 'stage_ids', pre=True)
     def filter_empty_strings(cls, v):

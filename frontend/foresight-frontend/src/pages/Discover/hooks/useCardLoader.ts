@@ -25,6 +25,20 @@ import { getSortConfig } from "../utils";
 
 const PAGE_SIZE = 30;
 
+/**
+ * Cap how many consecutive empty pages `fetchPage` will hop over when the
+ * semantic path's post-slice `quickFilter === "new" | "updated"` drops every
+ * row in a fetched page. Without this bound, a filter that matches nothing
+ * in the dataset would scan the entire result set in one `loadMore()` call.
+ * 5 hops × PAGE_SIZE = up to 150 raw server rows considered per page request,
+ * which is a sensible upper bound for an interactive scroll-to-load.
+ *
+ * Quality-tier filtering moved server-side (see backend `quality_filter`),
+ * so the only remaining client-side filters that can empty a semantic page
+ * are the two date-based quickFilters, both of which have natural bounds.
+ */
+const MAX_EMPTY_PAGE_HOPS = 5;
+
 export interface CardLoaderFilters {
   searchTerm: string;
   impactMin: number;
@@ -302,6 +316,16 @@ export function useCardLoader({
       if (useSemanticSearch && searchTerm.trim()) {
         const token = await getAuthToken();
         if (token) {
+          // Quality tier is enforced server-side via filters.quality_filter
+          // so the semantic path obeys the same constraint as the standard
+          // Supabase path. Without this the chip would silently no-op when
+          // the user enables semantic search.
+          const semanticQuality =
+            qualityFilter === "high" ||
+            qualityFilter === "moderate" ||
+            qualityFilter === "low"
+              ? qualityFilter
+              : undefined;
           const searchRequest: AdvancedSearchRequest = {
             query: searchTerm,
             use_vector_search: true,
@@ -330,6 +354,7 @@ export function useCardLoader({
                   }),
                 },
               }),
+              ...(semanticQuality && { quality_filter: semanticQuality }),
             },
             // Over-fetch by 1 to derive has_more.
             limit: PAGE_SIZE + 1,
@@ -344,7 +369,10 @@ export function useCardLoader({
           // map into cards). Client-side `new`/`updated` quick filters below
           // may drop some of those cards, but the server has already returned
           // those rows — the next page must start AFTER them, not before, or
-          // we'd re-fetch the rows we just filtered out.
+          // we'd re-fetch the rows we just filtered out. If the quickFilters
+          // empty the page entirely, `fetchPageWithEmptyHop` (caller-side)
+          // will request the next page transparently so pagination doesn't
+          // stall on a transiently empty result set.
           const cursorAdvance = sliced.length;
 
           let mappedCards: Card[] = sliced.map((result) => ({
@@ -485,6 +513,55 @@ export function useCardLoader({
     [],
   );
 
+  /**
+   * Fetch a page, then hop past consecutive empty pages.
+   *
+   * In semantic mode, `quickFilter === "new" | "updated"` is applied
+   * client-side after the backend slice. That can produce `cards.length === 0`
+   * while `hasMore` is still true and the cursor still moves forward — which
+   * would cause the virtualized end-reached callback to never re-enter its
+   * threshold band, stalling pagination on a transiently empty result set
+   * even when later pages contain matches.
+   *
+   * To keep scroll-driven loading flowing, we hop past those empties (up to
+   * `MAX_EMPTY_PAGE_HOPS`) here. The aggregated `cursorAdvance` reflects every
+   * raw row consumed so the caller's `offsetRef` lands on the correct next
+   * page. The standard / following paths filter server-side, so they return
+   * a non-empty page on the first try unless the dataset truly is exhausted —
+   * no extra hops in that case.
+   */
+  const fetchPageWithEmptyHop = useCallback(
+    async (
+      activeFilters: CardLoaderFilters,
+      followed: Set<string>,
+      offset: number,
+    ): Promise<FetchPageResult> => {
+      let page = await fetchPage(activeFilters, followed, offset);
+      let totalAdvance = page.cursorAdvance;
+      let hops = 0;
+      while (
+        page.cards.length === 0 &&
+        page.hasMore &&
+        hops < MAX_EMPTY_PAGE_HOPS
+      ) {
+        hops += 1;
+        const next = await fetchPage(
+          activeFilters,
+          followed,
+          offset + totalAdvance,
+        );
+        totalAdvance += next.cursorAdvance;
+        page = next;
+      }
+      return {
+        cards: page.cards,
+        hasMore: page.hasMore,
+        cursorAdvance: totalAdvance,
+      };
+    },
+    [fetchPage],
+  );
+
   // Initial-page load whenever filters change. Resets the cursor, snapshots
   // the active filters for `loadMore()` to reuse, and uses a token to discard
   // stale responses from prior filter sets.
@@ -492,6 +569,11 @@ export function useCardLoader({
     const token = ++inflightTokenRef.current;
     setLoading(true);
     setError(null);
+    // Clear the load-more flag too. A stale in-flight `loadMore()` from the
+    // previous filter snapshot skips its own `setIsFetchingMore(false)` once
+    // the token changes, so without this reset the flag could stay stuck
+    // true and silently block all future pagination on the new filter set.
+    setIsFetchingMore(false);
 
     const snapshot = filters;
     const followedSnapshot = new Set(followedCardIds);
@@ -501,7 +583,7 @@ export function useCardLoader({
 
     (async () => {
       try {
-        const page = await fetchPage(snapshot, followedSnapshot, 0);
+        const page = await fetchPageWithEmptyHop(snapshot, followedSnapshot, 0);
         if (token !== inflightTokenRef.current) return;
         setCards(page.cards);
         setHasMore(page.hasMore);
@@ -541,7 +623,7 @@ export function useCardLoader({
     const token = inflightTokenRef.current;
     setIsFetchingMore(true);
     try {
-      const page = await fetchPage(
+      const page = await fetchPageWithEmptyHop(
         snapshot,
         followedSnapshot,
         offsetRef.current,
@@ -560,7 +642,7 @@ export function useCardLoader({
     } finally {
       if (token === inflightTokenRef.current) setIsFetchingMore(false);
     }
-  }, [loading, isFetchingMore, hasMore, fetchPage]);
+  }, [loading, isFetchingMore, hasMore, fetchPageWithEmptyHop]);
 
   return {
     cards,

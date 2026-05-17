@@ -83,6 +83,31 @@ def _apply_search_filters(
     if filters.score_thresholds:
         filtered = _apply_score_filters(filtered, filters.score_thresholds)
 
+    # Filter by quality tier (signal_quality_score). Mirrors the predicate
+    # shape used on the Supabase paths in Discover/useCardLoader.ts so the
+    # semantic-search branch enforces the same quality chip server-side.
+    quality = filters.quality_filter
+    if quality and quality != "all":
+        if quality == "high":
+            filtered = [
+                r for r in filtered
+                if r.get("signal_quality_score") is not None
+                and r["signal_quality_score"] >= 75
+            ]
+        elif quality == "moderate":
+            filtered = [
+                r for r in filtered
+                if r.get("signal_quality_score") is not None
+                and 50 <= r["signal_quality_score"] < 75
+            ]
+        elif quality == "low":
+            # "Low" means scored < 50 OR unscored (null).
+            filtered = [
+                r for r in filtered
+                if r.get("signal_quality_score") is None
+                or r["signal_quality_score"] < 50
+            ]
+
     return filtered
 
 
