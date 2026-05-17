@@ -77,14 +77,20 @@ export function useKanbanCardOperations({
       }
       if (!sourceStatus || !sourceCard) return;
 
+      // Capture into consts so the setCards closure carries narrowed
+      // (non-null) types — `let sourceCard` can't narrow through the
+      // callback because TS can't prove it isn't reassigned later.
+      const fromStatus = sourceStatus;
+      const fromCard = sourceCard;
+
       const previousCards = { ...cards };
 
       setCards((prev) => {
         const updated = { ...prev };
-        updated[sourceStatus as KanbanStatus] = updated[
-          sourceStatus as KanbanStatus
-        ].filter((c) => c.id !== cardId);
-        const movedCard = { ...sourceCard!, status: newStatus };
+        updated[fromStatus] = updated[fromStatus].filter(
+          (c) => c.id !== cardId,
+        );
+        const movedCard = { ...fromCard, status: newStatus };
         const targetCards = [...updated[newStatus]];
         targetCards.splice(newPosition, 0, movedCard);
         updated[newStatus] = targetCards;
@@ -233,15 +239,21 @@ export function useKanbanCardOperations({
       }
       if (!sourceCard || !sourceStatus || sourceStatus === status) return;
 
+      // Capture into consts so the setCards closure carries narrowed
+      // (non-null) types — `let sourceCard`/`sourceStatus` can't narrow
+      // through the callback because TS can't prove they aren't reassigned.
+      const fromStatus = sourceStatus;
+      const fromCard = sourceCard;
+
       const previousCards = { ...cards };
       const targetPosition = cards[status].length;
 
       setCards((prev) => {
         const updated = { ...prev };
-        updated[sourceStatus!] = updated[sourceStatus!].filter(
+        updated[fromStatus] = updated[fromStatus].filter(
           (c) => c.id !== cardId,
         );
-        const movedCard = { ...sourceCard!, status, position: targetPosition };
+        const movedCard = { ...fromCard, status, position: targetPosition };
         updated[status] = [...updated[status], movedCard];
         return updated;
       });
