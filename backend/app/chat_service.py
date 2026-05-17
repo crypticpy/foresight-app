@@ -1250,7 +1250,10 @@ def _safe_for_prompt(value: Any, max_len: int = 300) -> str:
     """
     text = str(value) if value is not None else ""
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-    text = text.replace("<scope_data>", "").replace("</scope_data>", "")
+    # Case-insensitive, whitespace/attribute-tolerant: catches `<scope_data>`,
+    # `</SCOPE_DATA>`, `<scope_data   >`, `<scope_data foo="bar">`, etc., so
+    # an attacker can't escape our framing block with a near-equivalent tag.
+    text = re.sub(r"<\s*/?\s*scope_data\b[^>]*>", "", text, flags=re.IGNORECASE)
     return text[:max_len]
 
 
