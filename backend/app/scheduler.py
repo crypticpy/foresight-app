@@ -394,8 +394,11 @@ def start_scheduler():
         if scheduler.running:
             logger.info("Scheduler already running; skipping start")
             return
-    except Exception:
-        pass
+    except Exception as exc:
+        # `.running` should not raise on a healthy APScheduler instance;
+        # if it does (e.g., scheduler internals torn down), proceed to
+        # add_job + start() below, which will surface a real error.
+        logger.debug("start_scheduler: scheduler.running check raised: %s", exc)
 
     # Daily auto-scan for workstreams with auto_scan=true at 4:00 AM UTC
     scheduler.add_job(
@@ -520,5 +523,5 @@ def shutdown_scheduler():
     try:
         if getattr(scheduler, "running", False):
             scheduler.shutdown()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("shutdown_scheduler: scheduler.shutdown() failed: %s", exc)
