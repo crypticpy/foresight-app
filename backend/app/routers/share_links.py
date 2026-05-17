@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.authz import require_paid_user, require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import public_share_enabled
-from app.models.workstream_collab import PublicSharePayload, ShareLinkCreate, ShareLinkResponse
+from app.models.workstream_collab import (
+    PublicSharePayload,
+    RevokeShareLinkResponse,
+    ShareLinkCreate,
+    ShareLinkResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,13 +158,14 @@ async def list_share_links(
 
 @router.delete(
     "/me/share-links/{share_link_id}",
+    response_model=RevokeShareLinkResponse,
     dependencies=[Depends(public_share_enabled)],
 )
 async def revoke_share_link(
     share_link_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    def revoke() -> dict:
+    def revoke() -> RevokeShareLinkResponse:
         result = (
             supabase.table("share_links")
             .update({"revoked_at": _now().isoformat()})
@@ -169,7 +175,7 @@ async def revoke_share_link(
         )
         if not result.data:
             raise HTTPException(status_code=404, detail="Share link not found")
-        return {"status": "revoked"}
+        return RevokeShareLinkResponse(status="revoked")
 
     return await asyncio.to_thread(revoke)
 

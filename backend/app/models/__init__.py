@@ -164,6 +164,7 @@ from .workstream import (
     AutoPopulateResponse,
     Note,
     NoteCreate,
+    PinSignalResponse,
     WorkstreamResearchStatus,
     WorkstreamResearchStatusResponse,
     FilterPreviewRequest,
@@ -290,6 +291,7 @@ from .workstream_collab import (
     MarkNotificationsReadRequest,
     ShareLinkCreate,
     ShareLinkResponse,
+    RevokeShareLinkResponse,
     PublicSharePayload,
     PresenceHeartbeatResponse,
 )
@@ -420,6 +422,7 @@ __all__ = [
     "AutoPopulateResponse",
     "Note",
     "NoteCreate",
+    "PinSignalResponse",
     "WorkstreamResearchStatus",
     "WorkstreamResearchStatusResponse",
     "FilterPreviewRequest",
@@ -520,6 +523,7 @@ __all__ = [
     "MarkNotificationsReadRequest",
     "ShareLinkCreate",
     "ShareLinkResponse",
+    "RevokeShareLinkResponse",
     "PublicSharePayload",
     "PresenceHeartbeatResponse",
 ]
