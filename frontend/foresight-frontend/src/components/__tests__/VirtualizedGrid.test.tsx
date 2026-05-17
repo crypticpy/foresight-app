@@ -174,80 +174,253 @@ describe("VirtualizedGrid", () => {
     });
   });
 
+  // In jsdom the container reports offsetWidth=0, so VirtualizedGrid bails
+  // out to a placeholder div (containerWidth === 0). Stub offsetWidth so
+  // the real render path runs. Scope to the scroll container (which carries
+  // `overflow-auto`) to avoid affecting wrappers or item nodes.
+  function mockContainerWidth(width: number) {
+    const isScrollContainer = (el: unknown): boolean =>
+      el instanceof HTMLElement && el.classList.contains("overflow-auto");
+    const widthSpy = vi
+      .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return isScrollContainer(this) ? width : 0;
+      });
+    return () => widthSpy.mockRestore();
+  }
+
+  // For tests that need `getVirtualItems()` to actually return rows
+  // (so we can inspect row-level styles), also stub offsetHeight on the
+  // scroll container — @tanstack/virtual-core reads viewport size via
+  // `element.offsetHeight` (see virtual-core: `const { offsetWidth,
+  // offsetHeight } = element`), not `clientHeight` or
+  // `getBoundingClientRect()`. Scope to overflow-auto so it doesn't bleed
+  // into per-row measurements (which would corrupt `getTotalSize()`).
+  function mockContainerLayout(width: number, viewportHeight = 600) {
+    const isScrollContainer = (el: unknown): boolean =>
+      el instanceof HTMLElement && el.classList.contains("overflow-auto");
+    const restoreWidth = mockContainerWidth(width);
+    const heightSpy = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return isScrollContainer(this) ? viewportHeight : 0;
+      });
+    return () => {
+      heightSpy.mockRestore();
+      restoreWidth();
+    };
+  }
+
   describe("Configuration Props", () => {
-    it("accepts gap prop", () => {
-      const items = createTestItems(5);
-      const { container } = renderVirtualizedGrid({ items, gap: 16 });
-      expect(container).toBeInTheDocument();
+    it("applies the gap prop to both grid-gap and inter-row paddingBottom", () => {
+      const restoreLayout = mockContainerLayout(1024);
+      try {
+        const items = createTestItems(6);
+        const { container } = renderVirtualizedGrid({
+          items,
+          gap: 12,
+          columns: { sm: 1, md: 1, lg: 1 },
+        });
+        const rows = container.querySelectorAll<HTMLElement>("[data-index]");
+        expect(rows.length).toBeGreaterThan(0);
+        const firstRow = rows[0]!;
+        expect(firstRow.style.gap).toBe("12px");
+        // 6 items / 1 column => 6 rows; the first row is not last, so it gets
+        // paddingBottom == gap. (The last row alone uses paddingBottom: 0.)
+        expect(firstRow.style.paddingBottom).toBe("12px");
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("accepts estimatedRowHeight prop", () => {
-      const items = createTestItems(5);
-      const { container } = renderVirtualizedGrid({
-        items,
-        estimatedRowHeight: 200,
-      });
-      expect(container).toBeInTheDocument();
+    it("renders gridTemplateColumns from the columns prop at the lg breakpoint", () => {
+      const restoreLayout = mockContainerLayout(1024); // >= lg
+      try {
+        const items = createTestItems(6);
+        const { container } = renderVirtualizedGrid({
+          items,
+          columns: { sm: 1, md: 2, lg: 4 },
+        });
+        const row = container.querySelector<HTMLElement>("[data-index]");
+        expect(row?.style.gridTemplateColumns).toBe(
+          "repeat(4, minmax(0, 1fr))",
+        );
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("accepts overscan prop", () => {
-      const items = createTestItems(50);
-      const { container } = renderVirtualizedGrid({ items, overscan: 5 });
-      expect(container).toBeInTheDocument();
+    it("falls back to the md column count when narrower than the lg breakpoint", () => {
+      const restoreLayout = mockContainerLayout(800); // >= md, < lg
+      try {
+        const items = createTestItems(6);
+        const { container } = renderVirtualizedGrid({
+          items,
+          columns: { sm: 1, md: 3, lg: 5 },
+        });
+        const row = container.querySelector<HTMLElement>("[data-index]");
+        expect(row?.style.gridTemplateColumns).toBe(
+          "repeat(3, minmax(0, 1fr))",
+        );
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("accepts columns configuration", () => {
-      const items = createTestItems(5);
-      const { container } = renderVirtualizedGrid({
-        items,
-        columns: { sm: 1, md: 2, lg: 4 },
-      });
-      expect(container).toBeInTheDocument();
+    it("uses estimatedRowHeight + gap to size the virtual scroll area", () => {
+      // Width-only spy: we only need `getTotalSize()` here, not rendered
+      // rows. Leaving offsetHeight=0 keeps `measureElement` from caching
+      // measured row sizes, so totalSize = count * estimatedSize.
+      const restoreLayout = mockContainerWidth(1024);
+      try {
+        const items = createTestItems(10);
+        const { container } = renderVirtualizedGrid({
+          items,
+          estimatedRowHeight: 200,
+          gap: 50,
+          columns: { sm: 1, md: 1, lg: 1 },
+        });
+        // rowCount = ceil(10 / 1) = 10; totalSize = 10 * (200 + 50) = 2500.
+        const sizer = container.querySelector<HTMLElement>(
+          '[style*="position: relative"]',
+        );
+        expect(sizer?.style.height).toBe("2500px");
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("accepts onScroll callback", () => {
-      const items = createTestItems(5);
+    it("invokes onScroll with the current scrollTop on scroll events", () => {
       const onScroll = vi.fn();
-      const { container } = renderVirtualizedGrid({
-        items,
-        onScroll,
+      const items = createTestItems(50);
+      const { container } = renderVirtualizedGrid({ items, onScroll });
+      const scrollContainer = container.querySelector(
+        ".overflow-auto",
+      ) as HTMLDivElement;
+      Object.defineProperty(scrollContainer, "scrollTop", {
+        configurable: true,
+        writable: true,
+        value: 250,
       });
-      expect(container).toBeInTheDocument();
+      fireEvent.scroll(scrollContainer);
+      expect(onScroll).toHaveBeenCalledWith(250);
     });
 
-    it("accepts initialScrollOffset prop", () => {
-      const items = createTestItems(50);
-      const { container } = renderVirtualizedGrid({
-        items,
-        initialScrollOffset: 500,
-      });
-      expect(container).toBeInTheDocument();
+    it("passes overscan through so more rows than visible are rendered", () => {
+      // Visible-rows ≈ clientHeight / (estimatedRowHeight + gap) = 200 / 100 = 2.
+      // With overscan=0 the virtualizer keeps just the visible window; with
+      // overscan=10 it keeps roughly 2 + 10 rows in the DOM.
+      const restoreLayout = mockContainerLayout(1024, 200);
+      try {
+        const baseProps = {
+          items: createTestItems(50),
+          estimatedRowHeight: 100,
+          gap: 0,
+          columns: { sm: 1, md: 1, lg: 1 },
+        };
+        const { container, unmount } = renderVirtualizedGrid({
+          ...baseProps,
+          overscan: 0,
+        });
+        const fewRows = container.querySelectorAll("[data-index]").length;
+        unmount();
+
+        const { container: container2 } = renderVirtualizedGrid({
+          ...baseProps,
+          overscan: 10,
+        });
+        const manyRows = container2.querySelectorAll("[data-index]").length;
+        expect(manyRows).toBeGreaterThan(fewRows);
+      } finally {
+        restoreLayout();
+      }
     });
   });
 
   describe("Default Configuration", () => {
-    it("uses default gap of 24px", () => {
-      const items = createTestItems(6);
-      const { container } = renderVirtualizedGrid({ items });
-      expect(container).toBeInTheDocument();
+    it("falls back to gap=24 when the prop is omitted", () => {
+      const restoreLayout = mockContainerLayout(1024);
+      try {
+        // Render directly without the test helper so estimatedRowHeight and
+        // gap both fall back to component defaults (we still pin columns so
+        // the row count is deterministic).
+        const items = createTestItems(6);
+        const { container } = render(
+          <div style={{ height: "400px", overflow: "auto" }}>
+            <VirtualizedGrid
+              items={items}
+              renderItem={(item, index) => (
+                <div data-testid={`item-${index}`}>
+                  {String((item as TestItem).name)}
+                </div>
+              )}
+              getItemKey={(item) => (item as TestItem).id}
+              columns={{ sm: 1, md: 1, lg: 1 }}
+            />
+          </div>,
+        );
+        const row = container.querySelector<HTMLElement>("[data-index]");
+        expect(row?.style.gap).toBe("24px");
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("uses default estimatedRowHeight of 280px", () => {
-      const items = createTestItems(6);
-      const { container } = renderVirtualizedGrid({ items });
-      expect(container).toBeInTheDocument();
+    it("falls back to estimatedRowHeight=280 + gap=24 in the sizer height", () => {
+      // Width-only spy: only `getTotalSize()` is checked here. Leaving
+      // offsetHeight=0 keeps `measureElement` from overwriting the
+      // estimated per-row size with a measured 0.
+      const restoreLayout = mockContainerWidth(1024);
+      try {
+        const items = createTestItems(5);
+        const { container } = render(
+          <div style={{ height: "400px", overflow: "auto" }}>
+            <VirtualizedGrid
+              items={items}
+              renderItem={(item, index) => (
+                <div data-testid={`item-${index}`}>
+                  {String((item as TestItem).name)}
+                </div>
+              )}
+              getItemKey={(item) => (item as TestItem).id}
+              columns={{ sm: 1, md: 1, lg: 1 }}
+            />
+          </div>,
+        );
+        // rowCount = ceil(5 / 1) = 5; totalSize = 5 * (280 + 24) = 1520.
+        const sizer = container.querySelector<HTMLElement>(
+          '[style*="position: relative"]',
+        );
+        expect(sizer?.style.height).toBe("1520px");
+      } finally {
+        restoreLayout();
+      }
     });
 
-    it("uses default columns of 1/2/3", () => {
-      const items = createTestItems(6);
-      const { container } = renderVirtualizedGrid({ items });
-      expect(container).toBeInTheDocument();
-    });
-
-    it("uses default overscan of 3", () => {
-      const items = createTestItems(50);
-      const { container } = renderVirtualizedGrid({ items });
-      expect(container).toBeInTheDocument();
+    it("falls back to columns lg=3 at >= 1024px when columns omitted", () => {
+      const restoreLayout = mockContainerLayout(1024);
+      try {
+        const items = createTestItems(6);
+        const { container } = render(
+          <div style={{ height: "400px", overflow: "auto" }}>
+            <VirtualizedGrid
+              items={items}
+              renderItem={(item, index) => (
+                <div data-testid={`item-${index}`}>
+                  {String((item as TestItem).name)}
+                </div>
+              )}
+              getItemKey={(item) => (item as TestItem).id}
+            />
+          </div>,
+        );
+        const row = container.querySelector<HTMLElement>("[data-index]");
+        expect(row?.style.gridTemplateColumns).toBe(
+          "repeat(3, minmax(0, 1fr))",
+        );
+      } finally {
+        restoreLayout();
+      }
     });
   });
 
