@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
-from app.authz import is_admin
+from app.authz import is_admin, require_workstream_access
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -28,6 +28,33 @@ from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
+
+
+async def _gate_workstream_scope(scope: str, scope_id: Optional[str], current_user: dict) -> None:
+    """Ownership gate for workstream-scoped chat surfaces.
+
+    `require_workstream_access` raises 403 when a workstream exists but the
+    caller lacks access. At these read surfaces we translate that to 404 so a
+    caller can't distinguish a valid-but-private workstream id from a bogus
+    one (matches the user-vs-org read pattern documented in CLAUDE.md).
+    """
+    if scope != "workstream" or not scope_id:
+        return
+    try:
+        await asyncio.to_thread(
+            require_workstream_access,
+            supabase,
+            scope_id,
+            current_user,
+            "read",
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workstream not found",
+            ) from exc
+        raise
 
 
 @router.get("/chat/stats")
@@ -226,6 +253,10 @@ async def chat_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"scope_id is required for '{request.scope}' scope.",
         )
+
+    # Gate workstream scope behind ownership before any RAG/LLM work runs.
+    # Cards (signal scope) are a shared global library per product design.
+    await _gate_workstream_scope(request.scope, request.scope_id, current_user)
 
     # Convert MentionRef models to dicts for the service layer
     mention_dicts = None
@@ -549,6 +580,8 @@ async def chat_suggestions(
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
         )
 
+    await _gate_workstream_scope(scope, scope_id, current_user)
+
     try:
         return await chat_generate_suggestions(
             scope=scope,
@@ -589,6 +622,8 @@ async def smart_chat_suggestions(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
         )
+
+    await _gate_workstream_scope(scope, scope_id, current_user)
 
     try:
         conversation_summary = ""
