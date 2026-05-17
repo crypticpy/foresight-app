@@ -466,5 +466,45 @@ describe("VirtualizedGrid", () => {
       fireEvent.scroll(scrollContainer);
       expect(onEndReached).not.toHaveBeenCalled();
     });
+
+    // Locks the mount-time underflow contract: when the initial page renders
+    // short enough that its content fits inside the viewport (within the
+    // end-reached band), `onEndReached` must fire WITHOUT requiring a scroll
+    // event, otherwise pagination deadlocks — the user can't scroll because
+    // there's nothing to scroll, so the next page never loads.
+    //
+    // We pre-mock HTMLElement.prototype.scrollHeight etc. so the scroll
+    // container already reports in-band dimensions at the moment the effect
+    // attaches (the production guard `scrollHeight > 0` requires layout to
+    // have measured the element before the initial check runs).
+    it("fires onEndReached at mount when content is already within threshold", () => {
+      const scrollHeightSpy = vi
+        .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+        .mockReturnValue(2000);
+      const clientHeightSpy = vi
+        .spyOn(HTMLElement.prototype, "clientHeight", "get")
+        .mockReturnValue(400);
+      const scrollTopSpy = vi
+        .spyOn(HTMLElement.prototype, "scrollTop", "get")
+        .mockReturnValue(1550);
+
+      try {
+        const onEndReached = vi.fn();
+        const items = createTestItems(100);
+        renderVirtualizedGrid({
+          items,
+          onEndReached,
+          endReachedThreshold: 100,
+        });
+
+        // No fireEvent.scroll — distance = 2000 - 1550 - 400 = 50 (≤ 100),
+        // so the initial in-effect check fires onEndReached exactly once.
+        expect(onEndReached).toHaveBeenCalledTimes(1);
+      } finally {
+        scrollHeightSpy.mockRestore();
+        clientHeightSpy.mockRestore();
+        scrollTopSpy.mockRestore();
+      }
+    });
   });
 });

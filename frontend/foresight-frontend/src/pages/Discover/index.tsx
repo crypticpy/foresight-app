@@ -177,6 +177,7 @@ const Discover: React.FC = () => {
       confidenceFilter,
       issueTagFilter,
       goalFilter,
+      qualityFilter,
     }),
     [
       debouncedFilters,
@@ -192,6 +193,7 @@ const Discover: React.FC = () => {
       confidenceFilter,
       issueTagFilter,
       goalFilter,
+      qualityFilter,
     ],
   );
 
@@ -221,23 +223,11 @@ const Discover: React.FC = () => {
     loadMore();
   }, [hasMore, loading, isFetchingMore, loadMore]);
 
-  // Apply client-side quality tier filter ----------------------------------
-  const filteredCards = useMemo(() => {
-    if (qualityFilter === "all") return cards;
-    return cards.filter((card) => {
-      const score = card.signal_quality_score;
-      switch (qualityFilter) {
-        case "high":
-          return score != null && score >= 75;
-        case "moderate":
-          return score != null && score >= 50 && score < 75;
-        case "low":
-          return score == null || score < 50;
-        default:
-          return true;
-      }
-    });
-  }, [cards, qualityFilter]);
+  // Quality-tier filtering now happens server-side inside `useCardLoader`
+  // (see the qualityFilter branch in fetchPage). Keeping a single alias here
+  // means downstream call sites (`filteredCards.length`, `cards={filteredCards}`)
+  // stay readable without re-plumbing every reference.
+  const filteredCards = cards;
 
   // Mirror ?confidence=high onto the local Quality chip so the UI shows the
   // active state. Driving qualityFilter purely from URL would re-architect

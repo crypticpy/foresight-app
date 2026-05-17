@@ -118,9 +118,20 @@ export default function WorkstreamFeed() {
   const loadFeed = useCallback(async () => {
     if (!workstream) return;
     const token = ++feedTokenRef.current;
+    // Reset every piece of feed state SYNCHRONOUSLY before the await so that:
+    //   1. an in-flight loadMoreFeed call sees `token !== feedTokenRef.current`
+    //      at its early return AND has its own setIsFetchingMore(false) cleanup
+    //      superseded by ours — otherwise `isFetchingMore` could be stuck true
+    //      when the user switches workstreams mid-load, permanently blocking
+    //      infinite scroll on the new feed.
+    //   2. if the fetch fails, the user sees an empty feed for the NEW
+    //      workstream rather than stale cards from the old one.
+    setCardsLoading(true);
+    setIsFetchingMore(false);
+    setCards([]);
+    setHasMore(false);
+    feedOffsetRef.current = 0;
     try {
-      setCardsLoading(true);
-      feedOffsetRef.current = 0;
       const page = await fetchWorkstreamFeed(workstream, 0);
       if (token !== feedTokenRef.current) return;
       setCards(page.cards);

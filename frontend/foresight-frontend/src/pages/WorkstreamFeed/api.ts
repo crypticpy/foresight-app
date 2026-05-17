@@ -101,8 +101,12 @@ export async function fetchWorkstreamFeed(
   }
 
   // Over-fetch by 1 row to derive `has_more` without a separate count query.
+  // `.order("id")` as a deterministic secondary sort — bulk-imported cards
+  // can share a created_at value and would otherwise reshuffle between
+  // pages, causing duplicate or skipped rows.
   const { data, error } = await query
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + limit);
 
   if (error) throw new Error(error.message || "Failed to load feed");

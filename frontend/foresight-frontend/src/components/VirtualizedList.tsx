@@ -307,6 +307,14 @@ function VirtualizedListInner<T>(
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
+    // Run once on attach so an initially-underfilled list (content shorter
+    // than viewport) can still trigger `onEndReached` — without this short
+    // first pages would deadlock pagination because there's nothing to
+    // scroll. Guard on `scrollHeight > 0` so we don't fire before layout has
+    // measured the container.
+    if (container.scrollHeight > 0) {
+      handleScroll();
+    }
     return () => container.removeEventListener("scroll", handleScroll);
   }, [onEndReached, endReachedThreshold]);
 

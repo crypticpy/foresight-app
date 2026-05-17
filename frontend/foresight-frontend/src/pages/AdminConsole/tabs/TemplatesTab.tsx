@@ -51,10 +51,16 @@ function CountBadge({
   label,
   value,
   tone,
+  hasMore = false,
 }: {
   label: string;
   value: number | null;
   tone: "blue" | "purple" | "green" | "gray";
+  /**
+   * Backend signalled additional rows beyond the fetched window — we render
+   * "{value}+" so a partial count is never read as the true total.
+   */
+  hasMore?: boolean;
 }) {
   const toneClasses = {
     blue: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300",
@@ -65,6 +71,8 @@ function CountBadge({
     gray: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
   }[tone];
 
+  const display = value === null ? "…" : hasMore ? `${value}+` : String(value);
+
   return (
     <div className="flex flex-col items-center">
       <span
@@ -72,8 +80,13 @@ function CountBadge({
           "inline-flex h-7 min-w-[2.25rem] items-center justify-center rounded-md px-2 text-sm font-semibold",
           toneClasses,
         )}
+        title={
+          hasMore && value !== null
+            ? `${value}+ cards (count capped at fetch window)`
+            : undefined
+        }
       >
-        {value === null ? "…" : value}
+        {display}
       </span>
       <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
         {label}
@@ -182,21 +195,25 @@ export function TemplatesTab({
                     label="Inbox"
                     value={counts?.inbox ?? null}
                     tone="blue"
+                    hasMore={counts?.has_more.inbox ?? false}
                   />
                   <CountBadge
                     label="Working"
                     value={counts?.working ?? null}
                     tone="purple"
+                    hasMore={counts?.has_more.working ?? false}
                   />
                   <CountBadge
                     label="Ready"
                     value={counts?.ready ?? null}
                     tone="green"
+                    hasMore={counts?.has_more.ready ?? false}
                   />
                   <CountBadge
                     label="Archived"
                     value={counts?.archived ?? null}
                     tone="gray"
+                    hasMore={counts?.has_more.archived ?? false}
                   />
                   <Link
                     to={`/workstreams/${workstream.id}/board`}

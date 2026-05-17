@@ -120,12 +120,16 @@ async def _fetch_status_page(
 ) -> tuple[list[dict], bool]:
     """Fetch one kanban column page; returns (rows, has_more)."""
     # Fetch limit+1 to derive has_more without a separate count query.
+    # `.order("id")` as a deterministic secondary sort — position ties on a
+    # large/freshly-imported column would otherwise let rows shift between
+    # pages, causing duplicate or skipped cards.
     response = await asyncio.to_thread(
         lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("workstream_id", workstream_id)
         .eq("status", status)
         .order("position")
+        .order("id")
         .range(offset, offset + limit)
         .execute()
     )

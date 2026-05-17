@@ -42,6 +42,13 @@ export interface CardLoaderFilters {
   confidenceFilter: string;
   issueTagFilter: string;
   goalFilter: string;
+  /**
+   * Quality-tier chip ("all" | "high" | "moderate" | "low"). Applied
+   * server-side via the same `signal_quality_score` column used by
+   * `confidenceFilter` so pagination doesn't starve when the first page
+   * happens to contain no cards in the selected tier.
+   */
+  qualityFilter: string;
 }
 
 export interface UseCardLoaderArgs {
@@ -87,6 +94,25 @@ interface FetchPageResult {
   cards: Card[];
   hasMore: boolean;
   cursorAdvance: number;
+}
+
+/**
+ * Sanitize free-text input for a PostgREST `.or(...)` filter expression.
+ *
+ * Three character classes must be neutralized:
+ *   - `%` / `_` are PostgreSQL `LIKE` metacharacters; Supabase `.ilike` does
+ *     NOT escape them, so a raw user `%` becomes "match anything".
+ *   - `,` is parsed as the OR-branch delimiter in PostgREST filter strings.
+ *   - `(` / `)` are reserved by the PostgREST OR-expression grammar.
+ *
+ * We drop these characters rather than backslash-escape because the search
+ * field is short user-controlled text and the metacharacters carry no useful
+ * substring-match intent. Mirrors `escapeKeywordForOr` in
+ * `pages/WorkstreamFeed/api.ts` — keep the two definitions in sync if you
+ * change either.
+ */
+function escapeSearchTermForOr(term: string): string {
+  return term.replace(/[%_]/g, " ").replace(/[,()]/g, " ").trim();
 }
 
 async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {
@@ -203,6 +229,7 @@ export function useCardLoader({
         confidenceFilter,
         issueTagFilter,
         goalFilter,
+        qualityFilter,
       } = activeFilters;
 
       // -- Path 1: "following" filter ---------------------------------------
@@ -218,9 +245,12 @@ export function useCardLoader({
           .in("id", Array.from(followed));
 
         if (searchTerm) {
-          query = query.or(
-            `name.ilike.%${searchTerm}%,summary.ilike.%${searchTerm}%`,
-          );
+          const safeTerm = escapeSearchTermForOr(searchTerm);
+          if (safeTerm) {
+            query = query.or(
+              `name.ilike.%${safeTerm}%,summary.ilike.%${safeTerm}%`,
+            );
+          }
         }
         if (selectedPillar) query = query.eq("pillar_id", selectedPillar);
         if (selectedStage) query = query.eq("stage_id", selectedStage);
@@ -240,6 +270,20 @@ export function useCardLoader({
         if (issueTagFilter)
           query = query.contains("issue_tags", [issueTagFilter]);
         if (goalFilter) query = query.contains("csp_goal_ids", [goalFilter]);
+        // Quality-tier chip — server-side so pagination doesn't stall when
+        // the first page contains no cards in the selected tier.
+        if (qualityFilter === "high") {
+          query = query.gte("signal_quality_score", 75);
+        } else if (qualityFilter === "moderate") {
+          query = query
+            .gte("signal_quality_score", 50)
+            .lt("signal_quality_score", 75);
+        } else if (qualityFilter === "low") {
+          // "Low" means scored < 50 OR not scored at all (null).
+          query = query.or(
+            "signal_quality_score.lt.50,signal_quality_score.is.null",
+          );
+        }
 
         const sortConfig = getSortConfig(sortOption);
         // Fetch PAGE_SIZE+1 to detect has_more without a separate count.
@@ -380,9 +424,12 @@ export function useCardLoader({
       if (selectedStage) query = query.eq("stage_id", selectedStage);
       if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
       if (searchTerm) {
-        query = query.or(
-          `name.ilike.%${searchTerm}%,summary.ilike.%${searchTerm}%`,
-        );
+        const safeTerm = escapeSearchTermForOr(searchTerm);
+        if (safeTerm) {
+          query = query.or(
+            `name.ilike.%${safeTerm}%,summary.ilike.%${safeTerm}%`,
+          );
+        }
       }
       if (impactMin > 0) query = query.gte("impact_score", impactMin);
       if (relevanceMin > 0) query = query.gte("relevance_score", relevanceMin);
@@ -407,6 +454,21 @@ export function useCardLoader({
       }
       if (goalFilter) {
         query = query.contains("csp_goal_ids", [goalFilter]);
+      }
+      // Quality-tier chip — same predicate shape as the following path; lives
+      // server-side so pagination keeps loading pages until the filter is
+      // exhausted (was previously a client-side filter that could empty a
+      // page after .range() had already capped the row count).
+      if (qualityFilter === "high") {
+        query = query.gte("signal_quality_score", 75);
+      } else if (qualityFilter === "moderate") {
+        query = query
+          .gte("signal_quality_score", 50)
+          .lt("signal_quality_score", 75);
+      } else if (qualityFilter === "low") {
+        query = query.or(
+          "signal_quality_score.lt.50,signal_quality_score.is.null",
+        );
       }
 
       const sortConfig = getSortConfig(sortOption);

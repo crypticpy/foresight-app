@@ -48,7 +48,9 @@ export async function fetchWorkstreamCards(
   workstreamId: string,
   limit?: number,
 ): Promise<GroupedWorkstreamCards> {
-  const qs = limit ? `?limit=${limit}` : "";
+  // Use explicit-undefined check so caller-passed `0` surfaces backend
+  // validation (limit must be ≥ 1) instead of being silently dropped.
+  const qs = limit !== undefined ? `?limit=${limit}` : "";
   const response = await apiRequest<GroupedWorkstreamCards>(
     `/api/v1/me/workstreams/${workstreamId}/cards${qs}`,
     token,

@@ -269,8 +269,7 @@ function VirtualizedGridInner<T>(
   // Handle scroll events
   useEffect(() => {
     const container = containerRef.current;
-    if (!container && !onScroll && !onEndReached) return;
-    if (!container) return;
+    if (!container || (!onScroll && !onEndReached)) return;
 
     const handleScroll = () => {
       if (onScroll) onScroll(container.scrollTop);
@@ -289,6 +288,14 @@ function VirtualizedGridInner<T>(
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
+    // Run once on attach so an initially-underfilled grid (content shorter
+    // than viewport) can still request the next page — without this the user
+    // would have to manually scroll to trigger load-more, which is impossible
+    // when there's nothing to scroll. Guard on `scrollHeight > 0` so we don't
+    // fire spuriously before layout has measured the container.
+    if (container.scrollHeight > 0) {
+      handleScroll();
+    }
     return () => container.removeEventListener("scroll", handleScroll);
   }, [onScroll, onEndReached, endReachedThreshold]);
 
