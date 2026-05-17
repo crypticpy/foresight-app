@@ -83,8 +83,13 @@ async def chat_stats(
                 facts.append(
                     f"You're tracking {follows.count} signal{'s' if follows.count != 1 else ''}"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "chat_stats: user_follows count failed for user %s: %s",
+                user_id,
+                exc,
+                exc_info=True,
+            )
 
         # Count workstreams
         try:
@@ -98,8 +103,13 @@ async def chat_stats(
                 facts.append(
                     f"You have {ws.count} active workstream{'s' if ws.count != 1 else ''}"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "chat_stats: workstreams count failed for user %s: %s",
+                user_id,
+                exc,
+                exc_info=True,
+            )
 
         # Count total cards
         try:
@@ -108,8 +118,10 @@ async def chat_stats(
                 facts.append(
                     f"Foresight is monitoring {cards.count} signals across all pillars"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "chat_stats: cards count failed: %s", exc, exc_info=True
+            )
 
         # Count conversations
         try:
@@ -123,8 +135,13 @@ async def chat_stats(
                 facts.append(
                     f"You've had {convs.count} conversation{'s' if convs.count != 1 else ''} with Foresight"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "chat_stats: chat_conversations count failed for user %s: %s",
+                user_id,
+                exc,
+                exc_info=True,
+            )
 
         # Count pinned messages
         try:
@@ -138,8 +155,13 @@ async def chat_stats(
                 facts.append(
                     f"You've saved {pins.count} insight{'s' if pins.count != 1 else ''}"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "chat_stats: chat_pinned_messages count failed for user %s: %s",
+                user_id,
+                exc,
+                exc_info=True,
+            )
 
         return {"facts": facts}
     except Exception as e:
@@ -1198,8 +1220,12 @@ async def export_chat_message_pdf(
                 )
                 if card_res.data:
                     scope_context = card_res.data[0].get("name")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "chat export: failed to resolve signal scope name for card %s: %s",
+                    scope_id,
+                    exc,
+                )
         elif scope == "workstream" and scope_id:
             try:
                 ws_res = (
@@ -1210,8 +1236,12 @@ async def export_chat_message_pdf(
                 )
                 if ws_res.data:
                     scope_context = ws_res.data[0].get("name")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "chat export: failed to resolve workstream scope name for ws %s: %s",
+                    scope_id,
+                    exc,
+                )
 
         # 5. Parse citations
         citations = message.get("citations") or []
