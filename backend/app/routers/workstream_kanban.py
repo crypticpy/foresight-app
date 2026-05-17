@@ -205,15 +205,15 @@ async def add_card_to_workstream(
     _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists
-    card_response = (
-        supabase.table("cards").select("*").eq("id", card_data.card_id).execute()
+    card_response = await asyncio.to_thread(
+        lambda: supabase.table("cards").select("*").eq("id", card_data.card_id).execute()
     )
     if not card_response.data:
         raise HTTPException(status_code=404, detail="Card not found")
 
     # Check if card is already in workstream
-    existing = (
-        supabase.table("workstream_cards")
+    existing = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("id")
         .eq("workstream_id", workstream_id)
         .eq("card_id", card_data.card_id)
@@ -226,8 +226,8 @@ async def add_card_to_workstream(
 
     # Get max position for the target status column
     status = card_data.status or "inbox"
-    position_response = (
-        supabase.table("workstream_cards")
+    position_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("position")
         .eq("workstream_id", workstream_id)
         .eq("status", status)
@@ -254,7 +254,9 @@ async def add_card_to_workstream(
         "updated_at": now,
     }
 
-    result = supabase.table("workstream_cards").insert(new_card).execute()
+    result = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards").insert(new_card).execute()
+    )
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to add card to workstream")
 
@@ -296,8 +298,8 @@ async def update_workstream_card(
 
     # Fetch the workstream card by its junction table ID (card_id param is actually workstream_card.id)
     # The frontend passes the workstream_card junction table ID, not the underlying card UUID
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -319,8 +321,8 @@ async def update_workstream_card(
         prev_status = existing.get("status") or "inbox"
         if new_status != prev_status:
             # Get max position in new column
-            position_response = (
-                supabase.table("workstream_cards")
+            position_response = await asyncio.to_thread(
+                lambda: supabase.table("workstream_cards")
                 .select("position")
                 .eq("workstream_id", workstream_id)
                 .eq("status", new_status)
@@ -366,8 +368,8 @@ async def update_workstream_card(
     if update_data.brief_status is not None:
         update_dict["brief_status"] = update_data.brief_status
 
-    result = (
-        supabase.table("workstream_cards")
+    result = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .update(update_dict)
         .eq("id", workstream_card_id)
         .execute()
@@ -376,8 +378,8 @@ async def update_workstream_card(
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to update workstream card")
 
-    final_response = (
-        supabase.table("workstream_cards")
+    final_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("id", workstream_card_id)
         .execute()
@@ -417,8 +419,8 @@ async def remove_card_from_workstream(
 
     # Pull the row first so we can read its underlying card_id (for the
     # dismissal tombstone) and confirm the workstream/junction match.
-    existing = (
-        supabase.table("workstream_cards")
+    existing = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("id, card_id")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -431,9 +433,13 @@ async def remove_card_from_workstream(
     underlying_card_id = existing.data[0].get("card_id")
 
     # Delete the association
-    supabase.table("workstream_cards").delete().eq("workstream_id", workstream_id).eq(
-        "id", card_id
-    ).execute()
+    await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
+        .delete()
+        .eq("workstream_id", workstream_id)
+        .eq("id", card_id)
+        .execute()
+    )
 
     # If this workstream is a user_clone, record a dismissal tombstone so
     # the Friday fan-out job never re-delivers the same card to this user.
@@ -478,8 +484,8 @@ async def trigger_card_deep_dive(
     _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("id, card_id, status")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -506,7 +512,9 @@ async def trigger_card_deep_dive(
         "status": "queued",
     }
 
-    task_result = supabase.table("research_tasks").insert(task_record).execute()
+    task_result = await asyncio.to_thread(
+        lambda: supabase.table("research_tasks").insert(task_record).execute()
+    )
 
     if not task_result.data:
         raise HTTPException(status_code=500, detail="Failed to create research task")
@@ -548,8 +556,8 @@ async def trigger_card_quick_update(
     _require_workstream_edit(workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("id, card_id, status")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -569,7 +577,9 @@ async def trigger_card_quick_update(
         "status": "queued",
     }
 
-    task_result = supabase.table("research_tasks").insert(task_record).execute()
+    task_result = await asyncio.to_thread(
+        lambda: supabase.table("research_tasks").insert(task_record).execute()
+    )
 
     if not task_result.data:
         raise HTTPException(status_code=500, detail="Failed to create research task")
@@ -636,8 +646,8 @@ async def get_workstream_research_status(
     _require_workstream_read(workstream_id, current_user)
 
     # Get all card_ids in this workstream
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("card_id")
         .eq("workstream_id", workstream_id)
         .execute()
@@ -662,8 +672,8 @@ async def get_workstream_research_status(
         active_cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
 
         # Query active tasks
-        active_tasks = (
-            supabase.table("research_tasks")
+        active_tasks = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .select("id, card_id, task_type, status, started_at, completed_at")
             .in_("card_id", card_ids)
             .in_("status", ["queued", "processing"])
@@ -672,8 +682,8 @@ async def get_workstream_research_status(
         )
 
         # Query recently completed tasks
-        recent_tasks = (
-            supabase.table("research_tasks")
+        recent_tasks = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .select("id, card_id, task_type, status, started_at, completed_at")
             .in_("card_id", card_ids)
             .in_("status", ["completed", "failed"])
@@ -742,8 +752,8 @@ async def toggle_workstream_card_watching(
     """Toggle the `is_watching` flag on a workstream card."""
     _require_workstream_edit(workstream_id, current_user)
 
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("id")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -752,15 +762,20 @@ async def toggle_workstream_card_watching(
     if not wsc_response.data:
         raise HTTPException(status_code=404, detail="Card not found in this workstream")
 
-    supabase.table("workstream_cards").update(
-        {
-            "is_watching": body.is_watching,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-    ).eq("id", card_id).execute()
+    await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
+        .update(
+            {
+                "is_watching": body.is_watching,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", card_id)
+        .execute()
+    )
 
-    refreshed = (
-        supabase.table("workstream_cards")
+    refreshed = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("id", card_id)
         .execute()
@@ -788,8 +803,8 @@ async def get_workstream_card_share_payload(
     """
     _require_workstream_read(workstream_id, current_user)
 
-    wsc_response = (
-        supabase.table("workstream_cards")
+    wsc_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("workstream_id", workstream_id)
         .eq("id", card_id)
@@ -856,8 +871,8 @@ async def bulk_workstream_card_action(
             require_paid_user(current_user)
         _require_workstream_edit(workstream_id, current_user)
 
-    rows_response = (
-        supabase.table("workstream_cards")
+    rows_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("*, cards(*)")
         .eq("workstream_id", workstream_id)
         .in_("id", body.card_ids)
@@ -878,13 +893,20 @@ async def bulk_workstream_card_action(
         for row in rows:
             if row.get("status") == "archived":
                 continue
-            supabase.table("workstream_cards").update(
-                {
-                    "status": "archived",
-                    "previous_status": row.get("status") or "inbox",
-                    "updated_at": now_iso,
-                }
-            ).eq("id", row["id"]).execute()
+            row_id = row["id"]
+            prev_status = row.get("status") or "inbox"
+            await asyncio.to_thread(
+                lambda rid=row_id, prev=prev_status: supabase.table("workstream_cards")
+                .update(
+                    {
+                        "status": "archived",
+                        "previous_status": prev,
+                        "updated_at": now_iso,
+                    }
+                )
+                .eq("id", rid)
+                .execute()
+            )
         return {"updated": len(rows), "action": action}
 
     if action == "restore":
@@ -894,21 +916,30 @@ async def bulk_workstream_card_action(
             target = row.get("previous_status") or "working"
             if target not in VALID_WORKSTREAM_CARD_STATUSES or target == "archived":
                 target = "working"
-            supabase.table("workstream_cards").update(
-                {
-                    "status": target,
-                    "previous_status": None,
-                    "updated_at": now_iso,
-                }
-            ).eq("id", row["id"]).execute()
+            row_id = row["id"]
+            await asyncio.to_thread(
+                lambda rid=row_id, tgt=target: supabase.table("workstream_cards")
+                .update(
+                    {
+                        "status": tgt,
+                        "previous_status": None,
+                        "updated_at": now_iso,
+                    }
+                )
+                .eq("id", rid)
+                .execute()
+            )
         return {"updated": len(rows), "action": action}
 
     if action in ("watch", "unwatch"):
         flag = action == "watch"
         if rows:
-            supabase.table("workstream_cards").update(
-                {"is_watching": flag, "updated_at": now_iso}
-            ).in_("id", [r["id"] for r in rows]).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("workstream_cards")
+                .update({"is_watching": flag, "updated_at": now_iso})
+                .in_("id", [r["id"] for r in rows])
+                .execute()
+            )
         return {"updated": len(rows), "action": action, "is_watching": flag}
 
     if action == "set_status":
@@ -925,9 +956,13 @@ async def bulk_workstream_card_action(
                 update["previous_status"] = prev
             elif prev == "archived" and new_status != "archived":
                 update["previous_status"] = None
-            supabase.table("workstream_cards").update(update).eq(
-                "id", row["id"]
-            ).execute()
+            row_id = row["id"]
+            await asyncio.to_thread(
+                lambda rid=row_id, upd=update: supabase.table("workstream_cards")
+                .update(upd)
+                .eq("id", rid)
+                .execute()
+            )
         return {"updated": len(rows), "action": action, "status": new_status}
 
     if action == "set_brief_status":
@@ -938,9 +973,12 @@ async def bulk_workstream_card_action(
                 detail=f"params.brief_status must be one of: {sorted(VALID_BRIEF_STATUSES)}",
             )
         if rows:
-            supabase.table("workstream_cards").update(
-                {"brief_status": new_brief, "updated_at": now_iso}
-            ).in_("id", [r["id"] for r in rows]).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("workstream_cards")
+                .update({"brief_status": new_brief, "updated_at": now_iso})
+                .in_("id", [r["id"] for r in rows])
+                .execute()
+            )
         return {"updated": len(rows), "action": action, "brief_status": new_brief}
 
     if action == "copy_share_links":
