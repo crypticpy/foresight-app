@@ -48,6 +48,7 @@ import {
   useFollowedCards,
   useSearchHistory,
 } from "./hooks";
+import type { QualityFilter } from "./hooks/useCardLoader";
 import type { Card, FilterState, SortOption } from "./types";
 
 const Discover: React.FC = () => {
@@ -68,7 +69,7 @@ const Discover: React.FC = () => {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [useSemanticSearch, setUseSemanticSearch] = useState<boolean>(false);
-  const [qualityFilter, setQualityFilter] = useState<string>("all");
+  const [qualityFilter, setQualityFilter] = useState<QualityFilter>("all");
 
   // Modal + sidebar state --------------------------------------------------
   const [showSaveSearchModal, setShowSaveSearchModal] = useState(false);

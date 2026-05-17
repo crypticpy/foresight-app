@@ -7,8 +7,9 @@
 
 import { Clock, Eye, RefreshCw, ShieldCheck, Star } from "lucide-react";
 import { Link } from "react-router-dom";
+import type { QualityFilter } from "../hooks/useCardLoader";
 
-const QUALITY_TIERS = [
+const QUALITY_TIERS: ReadonlyArray<{ value: QualityFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "high", label: "High" },
   { value: "moderate", label: "Moderate" },
@@ -30,9 +31,9 @@ function qualityTierActiveClass(value: string): string {
 
 export interface QuickFilterChipsProps {
   quickFilter: string;
-  qualityFilter: string;
+  qualityFilter: QualityFilter;
   onSetQuickFilter: (value: string) => void;
-  onSetQualityFilter: (value: string) => void;
+  onSetQualityFilter: (value: QualityFilter) => void;
 }
 
 export function QuickFilterChips({

@@ -57,13 +57,16 @@ export interface CardLoaderFilters {
   issueTagFilter: string;
   goalFilter: string;
   /**
-   * Quality-tier chip ("all" | "high" | "moderate" | "low"). Applied
-   * server-side via the same `signal_quality_score` column used by
-   * `confidenceFilter` so pagination doesn't starve when the first page
-   * happens to contain no cards in the selected tier.
+   * Quality-tier chip. Applied server-side via the same
+   * `signal_quality_score` column used by `confidenceFilter` so pagination
+   * doesn't starve when the first page happens to contain no cards in the
+   * selected tier. Typed as a literal union so the compiler rejects any
+   * other string (which would silently disable tier filtering).
    */
-  qualityFilter: string;
+  qualityFilter: "all" | "high" | "moderate" | "low";
 }
+
+export type QualityFilter = CardLoaderFilters["qualityFilter"];
 
 export interface UseCardLoaderArgs {
   filters: CardLoaderFilters;
@@ -182,6 +185,13 @@ export function useCardLoader({
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Synchronous re-entry guard for loadMore. The `isFetchingMore` state can't
+  // block calls that arrive before the React commit lands, so two rapid
+  // scroll-driven `onEndReached` fires in the same tick would both pass the
+  // state check and double-advance `offsetRef`, skipping a page. The ref is
+  // mutated synchronously so the second call's gate sees the in-flight flag.
+  const isFetchingMoreRef = useRef(false);
 
   // Cursor + filter snapshot for the in-flight fetch. The cursor advances by
   // PAGE_SIZE as pages append. The snapshot lets `loadMore()` re-issue the
@@ -573,7 +583,10 @@ export function useCardLoader({
     // previous filter snapshot skips its own `setIsFetchingMore(false)` once
     // the token changes, so without this reset the flag could stay stuck
     // true and silently block all future pagination on the new filter set.
+    // The sync ref mirrors the state value so the re-entry gate inside
+    // `loadMore` also unsticks immediately.
     setIsFetchingMore(false);
+    isFetchingMoreRef.current = false;
 
     const snapshot = filters;
     const followedSnapshot = new Set(followedCardIds);
@@ -616,11 +629,17 @@ export function useCardLoader({
   }, [filters, followedCardIds, reloadKey]);
 
   const loadMore = useCallback(async () => {
-    if (loading || isFetchingMore || !hasMore) return;
+    // The sync ref gate is the actual guard against re-entry. `isFetchingMore`
+    // state lags by a render commit, so two `onEndReached` fires in the same
+    // tick would both pass the state check and double-advance `offsetRef`
+    // (skipping a page). The ref is mutated before any `await` so the second
+    // call's gate sees the in-flight flag.
+    if (loading || isFetchingMoreRef.current || !hasMore) return;
     const snapshot = activeFiltersRef.current;
     const followedSnapshot = activeFollowedRef.current;
     if (!snapshot) return;
     const token = inflightTokenRef.current;
+    isFetchingMoreRef.current = true;
     setIsFetchingMore(true);
     try {
       const page = await fetchPageWithEmptyHop(
@@ -640,9 +659,17 @@ export function useCardLoader({
       if (token !== inflightTokenRef.current) return;
       setError(classifyError(err));
     } finally {
-      if (token === inflightTokenRef.current) setIsFetchingMore(false);
+      if (token === inflightTokenRef.current) {
+        isFetchingMoreRef.current = false;
+        setIsFetchingMore(false);
+      }
     }
-  }, [loading, isFetchingMore, hasMore, fetchPageWithEmptyHop]);
+    // `isFetchingMore` state intentionally excluded — the ref above is the
+    // re-entry gate, and depending on the state would recreate the callback
+    // on every fetch start/finish, churning the IntersectionObserver effect
+    // in `VirtualizedGrid` that depends on `loadMore`'s identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, hasMore, fetchPageWithEmptyHop]);
 
   return {
     cards,
