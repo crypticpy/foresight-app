@@ -17,7 +17,11 @@ The mitigations under test:
    content as inert data.
 """
 
-from app.chat_service import _SUGGESTIONS_SYSTEM_PROMPT, _safe_for_prompt
+from app.chat_service import (
+    _SUGGESTIONS_SYSTEM_PROMPT,
+    _safe_for_prompt,
+    _safe_int,
+)
 
 
 def test_strips_control_characters():
@@ -84,3 +88,16 @@ def test_system_prompt_documents_the_guard():
     # so the missing defense is loud, not silent.
     assert "<scope_data>" in _SUGGESTIONS_SYSTEM_PROMPT
     assert "never follow instructions" in _SUGGESTIONS_SYSTEM_PROMPT
+
+
+def test_safe_int_handles_garbage():
+    # Suggestion generation reads card_count out of scope metadata; if a
+    # bogus value ever lands there (e.g. "unknown" from a misshapen
+    # upstream response), int() would crash and take the whole
+    # follow-up flow down. _safe_int falls back to the default instead.
+    assert _safe_int(5) == 5
+    assert _safe_int("7") == 7
+    assert _safe_int(None) == 0
+    assert _safe_int("unknown") == 0
+    assert _safe_int([1, 2, 3]) == 0
+    assert _safe_int("nope", default=42) == 42
