@@ -68,6 +68,22 @@ DEFAULT_CHAT_MINI_MODEL = "gpt-5.4-mini-2026-03-17"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
 DEFAULT_REASONING_EFFORT = "medium"
 
+# Production allowlist for admin-settable model overrides. Anything outside
+# this set is rejected before it can be persisted into admin_settings or
+# pushed into os.environ — guards against an admin pointing the prod chat
+# tier at a retired model (gpt-5.5, gpt-4.1, gpt-4o, …) or a typo.
+# Premium chat + agent share the same model today but stay as separate keys
+# so they can diverge without code changes once we have a use case.
+ALLOWED_CHAT_MODELS: tuple[str, ...] = (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_CHAT_AGENT_MODEL,
+    DEFAULT_CHAT_MINI_MODEL,
+)
+# Embeddings are locked to ada-002 because every persisted card embedding
+# is 1536-dim; swapping models requires a full reindex.
+ALLOWED_EMBEDDING_MODELS: tuple[str, ...] = (DEFAULT_EMBEDDING_MODEL,)
+ALLOWED_REASONING_EFFORTS: tuple[str, ...] = ("minimal", "low", "medium", "high")
+
 
 class OpenAIConfig:
     """Commercial OpenAI configuration container."""
@@ -452,6 +468,10 @@ __all__ = [
     "DEFAULT_CHAT_MINI_MODEL",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_REASONING_EFFORT",
+    # Production allowlists (used by admin setting validation)
+    "ALLOWED_CHAT_MODELS",
+    "ALLOWED_EMBEDDING_MODELS",
+    "ALLOWED_REASONING_EFFORTS",
     # Clients (legacy Azure-prefixed names, retained for caller compatibility)
     "azure_openai_client",
     "azure_openai_async_client",

@@ -20,6 +20,9 @@ from app.deps import (
 )
 from app import cost_guardrail
 from app.openai_provider import (
+    ALLOWED_CHAT_MODELS,
+    ALLOWED_EMBEDDING_MODELS,
+    ALLOWED_REASONING_EFFORTS,
     DEFAULT_CHAT_AGENT_MODEL,
     DEFAULT_CHAT_MINI_MODEL,
     DEFAULT_CHAT_MODEL,
@@ -69,6 +72,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "description": "Primary model for user-facing Ask Foresight responses.",
         "value_type": "string",
         "default": DEFAULT_CHAT_MODEL,
+        "allowed_values": list(ALLOWED_CHAT_MODELS),
     },
     {
         "key": "OPENAI_CHAT_AGENT_MODEL",
@@ -77,6 +81,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "description": "Model for agentic research and tool-heavy workflows.",
         "value_type": "string",
         "default": DEFAULT_CHAT_AGENT_MODEL,
+        "allowed_values": list(ALLOWED_CHAT_MODELS),
     },
     {
         "key": "OPENAI_CHAT_MINI_MODEL",
@@ -85,6 +90,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "description": "Lower-cost model for classification and structured helper tasks.",
         "value_type": "string",
         "default": DEFAULT_CHAT_MINI_MODEL,
+        "allowed_values": list(ALLOWED_CHAT_MODELS),
     },
     {
         "key": "OPENAI_EMBEDDING_MODEL",
@@ -93,6 +99,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "description": "Embedding model used for vector search and deduplication.",
         "value_type": "string",
         "default": DEFAULT_EMBEDDING_MODEL,
+        "allowed_values": list(ALLOWED_EMBEDDING_MODELS),
     },
     {
         "key": "OPENAI_REASONING_EFFORT",
@@ -101,6 +108,7 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "description": "Default reasoning effort passed to supported OpenAI models.",
         "value_type": "string",
         "default": DEFAULT_REASONING_EFFORT,
+        "allowed_values": list(ALLOWED_REASONING_EFFORTS),
     },
     {
         "key": "FORESIGHT_CHAT_QUOTA_ENABLED",
@@ -757,6 +765,20 @@ async def _apply_admin_setting_change(
         raise HTTPException(status_code=404, detail="Unknown admin setting")
 
     value = _coerce_setting_value(raw_value, definition["value_type"])
+
+    # If the setting carries an allowlist (e.g. model tiers), reject anything
+    # outside it before it can be persisted or pushed into os.environ. Guards
+    # against an admin setting OPENAI_CHAT_MODEL=gpt-5.5 (retired) or a typo
+    # routing production traffic to a model that doesn't exist.
+    allowed_values = definition.get("allowed_values")
+    if allowed_values and value not in allowed_values:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Value {value!r} is not allowed for {key}. "
+                f"Allowed: {sorted(allowed_values)}"
+            ),
+        )
 
     def save() -> tuple[dict[str, Any], Any]:
         # Read prior value so the audit `before` is meaningful even when the
