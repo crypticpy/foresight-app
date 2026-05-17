@@ -452,25 +452,36 @@ class ForesightWorker:
             summary_report["stage"] = "failed"
             summary_report["timed_out"] = True
             summary_report["timed_out_at"] = datetime.now(timezone.utc).isoformat()
-            supabase.table("discovery_runs").update(
-                {
-                    "status": "failed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": f"Discovery run timed out after {self.discovery_timeout_seconds} seconds",
-                    "summary_report": summary_report,
-                }
-            ).eq("id", run_id).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("discovery_runs")
+                .update(
+                    {
+                        "status": "failed",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "error_message": f"Discovery run timed out after {self.discovery_timeout_seconds} seconds",
+                        "summary_report": summary_report,
+                    }
+                )
+                .eq("id", run_id)
+                .execute()
+            )
         except BaseException as e:
+            error_message = str(e)
             summary_report["stage"] = "failed"
             summary_report["failed_at"] = datetime.now(timezone.utc).isoformat()
-            supabase.table("discovery_runs").update(
-                {
-                    "status": "failed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": str(e),
-                    "summary_report": summary_report,
-                }
-            ).eq("id", run_id).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("discovery_runs")
+                .update(
+                    {
+                        "status": "failed",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "error_message": error_message,
+                        "summary_report": summary_report,
+                    }
+                )
+                .eq("id", run_id)
+                .execute()
+            )
             raise
         return True
 
@@ -553,21 +564,32 @@ class ForesightWorker:
                 )
                 events.summary(message="workstream scan complete")
         except asyncio.TimeoutError:
-            supabase.table("workstream_scans").update(
-                {
-                    "status": "failed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": f"Workstream scan timed out after {self.workstream_scan_timeout_seconds} seconds",
-                }
-            ).eq("id", scan_id).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("workstream_scans")
+                .update(
+                    {
+                        "status": "failed",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "error_message": f"Workstream scan timed out after {self.workstream_scan_timeout_seconds} seconds",
+                    }
+                )
+                .eq("id", scan_id)
+                .execute()
+            )
         except BaseException as e:
-            supabase.table("workstream_scans").update(
-                {
-                    "status": "failed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": str(e),
-                }
-            ).eq("id", scan_id).execute()
+            error_message = str(e)
+            await asyncio.to_thread(
+                lambda: supabase.table("workstream_scans")
+                .update(
+                    {
+                        "status": "failed",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "error_message": error_message,
+                    }
+                )
+                .eq("id", scan_id)
+                .execute()
+            )
             raise
         return True
 

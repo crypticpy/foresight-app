@@ -1996,9 +1996,12 @@ class SignalAgentService:
 
             # Update the card's updated_at timestamp
             try:
-                self.supabase.table("cards").update(
-                    {"updated_at": datetime.now(timezone.utc).isoformat()}
-                ).eq("id", card_id).execute()
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("cards")
+                    .update({"updated_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("id", card_id)
+                    .execute()
+                )
             except Exception as e:
                 logger.warning(
                     f"Signal agent: Failed to update card timestamp {card_id}: {e}"
@@ -2147,17 +2150,21 @@ class SignalAgentService:
         Returns True if created, False otherwise.
         """
         try:
-            self.supabase.table("signal_sources").insert(
-                {
-                    "card_id": card_id,
-                    "source_id": source_id,
-                    "relationship_type": relationship_type,
-                    "confidence": round(confidence, 3),
-                    "agent_reasoning": reasoning[:500] if reasoning else None,
-                    "created_by": "signal_agent",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).execute()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("signal_sources")
+                .insert(
+                    {
+                        "card_id": card_id,
+                        "source_id": source_id,
+                        "relationship_type": relationship_type,
+                        "confidence": round(confidence, 3),
+                        "agent_reasoning": reasoning[:500] if reasoning else None,
+                        "created_by": "signal_agent",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .execute()
+            )
             return True
 
         except Exception as e:
@@ -2184,17 +2191,21 @@ class SignalAgentService:
     ) -> None:
         """Create a timeline event for a card."""
         try:
-            self.supabase.table("card_timeline").insert(
-                {
-                    "card_id": card_id,
-                    "event_type": event_type,
-                    "title": event_type.replace("_", " ").title(),
-                    "description": description,
-                    "triggered_by_source_id": source_id,
-                    "metadata": metadata or {},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).execute()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("card_timeline")
+                .insert(
+                    {
+                        "card_id": card_id,
+                        "event_type": event_type,
+                        "title": event_type.replace("_", " ").title(),
+                        "description": description,
+                        "triggered_by_source_id": source_id,
+                        "metadata": metadata or {},
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .execute()
+            )
         except Exception as e:
             logger.warning(f"Signal agent: Failed to create timeline event: {e}")
 
@@ -2223,14 +2234,19 @@ class SignalAgentService:
     async def _auto_approve_card(self, card_id: str) -> None:
         """Auto-approve a card that exceeds the confidence threshold."""
         try:
-            self.supabase.table("cards").update(
-                {
-                    "status": "active",
-                    "review_status": "active",
-                    "auto_approved_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", card_id).execute()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .update(
+                    {
+                        "status": "active",
+                        "review_status": "active",
+                        "auto_approved_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .eq("id", card_id)
+                .execute()
+            )
 
             await self._create_timeline_event(
                 card_id=card_id,
