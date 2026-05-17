@@ -110,7 +110,11 @@ def _row_to_card_with_details(item: Dict[str, Any]) -> WorkstreamCardWithDetails
     )
 
 
-KANBAN_STATUSES = ("inbox", "working", "ready", "archived")
+# Re-export the canonical ordered status tuple from the model layer so this
+# router and the validators in `models/workstream.py` share a single source
+# of truth. Pagination relies on the tuple's order for deterministic
+# zip-with-pages behavior; do not switch this back to a local literal.
+KANBAN_STATUSES = VALID_WORKSTREAM_CARD_STATUSES
 KANBAN_COLUMN_DEFAULT_LIMIT = 50
 KANBAN_COLUMN_MAX_LIMIT = 200
 
