@@ -224,7 +224,7 @@ async def update_feed(
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=404, detail=_safe_error("update feed", e)) from e
     except Exception as e:
         logger.error(f"Failed to update feed {feed_id}: {e}")
         raise HTTPException(
