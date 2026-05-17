@@ -114,11 +114,15 @@ def _bypass_admin_check(monkeypatch):
 
 
 def test_apply_discovery_preset_writes_eight_rows(monkeypatch):
+    from app import audit_service
     from app.routers import admin as admin_router
 
     actor_id = str(uuid.uuid4())
     mock_sb = _MockSupabase({"admin_settings": []})
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    # audit_service owns its own ``supabase`` reference (extracted out of
+    # admin.py); patch it too so audit rows land in the same mock.
+    monkeypatch.setattr(audit_service, "supabase", mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 
@@ -158,11 +162,15 @@ def test_apply_discovery_preset_records_prior_value_in_audit(monkeypatch):
     operator can grep the audit log for "this is the moment we shifted from
     Conservative to Aggressive on weak_match_threshold".
     """
+    from app import audit_service
     from app.routers import admin as admin_router
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     mock_sb = _MockSupabase({"admin_settings": []})
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    # audit_service owns its own ``supabase`` reference (extracted out of
+    # admin.py); patch it too so audit rows land in the same mock.
+    monkeypatch.setattr(audit_service, "supabase", mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 

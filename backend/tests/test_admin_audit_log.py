@@ -164,6 +164,21 @@ def _bypass_admin_check(monkeypatch):
     monkeypatch.setattr(authz, "require_admin", lambda user: None)
 
 
+def _patch_supabase(monkeypatch, mock_sb) -> None:
+    """Patch the supabase singleton everywhere the admin paths reach for it.
+
+    ``app.routers.admin`` holds the reference used by the primary
+    mutation, and ``app.audit_service`` holds a separate top-level
+    reference used by the audit insert. Tests must replace both so a
+    single mock captures the full mutation + audit write.
+    """
+    from app import audit_service
+    from app.routers import admin as admin_router
+
+    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    monkeypatch.setattr(audit_service, "supabase", mock_sb)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -188,7 +203,7 @@ def test_update_admin_user_writes_audit_log(monkeypatch):
         ],
     }
     mock_sb = _MockSupabase(tables)
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    _patch_supabase(monkeypatch, mock_sb)
     monkeypatch.setattr(
         admin_router, "evict_cached_profile", lambda _uid: None
     )
@@ -243,7 +258,7 @@ def test_update_admin_setting_writes_audit_log(monkeypatch):
         ],
     }
     mock_sb = _MockSupabase(tables)
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    _patch_supabase(monkeypatch, mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 
@@ -281,7 +296,7 @@ def test_update_admin_setting_no_prior_override(monkeypatch):
 
     # Empty admin_settings — this is the upsert-as-insert path.
     mock_sb = _MockSupabase({"admin_settings": []})
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    _patch_supabase(monkeypatch, mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 
@@ -320,7 +335,7 @@ def test_update_admin_user_returns_404_when_target_missing(monkeypatch):
     from app.routers import admin as admin_router
 
     mock_sb = _MockSupabase({"users": []})
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    _patch_supabase(monkeypatch, mock_sb)
     monkeypatch.setattr(
         admin_router, "evict_cached_profile", lambda _uid: None
     )
@@ -344,24 +359,73 @@ def test_update_admin_user_returns_404_when_target_missing(monkeypatch):
 
 
 def test_redact_for_audit_masks_sensitive_keys():
-    from app.routers.admin import _redact_for_audit
+    from app.audit_service import redact_for_audit
 
     # A field that *itself* names a secret gets masked.
-    assert _redact_for_audit("FORESIGHT_SOMETHING", {"api_key": "abc"}) == {
+    assert redact_for_audit("FORESIGHT_SOMETHING", {"api_key": "abc"}) == {
         "api_key": "***REDACTED***"
     }
     # A non-sensitive field passes through.
-    assert _redact_for_audit("FORESIGHT_X", {"value": 7}) == {"value": 7}
+    assert redact_for_audit("FORESIGHT_X", {"value": 7}) == {"value": 7}
     # When the *target_id* names a secret, every field's value is masked
     # (a setting like AZURE_OPENAI_API_KEY would route into here).
-    assert _redact_for_audit("AZURE_OPENAI_API_KEY", {"value": "sk-xyz"}) == {
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", {"value": "sk-xyz"}) == {
         "value": "***REDACTED***"
     }
     # None values stay None — distinguishes "no override" from "had a value
     # but we hid it".
-    assert _redact_for_audit("AZURE_OPENAI_API_KEY", {"value": None}) == {
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", {"value": None}) == {
         "value": None
     }
+
+
+def test_redact_for_audit_masks_nested_and_scalar_secrets():
+    """Defense-in-depth: redaction must walk nested dicts and lists, and
+    a sensitive ``target_id`` must mask scalar/list payloads too — not
+    just top-level dict values.
+
+    Current admin routes only pass flat dicts, but the audit_service is a
+    shared utility; a future caller passing ``{"config": {"api_key": ...}}``
+    or a bare scalar under a key like ``AZURE_OPENAI_API_KEY`` must not
+    leak the secret into ``admin_audit_log``.
+    """
+    from app.audit_service import redact_for_audit
+
+    # Nested dict — secret one level down is masked, surrounding structure
+    # is preserved so the audit row still tells the shape of what was hidden.
+    assert redact_for_audit(
+        "FORESIGHT_X", {"config": {"api_key": "sk-abc", "model": "gpt-5.4"}}
+    ) == {
+        "config": {"api_key": "***REDACTED***", "model": "gpt-5.4"}
+    }
+
+    # List of dicts — recursion walks every element.
+    assert redact_for_audit(
+        "FORESIGHT_X",
+        {"creds": [{"token": "t1"}, {"token": "t2"}, {"safe": "ok"}]},
+    ) == {
+        "creds": [
+            {"token": "***REDACTED***"},
+            {"token": "***REDACTED***"},
+            {"safe": "ok"},
+        ]
+    }
+
+    # Sensitive ``target_id`` + scalar payload — the bare value must be
+    # masked, not pass through.
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", "sk-xyz") == "***REDACTED***"
+
+    # Sensitive ``target_id`` + list payload — every leaf scalar masked.
+    assert redact_for_audit(
+        "AZURE_OPENAI_API_KEY", ["sk-1", "sk-2"]
+    ) == ["***REDACTED***", "***REDACTED***"]
+
+    # Sensitive ``target_id`` + None payload still preserves None.
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", None) is None
+
+    # Non-sensitive ``target_id`` + scalar payload passes through (we only
+    # redact scalars when the target_id flags the whole subtree as suspect).
+    assert redact_for_audit("FORESIGHT_X", "plain-value") == "plain-value"
 
 
 def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
@@ -371,17 +435,17 @@ def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
     """
     import logging
 
-    from app.routers import admin as admin_router
+    from app import audit_service
 
     class _ExplodingSupabase:
         def table(self, _name):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(admin_router, "supabase", _ExplodingSupabase())
+    monkeypatch.setattr(audit_service, "supabase", _ExplodingSupabase())
 
     # Should not raise.
-    with caplog.at_level(logging.ERROR, logger="app.routers.admin"):
-        admin_router._log_admin_action(
+    with caplog.at_level(logging.ERROR, logger="app.audit_service"):
+        audit_service.log_admin_action(
             actor={"id": _uuid(), "email": "a@b.c"},
             action="admin.test",
             target_type="user",
@@ -391,8 +455,18 @@ def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
             request=_mock_request(),
         )
 
-    # The swallowed error must surface in logs so operators can notice.
-    assert any(
-        "Failed to write admin_audit_log" in record.getMessage()
-        for record in caplog.records
-    ), "expected a logger.exception call when audit insert fails"
+    # The swallowed error must surface in logs so operators can notice —
+    # check the message, the level, and that the offending action is named
+    # so a grep through logs can trace it back to the call site.
+    matching = [
+        r
+        for r in caplog.records
+        if r.name == "app.audit_service"
+        and r.levelno == logging.ERROR
+        and "Failed to write admin_audit_log" in r.getMessage()
+        and "admin.test" in r.getMessage()
+    ]
+    assert matching, (
+        "expected a logger.exception('Failed to write admin_audit_log ...') "
+        "call on app.audit_service when the insert raises"
+    )

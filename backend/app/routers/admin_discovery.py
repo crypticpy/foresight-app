@@ -6,8 +6,8 @@ this table to decide which RSS feeds to scan; other categories are
 display-only in v1 (PR A2 will wire news/academic/etc. fetchers to read
 from here too).
 
-The mutating endpoints reuse ``_log_admin_action`` from
-``app.routers.admin`` so every change shows up in the existing audit log.
+The mutating endpoints reuse ``log_admin_action`` from
+``app.audit_service`` so every change shows up in the existing audit log.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, HttpUrl
 
+from app.audit_service import log_admin_action
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, limiter, supabase
 
@@ -58,10 +59,8 @@ async def _safe_audit_log(**kwargs: Any) -> None:
     the operator should still see a 2xx. Swallow + log the error rather
     than turning a successful mutation into a 500.
     """
-    from app.routers.admin import _log_admin_action
-
     try:
-        await asyncio.to_thread(_log_admin_action, **kwargs)
+        await asyncio.to_thread(log_admin_action, **kwargs)
     except Exception:
         logger.exception("Audit log write failed (non-fatal)")
 
@@ -1594,10 +1593,8 @@ async def admin_force_workstream_scan(
         logger.exception("Failed to force-scan workstream")
         raise HTTPException(status_code=500, detail=_safe_error("force-scan workstream", e))
 
-    from app.routers.admin import _log_admin_action
-
     await asyncio.to_thread(
-        _log_admin_action,
+        log_admin_action,
         actor=current_user,
         action="admin.workstream.force_scan",
         target_type="workstream",
@@ -2019,10 +2016,8 @@ async def create_admin_schedule(
         logger.exception("Failed to create discovery schedule")
         raise HTTPException(status_code=500, detail=_safe_error("create discovery schedule", e))
 
-    from app.routers.admin import _log_admin_action
-
     await asyncio.to_thread(
-        _log_admin_action,
+        log_admin_action,
         actor=current_user,
         action="admin.schedule.create",
         target_type="schedule",
@@ -2089,10 +2084,8 @@ async def update_admin_schedule(
         logger.exception("Failed to update discovery schedule")
         raise HTTPException(status_code=500, detail=_safe_error("update discovery schedule", e))
 
-    from app.routers.admin import _log_admin_action
-
     await asyncio.to_thread(
-        _log_admin_action,
+        log_admin_action,
         actor=current_user,
         action="admin.schedule.update",
         target_type="schedule",
@@ -2150,10 +2143,8 @@ async def delete_admin_schedule(
         logger.exception("Failed to delete discovery schedule")
         raise HTTPException(status_code=500, detail=_safe_error("delete discovery schedule", e))
 
-    from app.routers.admin import _log_admin_action
-
     await asyncio.to_thread(
-        _log_admin_action,
+        log_admin_action,
         actor=current_user,
         action="admin.schedule.delete",
         target_type="schedule",
