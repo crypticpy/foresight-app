@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from supabase import Client
 
+from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import (
     azure_openai_async_embedding_client,
     get_embedding_deployment,
@@ -367,7 +368,7 @@ async def _resolve_workstream_id(
         lambda: supabase.table("workstreams")
         .select("id")
         .eq("user_id", user_id)
-        .ilike("name", ref)
+        .ilike("name", sanitize_ilike(ref))
         .limit(1)
         .execute()
     )
