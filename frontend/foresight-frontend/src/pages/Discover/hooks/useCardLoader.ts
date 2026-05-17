@@ -668,7 +668,6 @@ export function useCardLoader({
     // re-entry gate, and depending on the state would recreate the callback
     // on every fetch start/finish, churning the IntersectionObserver effect
     // in `VirtualizedGrid` that depends on `loadMore`'s identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, hasMore, fetchPageWithEmptyHop]);
 
   return {
