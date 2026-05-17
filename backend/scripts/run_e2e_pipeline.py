@@ -1,21 +1,26 @@
 """
-End-to-End Pipeline Test for Enhanced AI Content Processing
+End-to-End Pipeline Integration Runner (manual / on-demand).
 
-This test verifies the complete pipeline integration:
-1. All 5 source categories (RSS, News, Academic, Government, Tech Blog) are fetched
-2. 4-dimensional scoring (impact, velocity, novelty, risk) is computed
+This is **not** a pytest module — it is a standalone CLI integration runner
+that exercises live source fetchers (RSS, arXiv, etc.) end-to-end and prints
+a pass/fail summary. The cheap import-contract checks that used to live in
+this file now live in ``backend/tests/test_pipeline_contracts.py`` and run
+on every ``pytest`` invocation.
+
+What this runner verifies:
+1. All 5 source categories (RSS, News, Academic, Government, Tech Blog) can be fetched
+2. 4-dimensional scoring (impact, velocity, novelty, risk) fields are exposed
 3. Source diversity metrics are tracked
 4. Classification validation infrastructure is in place
 5. Processing metrics are logged correctly
 
-Usage:
-    pytest backend/tests/test_e2e_pipeline.py -v
-    # Or run directly:
-    python backend/tests/test_e2e_pipeline.py
+Because it makes real HTTP calls (Hacker News RSS, arXiv, etc.) it is **not**
+run in CI. Invoke it manually when you want a smoke check of the live pipeline:
+
+    python backend/scripts/run_e2e_pipeline.py
 """
 
 import asyncio
-import importlib
 import importlib.util
 import logging
 import sys
@@ -23,8 +28,6 @@ import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-
-import pytest
 
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -34,75 +37,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-def test_source_fetchers_public_api_contract() -> None:
-    """Verify source_fetchers keeps the public exports used by integrations."""
-    module_name = "app.source_fetchers"
-    source_fetchers_module = importlib.import_module(module_name)
-
-    expected_attrs = [
-        "fetch_rss_sources",
-        "FetchedArticle",
-        "fetch_news_articles",
-        "NewsArticle",
-        "fetch_academic_papers",
-        "AcademicPaper",
-        "fetch_government_sources",
-        "GovernmentDocument",
-        "fetch_tech_blog_articles",
-        "TechBlogArticle",
-    ]
-
-    for attr in expected_attrs:
-        assert hasattr(source_fetchers_module, attr), (
-            f"{module_name} is expected to expose {attr}, but it was not found."
-        )
-
-
-def test_discovery_service_public_api_contract() -> None:
-    """Verify discovery_service keeps its public orchestration symbols."""
-    if importlib.util.find_spec("supabase") is None:
-        pytest.skip("supabase not available - skipping discovery_service contract test")
-
-    module_name = "app.discovery_service"
-    discovery_module = importlib.import_module(module_name)
-
-    expected_attrs = [
-        "DiscoveryService",
-        "DiscoveryConfig",
-        "SourceCategory",
-        "SourceCategoryConfig",
-        "MultiSourceFetchResult",
-        "SourceDiversityMetrics",
-        "ProcessingTimeMetrics",
-        "APITokenUsage",
-    ]
-
-    for attr in expected_attrs:
-        assert hasattr(discovery_module, attr), (
-            f"{module_name} is expected to expose {attr}, but it was not found."
-        )
-
-
-def test_validation_models_public_api_contract() -> None:
-    """Verify validation model exports remain importable."""
-    module_name = "app.models.validation"
-    validation_module = importlib.import_module(module_name)
-
-    expected_attrs = [
-        "ClassificationValidation",
-        "ClassificationValidationCreate",
-        "ClassificationAccuracyMetrics",
-        "ValidationSummary",
-        "ClassificationConfusionMatrix",
-        "VALID_PILLAR_CODES",
-    ]
-
-    for attr in expected_attrs:
-        assert hasattr(validation_module, attr), (
-            f"{module_name} is expected to expose {attr}, but it was not found."
-        )
 
 
 @dataclass
