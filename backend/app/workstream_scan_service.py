@@ -1509,33 +1509,32 @@ Example: ["query 1", "query 2", ...]"""
     async def _finalize_scan(self, scan_id: str, result: ScanResult):
         """Finalize scan record with results."""
         try:
-            finalize_res = (
-                self.supabase.table("workstream_scans")
-                .update(
-                    {
-                        "status": result.status,
-                        "completed_at": (
-                            result.completed_at.isoformat()
-                            if result.completed_at
-                            else None
-                        ),
-                        "results": {
-                            "queries_executed": result.queries_executed,
-                            "sources_fetched": result.sources_fetched,
-                            "sources_by_category": result.sources_by_category,
-                            "sources_triaged": result.sources_triaged,
-                            "cards_created": len(result.cards_created),
-                            "cards_enriched": len(result.cards_enriched),
-                            "cards_added_to_workstream": len(
-                                result.cards_added_to_workstream
-                            ),
-                            "duplicates_skipped": result.duplicates_skipped,
-                            "execution_time_seconds": result.execution_time_seconds,
-                            "errors": result.errors,
-                        },
-                        "error_message": result.errors[0] if result.errors else None,
-                    }
-                )
+            finalize_payload = {
+                "status": result.status,
+                "completed_at": (
+                    result.completed_at.isoformat()
+                    if result.completed_at
+                    else None
+                ),
+                "results": {
+                    "queries_executed": result.queries_executed,
+                    "sources_fetched": result.sources_fetched,
+                    "sources_by_category": result.sources_by_category,
+                    "sources_triaged": result.sources_triaged,
+                    "cards_created": len(result.cards_created),
+                    "cards_enriched": len(result.cards_enriched),
+                    "cards_added_to_workstream": len(
+                        result.cards_added_to_workstream
+                    ),
+                    "duplicates_skipped": result.duplicates_skipped,
+                    "execution_time_seconds": result.execution_time_seconds,
+                    "errors": result.errors,
+                },
+                "error_message": result.errors[0] if result.errors else None,
+            }
+            finalize_res = await asyncio.to_thread(
+                lambda: self.supabase.table("workstream_scans")
+                .update(finalize_payload)
                 .eq("id", scan_id)
                 .in_("status", ["queued", "running"])
                 .execute()
