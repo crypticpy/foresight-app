@@ -199,6 +199,21 @@ from .admin_coverage import (
     WorkstreamCoverageResponse,
 )
 
+from .admin_runs import (
+    BalanceDispatchGoalUsed,
+    BalanceDispatchDerivationError,
+    BalanceDispatchResponse,
+    AdminWorkstreamScanResponse,
+    DiscoveryRunCardOutcomes,
+    DiscoveryRunTriageCounts,
+    DiscoveryRunDetailTotals,
+    DiscoveredSourceDetailRow,
+    DiscoveryRunDetailSourcesPage,
+    DiscoveryRunDetailResponse,
+    AdminScheduleRow,
+    AdminSchedulesListResponse,
+)
+
 from .review import (
     CardReviewRequest,
     BulkReviewRequest,
@@ -466,6 +481,19 @@ __all__ = [
     "CoverageGapsResponse",
     "WorkstreamFreshnessRow",
     "WorkstreamCoverageResponse",
+    # admin_runs
+    "BalanceDispatchGoalUsed",
+    "BalanceDispatchDerivationError",
+    "BalanceDispatchResponse",
+    "AdminWorkstreamScanResponse",
+    "DiscoveryRunCardOutcomes",
+    "DiscoveryRunTriageCounts",
+    "DiscoveryRunDetailTotals",
+    "DiscoveredSourceDetailRow",
+    "DiscoveryRunDetailSourcesPage",
+    "DiscoveryRunDetailResponse",
+    "AdminScheduleRow",
+    "AdminSchedulesListResponse",
     # review
     "CardReviewRequest",
     "BulkReviewRequest",
