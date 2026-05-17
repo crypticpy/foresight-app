@@ -418,9 +418,11 @@ async def enrich_signal_profiles(
             card_id = card["id"]
 
             # Fetch linked sources
+            # `id` is required so the extract_content backfill loop below can
+            # locate the row to UPDATE — PostgREST returns only what we select.
             sources_resp = await asyncio.to_thread(
                 lambda: supabase.table("sources")
-                .select("title, url, ai_summary, key_excerpts, full_text")
+                .select("id, title, url, ai_summary, key_excerpts, full_text")
                 .eq("card_id", card_id)
                 .order("created_at", desc=True)
                 .limit(10)
