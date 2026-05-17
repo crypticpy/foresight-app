@@ -173,6 +173,12 @@ class ShareLinkResponse(BaseModel):
     created_at: datetime | str
 
 
+class RevokeShareLinkResponse(BaseModel):
+    """Acknowledgement payload for a successful share-link revocation."""
+
+    status: Literal["revoked"]
+
+
 class PublicSharePayload(BaseModel):
     target_type: str
     target_id: str

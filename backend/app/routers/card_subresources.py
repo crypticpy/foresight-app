@@ -20,7 +20,7 @@ from app.models.history import (
     RelatedCard,
     RelatedCardsList,
 )
-from app.models.workstream import Note, NoteCreate
+from app.models.workstream import Note, NoteCreate, PinSignalResponse
 from app.models.assets import CardAsset, CardAssetsResponse
 from app.models.card_followers import CardFollowerResponse, FollowToggleResponse
 from app.card_artifacts import (
@@ -1139,7 +1139,7 @@ async def get_my_signals_stats(
 # ============================================================================
 
 
-@router.post("/me/signals/{card_id}/pin")
+@router.post("/me/signals/{card_id}/pin", response_model=PinSignalResponse)
 async def pin_signal(card_id: str, current_user: dict = Depends(get_current_user)):
     """Pin/unpin a signal in the user's personal hub."""
     user_id = current_user["id"]
@@ -1177,7 +1177,7 @@ async def pin_signal(card_id: str, current_user: dict = Depends(get_current_user
 # ============================================================================
 
 
-@router.get("/cards/{card_id}/notes")
+@router.get("/cards/{card_id}/notes", response_model=List[Note])
 async def get_card_notes(card_id: str, current_user: dict = Depends(get_current_user)):
     """Get notes for a card"""
     response = (
@@ -1191,7 +1191,7 @@ async def get_card_notes(card_id: str, current_user: dict = Depends(get_current_
     return [Note(**note) for note in response.data]
 
 
-@router.post("/cards/{card_id}/notes")
+@router.post("/cards/{card_id}/notes", response_model=Note)
 async def create_note(
     card_id: str, note_data: NoteCreate, current_user: dict = Depends(get_current_user)
 ):

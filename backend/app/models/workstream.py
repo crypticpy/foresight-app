@@ -374,6 +374,12 @@ class Note(BaseModel):
     created_at: datetime
 
 
+class PinSignalResponse(BaseModel):
+    """Result of toggling the pin state on a personal-hub signal."""
+
+    is_pinned: bool
+
+
 class NoteCreate(BaseModel):
     content: str = Field(
         ..., min_length=1, max_length=10000, description="Note content"
