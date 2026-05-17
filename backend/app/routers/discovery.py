@@ -589,8 +589,9 @@ async def enrich_weak_signals(
 ):
     """Enrich signals that have fewer than min_sources with additional web sources.
 
-    Uses Tavily web search to find supporting articles for each weak signal,
-    then stores them as supporting sources.
+    Uses the configured web-search providers (SearXNG / Serper, with Exa as a
+    fallback) to find supporting articles for each weak signal, then stores
+    them as supporting sources.
     """
     from app.enrichment_service import enrich_weak_signals as _enrich
 

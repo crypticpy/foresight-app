@@ -146,7 +146,7 @@ class ExecutiveBriefResponse(BaseModel):
     )
     model_used: Optional[str] = Field(
         None,
-        description="AI model used for generation (e.g., gpt-4o)"
+        description="AI model used for generation (e.g., gpt-5.4)"
     )
     prompt_tokens: Optional[int] = Field(
         None,

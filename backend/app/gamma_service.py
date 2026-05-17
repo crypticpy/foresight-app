@@ -732,15 +732,15 @@ class GammaService:
         # AI Disclosure slide
         ai_disclosure = """# About This Report
 
-This strategic intelligence brief was generated using the FORESIGHT platform, 
+This strategic intelligence brief was generated using the FORESIGHT platform,
 powered by advanced AI technologies:
 
-- Anthropic Claude for strategic analysis and synthesis
-- OpenAI GPT-4o for classification and scoring
-- GPT Researcher for autonomous deep research
-- Exa AI and Firecrawl for source discovery
+- OpenAI GPT-5.4 for strategic analysis, classification, and scoring
+- GPT Researcher for autonomous deep research orchestration
+- SearXNG and Serper for web search aggregation
+- trafilatura for article extraction from source URLs
 
-The City of Austin is committed to transparent and responsible use of AI 
+The City of Austin is committed to transparent and responsible use of AI
 technology in public service."""
         sections.append(ai_disclosure)
 
@@ -1552,10 +1552,10 @@ What Austin should do in the next 90 days:
 
 This strategic intelligence portfolio was generated using the FORESIGHT platform:
 
-• **AI Analysis**: Anthropic Claude & OpenAI GPT-4
+• **AI Analysis**: OpenAI GPT-5.4
 • **Presentation**: Gamma.app AI
-• **Deep Research**: GPT Researcher with Exa AI & Tavily
-• **Source Discovery**: Firecrawl web extraction
+• **Deep Research**: GPT Researcher with SearXNG & Serper
+• **Source Extraction**: trafilatura
 
 The City of Austin is committed to transparent and responsible use of AI in public service. All AI-generated content is reviewed for accuracy and relevance.
 

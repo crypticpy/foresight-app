@@ -1036,8 +1036,8 @@ Respond with JSON:
     ) -> str:
         """Classify the overall trend trajectory of a signal.
 
-        Uses GPT-4o-mini to classify based on source publication patterns
-        and content themes.
+        Routes through the mini chat tier (see openai_provider) to classify
+        based on source publication patterns and content themes.
 
         Args:
             signal_name: Name of the signal/card.
@@ -1344,7 +1344,7 @@ Respond as JSON:
         response = self.client.chat.completions.create(
             model=get_chat_agent_deployment(),
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=16384,  # Max output for GPT-4o to ensure complete report with sources
+            max_completion_tokens=16384,  # Headroom for a complete report with sources on the agent tier
             timeout=REQUEST_TIMEOUT * 3,  # Extended timeout for long report
         )
 
@@ -1442,8 +1442,8 @@ Respond as JSON:
                 "---",
                 "",
                 "**Research Methodology:** This report was generated using GPT Researcher for source discovery, "
-                "supplemented by Serper web and news search, with Exa AI neural search as a fallback. "
-                "Content was extracted using Firecrawl or trafilatura. Sources were filtered for relevance to municipal "
+                "supplemented by Serper web and news search and the SearXNG aggregator, with Exa AI neural search as a fallback. "
+                "Content was extracted using trafilatura. Sources were filtered for relevance to municipal "
                 "government applications and analyzed using AI-powered classification and summarization.",
             ]
         )
