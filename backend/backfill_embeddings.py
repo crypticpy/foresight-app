@@ -139,10 +139,14 @@ async def run_connection_discovery(card_count: int) -> None:
         if not AZURE_ENDPOINT:
             import types
 
-            # Create a stub module to prevent the real openai_provider from loading
+            # Create a stub module to prevent the real openai_provider from
+            # loading (it would raise on missing AZURE_* env vars). Stub values
+            # mirror the current openai_provider.DEFAULT_* constants; keep in
+            # sync when those change (this file can't import them because that
+            # would trigger the module load it's trying to avoid).
             stub = types.ModuleType("app.openai_provider")
-            stub.get_chat_mini_deployment = lambda: "gpt-4o-mini"
-            stub.get_chat_deployment = lambda: "gpt-4o"
+            stub.get_chat_mini_deployment = lambda: "gpt-5.4-mini-2026-03-17"
+            stub.get_chat_deployment = lambda: "gpt-5.4-2026-03-05"
             stub.get_embedding_deployment = lambda: "text-embedding-ada-002"
             stub.get_embedding_api_version = lambda: "2023-05-15"
             stub.get_chat_api_version = lambda: "2024-12-01-preview"
