@@ -406,8 +406,18 @@ def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
             request=_mock_request(),
         )
 
-    # The swallowed error must surface in logs so operators can notice.
-    assert any(
-        "Failed to write admin_audit_log" in record.getMessage()
-        for record in caplog.records
-    ), "expected a logger.exception call when audit insert fails"
+    # The swallowed error must surface in logs so operators can notice —
+    # check the message, the level, and that the offending action is named
+    # so a grep through logs can trace it back to the call site.
+    matching = [
+        r
+        for r in caplog.records
+        if r.name == "app.audit_service"
+        and r.levelno == logging.ERROR
+        and "Failed to write admin_audit_log" in r.getMessage()
+        and "admin.test" in r.getMessage()
+    ]
+    assert matching, (
+        "expected a logger.exception('Failed to write admin_audit_log ...') "
+        "call on app.audit_service when the insert raises"
+    )
