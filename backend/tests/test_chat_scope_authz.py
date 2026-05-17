@@ -39,6 +39,8 @@ class _Query:
     def __init__(self, rows: List[Dict[str, Any]]):
         self._rows = rows
         self._filters: Dict[str, Any] = {}
+        self._in_filters: Dict[str, List[Any]] = {}
+        self._ilike: tuple[str, str] | None = None
 
     def select(self, *_a, **_kw):
         return self
@@ -47,15 +49,34 @@ class _Query:
         self._filters[key] = value
         return self
 
+    def in_(self, key, values):
+        self._in_filters[key] = list(values)
+        return self
+
+    def ilike(self, key, pattern):
+        # Match Supabase's `%term%` syntax against a simple substring contains.
+        self._ilike = (key, pattern.strip("%"))
+        return self
+
+    def order(self, *_a, **_kw):
+        return self
+
     def limit(self, _n):
         return self
 
     def execute(self):
-        rows = [
-            r
-            for r in self._rows
-            if all(r.get(k) == v for k, v in self._filters.items())
-        ]
+        rows = []
+        for r in self._rows:
+            if not all(r.get(k) == v for k, v in self._filters.items()):
+                continue
+            if not all(r.get(k) in vs for k, vs in self._in_filters.items()):
+                continue
+            if self._ilike is not None:
+                key, needle = self._ilike
+                hay = r.get(key) or ""
+                if needle.lower() not in str(hay).lower():
+                    continue
+            rows.append(r)
         return _Resp(rows)
 
 
@@ -79,7 +100,9 @@ class _SupabaseStub:
 
 OWNER_ID = "11111111-1111-1111-1111-111111111111"
 ATTACKER_ID = "22222222-2222-2222-2222-222222222222"
+ORG_MEMBER_ID = "33333333-3333-3333-3333-333333333333"
 VICTIM_WS_ID = "ws-victim"
+ORG_WS_ID = "ws-org-shared"
 
 
 @pytest.fixture
@@ -93,8 +116,23 @@ def stub_supabase(monkeypatch):
                 "owner_type": "user",
                 "name": "victim secret workstream",
                 "cloned_from_id": None,
-            }
-        ]
+            },
+            {
+                "id": ORG_WS_ID,
+                "user_id": None,
+                "owner_type": "org",
+                "name": "org shared workstream",
+                "cloned_from_id": None,
+            },
+        ],
+        members=[
+            # ORG_MEMBER_ID is a viewer on the org-owned workstream.
+            {
+                "workstream_id": ORG_WS_ID,
+                "user_id": ORG_MEMBER_ID,
+                "role": "viewer",
+            },
+        ],
     )
     monkeypatch.setattr(chat_router, "supabase", stub)
     return stub
@@ -246,3 +284,115 @@ def test_smart_chat_suggestions_allows_workstream_owner(stub_supabase, monkeypat
     )
     # Owner reached the suggestion generator — authz did not block.
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Org-owned workstreams (membership branch of require_workstream_access)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_endpoint_allows_org_member(stub_supabase, monkeypatch):
+    """A listed org-workstream member must reach the chat service."""
+
+    async def _stub_chat(**_kw):
+        if False:
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(chat_router, "chat_service_chat", _stub_chat)
+
+    request = ChatRequest(
+        scope="workstream",
+        scope_id=ORG_WS_ID,
+        message="summarize this org workstream",
+    )
+    member = {"id": ORG_MEMBER_ID, "role": "user", "account_type": "paid"}
+
+    response = _run(chat_router.chat_endpoint(request, current_user=member))
+    assert response is not None
+
+
+def test_chat_endpoint_rejects_org_non_member(stub_supabase):
+    """A non-member must get 404 on an org-owned workstream (not 403)."""
+
+    request = ChatRequest(
+        scope="workstream",
+        scope_id=ORG_WS_ID,
+        message="summarize this org workstream",
+    )
+    attacker = {"id": ATTACKER_ID, "role": "user", "account_type": "paid"}
+
+    with pytest.raises(HTTPException) as exc:
+        _run(chat_router.chat_endpoint(request, current_user=attacker))
+
+    # 404 (not 403) — same existence-masking rule as user-owned workstreams.
+    assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /chat/mentions/search — workstream filter must not leak private titles/ids
+# ---------------------------------------------------------------------------
+
+
+def _mentions_stub(workstreams, members=None):
+    """Build a supabase stub that also covers the cards table used by mentions."""
+    stub = _SupabaseStub(workstreams=workstreams, members=members or [])
+    base_table = stub.table
+
+    def table(name):
+        if name == "cards":
+            return _Query([])  # no cards in these tests
+        return base_table(name)
+
+    stub.table = table
+    return stub
+
+
+def test_mentions_search_hides_other_users_workstreams(monkeypatch):
+    """search_mentions must not return workstreams the caller can't read."""
+    stub = _mentions_stub(
+        workstreams=[
+            {
+                "id": VICTIM_WS_ID,
+                "user_id": OWNER_ID,
+                "owner_type": "user",
+                "name": "secret-project-alpha",
+                "cloned_from_id": None,
+            }
+        ]
+    )
+    monkeypatch.setattr(chat_router, "supabase", stub)
+
+    attacker = {"id": ATTACKER_ID, "role": "user", "account_type": "paid"}
+    result = _run(
+        chat_router.search_mentions(q="secret", limit=8, current_user=attacker)
+    )
+
+    titles = {item["title"] for item in result["results"] if item["type"] == "workstream"}
+    assert "secret-project-alpha" not in titles
+    assert result["results"] == [] or all(
+        item["type"] != "workstream" for item in result["results"]
+    )
+
+
+def test_mentions_search_returns_callers_own_workstreams(monkeypatch):
+    """search_mentions must still surface workstreams the caller owns."""
+    stub = _mentions_stub(
+        workstreams=[
+            {
+                "id": VICTIM_WS_ID,
+                "user_id": OWNER_ID,
+                "owner_type": "user",
+                "name": "my-roadmap",
+                "cloned_from_id": None,
+            }
+        ]
+    )
+    monkeypatch.setattr(chat_router, "supabase", stub)
+
+    owner = {"id": OWNER_ID, "role": "user", "account_type": "paid"}
+    result = _run(
+        chat_router.search_mentions(q="roadmap", limit=8, current_user=owner)
+    )
+
+    titles = {item["title"] for item in result["results"] if item["type"] == "workstream"}
+    assert "my-roadmap" in titles

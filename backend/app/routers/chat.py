@@ -30,6 +30,99 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
+def _accessible_workstreams_by_name(
+    current_user: dict, search_term: str, limit: int
+) -> List[Dict[str, Any]]:
+    """Return workstream rows the caller can read whose name matches `search_term`.
+
+    Mirrors the read-access model in `authz.get_workstream_access`:
+    - admins see every workstream (user-owned, member-shared, and org templates);
+    - regular users see workstreams they own plus workstreams they are members of.
+
+    Org templates are excluded for non-admins because the workstreams router
+    rewrites template ids to per-user clones — surfacing template ids in mention
+    autocomplete would either leak the template namespace or hand the caller an
+    id their other endpoints will 404 on.
+
+    The Supabase calls here are blocking; the async caller wraps this in
+    `asyncio.to_thread` so the event loop stays free.
+    """
+    if limit <= 0:
+        return []
+
+    user_id = current_user["id"]
+    rows: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    if is_admin(current_user):
+        admin_rows = (
+            supabase.table("workstreams")
+            .select("id, name")
+            .ilike("name", search_term)
+            .order("name")
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        for ws in admin_rows:
+            if ws["id"] in seen:
+                continue
+            seen.add(ws["id"])
+            rows.append(ws)
+        return rows[:limit]
+
+    own_rows = (
+        supabase.table("workstreams")
+        .select("id, name")
+        .eq("user_id", user_id)
+        .ilike("name", search_term)
+        .order("name")
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+    for ws in own_rows:
+        if ws["id"] in seen:
+            continue
+        seen.add(ws["id"])
+        rows.append(ws)
+        if len(rows) >= limit:
+            return rows
+
+    memberships = (
+        supabase.table("workstream_members")
+        .select("workstream_id")
+        .eq("user_id", user_id)
+        .execute()
+        .data
+        or []
+    )
+    member_ids = [m["workstream_id"] for m in memberships if m.get("workstream_id")]
+    if member_ids:
+        shared_rows = (
+            supabase.table("workstreams")
+            .select("id, name")
+            .in_("id", member_ids)
+            .ilike("name", search_term)
+            .order("name")
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        for ws in shared_rows:
+            if ws["id"] in seen:
+                continue
+            seen.add(ws["id"])
+            rows.append(ws)
+            if len(rows) >= limit:
+                break
+
+    return rows[:limit]
+
+
 async def _gate_workstream_scope(scope: str, scope_id: Optional[str], current_user: dict) -> None:
     """Ownership gate for workstream-scoped chat surfaces.
 
@@ -888,19 +981,18 @@ async def search_mentions(
         except Exception as exc:
             logger.warning(f"Mention search: cards query failed: {exc}")
 
-        # Search workstreams by name
+        # Search workstreams by name — scoped to ones the caller can read so
+        # private workstream titles/ids don't leak via mention autocomplete.
         remaining = limit - len(results)
         if remaining > 0:
             try:
-                ws_result = (
-                    supabase.table("workstreams")
-                    .select("id, name")
-                    .ilike("name", search_term)
-                    .order("name")
-                    .limit(remaining)
-                    .execute()
+                ws_rows = await asyncio.to_thread(
+                    _accessible_workstreams_by_name,
+                    current_user,
+                    search_term,
+                    remaining,
                 )
-                for ws in ws_result.data or []:
+                for ws in ws_rows:
                     results.append(
                         {
                             "id": ws["id"],
