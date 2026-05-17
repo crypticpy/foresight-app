@@ -30,6 +30,10 @@ def test_preserves_common_whitespace():
     # Newlines and tabs are legitimate content; only strip the
     # non-printable control bytes.
     assert _safe_for_prompt("line1\nline2\tcol") == "line1\nline2\tcol"
+    # Carriage returns are also preserved so Windows-style line endings
+    # (\r\n) survive intact — pin this so future regex tweaks can't
+    # silently drop CR without a failing test.
+    assert _safe_for_prompt("a\r\nb") == "a\r\nb"
 
 
 def test_strips_sentinel_tag_open_and_close():
