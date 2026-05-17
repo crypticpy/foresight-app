@@ -19,6 +19,7 @@ import {
   type AdvancedSearchRequest,
   type SavedSearchQueryConfig,
 } from "../../../lib/discovery-api";
+import { sanitizeForOrIlike } from "../../../lib/postgrest-utils";
 import { supabase } from "../../../lib/supabase";
 import type { Card, Pillar, SortOption, Stage } from "../types";
 import { getSortConfig } from "../utils";
@@ -111,25 +112,6 @@ interface FetchPageResult {
   cards: Card[];
   hasMore: boolean;
   cursorAdvance: number;
-}
-
-/**
- * Sanitize free-text input for a PostgREST `.or(...)` filter expression.
- *
- * Three character classes must be neutralized:
- *   - `%` / `_` are PostgreSQL `LIKE` metacharacters; Supabase `.ilike` does
- *     NOT escape them, so a raw user `%` becomes "match anything".
- *   - `,` is parsed as the OR-branch delimiter in PostgREST filter strings.
- *   - `(` / `)` are reserved by the PostgREST OR-expression grammar.
- *
- * We drop these characters rather than backslash-escape because the search
- * field is short user-controlled text and the metacharacters carry no useful
- * substring-match intent. Mirrors `escapeKeywordForOr` in
- * `pages/WorkstreamFeed/api.ts` — keep the two definitions in sync if you
- * change either.
- */
-function escapeSearchTermForOr(term: string): string {
-  return term.replace(/[%_]/g, " ").replace(/[,()]/g, " ").trim();
 }
 
 async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {
@@ -269,7 +251,7 @@ export function useCardLoader({
           .in("id", Array.from(followed));
 
         if (searchTerm) {
-          const safeTerm = escapeSearchTermForOr(searchTerm);
+          const safeTerm = sanitizeForOrIlike(searchTerm);
           if (safeTerm) {
             query = query.or(
               `name.ilike.%${safeTerm}%,summary.ilike.%${safeTerm}%`,
@@ -462,7 +444,7 @@ export function useCardLoader({
       if (selectedStage) query = query.eq("stage_id", selectedStage);
       if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
       if (searchTerm) {
-        const safeTerm = escapeSearchTermForOr(searchTerm);
+        const safeTerm = sanitizeForOrIlike(searchTerm);
         if (safeTerm) {
           query = query.or(
             `name.ilike.%${safeTerm}%,summary.ilike.%${safeTerm}%`,
