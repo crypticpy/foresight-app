@@ -713,17 +713,16 @@ class ForesightWorker:
             now_iso = now.isoformat()
 
             # Check for any due schedules
-            schedules = (
-                supabase.table("discovery_schedule")
+            schedules_res = await asyncio.to_thread(
+                lambda: supabase.table("discovery_schedule")
                 .select("*")
                 .eq("enabled", True)
                 .lte("next_run_at", now_iso)
                 .order("next_run_at", desc=False)
                 .limit(1)
                 .execute()
-                .data
-                or []
             )
+            schedules = schedules_res.data or []
 
             if not schedules:
                 return False
@@ -748,8 +747,8 @@ class ForesightWorker:
 
             # Claim the schedule by advancing next_run_at (optimistic lock)
             next_run = now + timedelta(hours=interval_hours)
-            claimed = (
-                supabase.table("discovery_schedule")
+            claimed_res = await asyncio.to_thread(
+                lambda: supabase.table("discovery_schedule")
                 .update(
                     {
                         "last_run_at": now_iso,
@@ -761,9 +760,8 @@ class ForesightWorker:
                 .eq("id", schedule_id)
                 .lte("next_run_at", now_iso)
                 .execute()
-                .data
             )
-            if not claimed:
+            if not claimed_res.data:
                 return False
 
             logger.info(
@@ -817,9 +815,10 @@ class ForesightWorker:
                     summary["errors"].append(f"RSS processing failed: {rss_err}")
 
             # Step 2: Get a system user for the discovery run
-            system_user = (
-                supabase.table("users").select("id").limit(1).execute().data or []
+            system_user_res = await asyncio.to_thread(
+                lambda: supabase.table("users").select("id").limit(1).execute()
             )
+            system_user = system_user_res.data or []
             user_id = system_user[0]["id"] if system_user else None
 
             if not user_id:
@@ -864,7 +863,11 @@ class ForesightWorker:
                         },
                     }
 
-                    supabase.table("discovery_runs").insert(run_record).execute()
+                    await asyncio.to_thread(
+                        lambda: supabase.table("discovery_runs")
+                        .insert(run_record)
+                        .execute()
+                    )
                     summary["discovery_run_ids"].append(run_id)
 
                     logger.info(
@@ -893,13 +896,18 @@ class ForesightWorker:
             summary["completed_at"] = datetime.now(timezone.utc).isoformat()
             summary["status"] = final_status
 
-            supabase.table("discovery_schedule").update(
-                {
-                    "last_run_status": final_status,
-                    "last_run_summary": summary,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", schedule_id).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("discovery_schedule")
+                .update(
+                    {
+                        "last_run_status": final_status,
+                        "last_run_summary": summary,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .eq("id", schedule_id)
+                .execute()
+            )
 
             logger.info(
                 "Scheduled discovery complete",
