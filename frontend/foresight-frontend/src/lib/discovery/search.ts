@@ -28,6 +28,16 @@ export interface SearchFilters {
   score_thresholds?: ScoreThresholds;
   /** Filter by card lifecycle status */
   status?: string;
+  /**
+   * Filter by signal_quality_score tier:
+   *   - "high"     → score >= 75
+   *   - "moderate" → 50 <= score < 75
+   *   - "low"      → score < 50 OR null
+   *   - "all" / omit → no filter
+   * Mirrors the Discover quality-tier chip so semantic-search responses
+   * obey the same constraint applied on the standard Supabase path.
+   */
+  quality_filter?: "all" | "high" | "moderate" | "low";
 }
 
 /**

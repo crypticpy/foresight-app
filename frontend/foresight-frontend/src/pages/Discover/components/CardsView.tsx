@@ -23,6 +23,10 @@ export interface CardsViewProps {
   renderItem: (card: Card, index?: number) => React.ReactNode;
   listRef: React.RefObject<VirtualizedListHandle>;
   gridRef: React.RefObject<VirtualizedGridHandle>;
+  /** Called when the user scrolls near the bottom — drives infinite scroll. */
+  onEndReached?: () => void;
+  /** When true, a footer spinner is rendered below the virtualizer. */
+  isFetchingMore?: boolean;
 }
 
 export function CardsView({
@@ -31,37 +35,53 @@ export function CardsView({
   renderItem,
   listRef,
   gridRef,
+  onEndReached,
+  isFetchingMore = false,
 }: CardsViewProps) {
+  const footer = isFetchingMore ? (
+    <div className="flex items-center justify-center py-4">
+      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-blue" />
+    </div>
+  ) : null;
+
   if (viewMode === "list") {
     return (
-      <VirtualizedList
-        ref={listRef}
-        items={cards}
-        renderItem={renderItem}
-        getItemKey={(card) => card.id}
-        estimatedSize={180}
-        gap={16}
-        overscan={3}
-        scrollContainerClassName="h-[calc(100vh-280px)]"
-        ariaLabel="Intelligence signals list"
-      />
+      <>
+        <VirtualizedList
+          ref={listRef}
+          items={cards}
+          renderItem={renderItem}
+          getItemKey={(card) => card.id}
+          estimatedSize={180}
+          gap={16}
+          overscan={3}
+          scrollContainerClassName="h-[calc(100vh-280px)]"
+          ariaLabel="Intelligence signals list"
+          onEndReached={onEndReached}
+        />
+        {footer}
+      </>
     );
   }
 
   return (
-    <div className="h-[calc(100vh-400px)] min-h-[500px]">
-      <VirtualizedGrid
-        ref={gridRef}
-        items={cards}
-        getItemKey={(card) => card.id}
-        estimatedRowHeight={280}
-        gap={24}
-        columns={{ sm: 1, md: 2, lg: 3 }}
-        overscan={3}
-        renderItem={(card, index) => (
-          <div className="h-full">{renderItem(card, index)}</div>
-        )}
-      />
-    </div>
+    <>
+      <div className="h-[calc(100vh-400px)] min-h-[500px]">
+        <VirtualizedGrid
+          ref={gridRef}
+          items={cards}
+          getItemKey={(card) => card.id}
+          estimatedRowHeight={280}
+          gap={24}
+          columns={{ sm: 1, md: 2, lg: 3 }}
+          overscan={3}
+          renderItem={(card, index) => (
+            <div className="h-full">{renderItem(card, index)}</div>
+          )}
+          onEndReached={onEndReached}
+        />
+      </div>
+      {footer}
+    </>
   );
 }

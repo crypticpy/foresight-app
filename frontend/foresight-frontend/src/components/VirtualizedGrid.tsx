@@ -62,6 +62,12 @@ export interface VirtualizedGridProps<T> {
   onScroll?: (scrollOffset: number) => void;
   /** Initial scroll offset to restore */
   initialScrollOffset?: number;
+  /** Fires when the user scrolls within `endReachedThreshold` pixels of the
+   *  bottom — used to drive infinite-scroll. Re-fires whenever the user
+   *  re-enters the threshold band after scrolling away. */
+  onEndReached?: () => void;
+  /** Pixel distance from the scroll bottom at which `onEndReached` fires. */
+  endReachedThreshold?: number;
 }
 
 /**
@@ -169,6 +175,8 @@ function VirtualizedGridInner<T>(
     overscan = 3,
     onScroll,
     initialScrollOffset,
+    onEndReached,
+    endReachedThreshold = 480,
   }: VirtualizedGridProps<T>,
   ref: React.ForwardedRef<VirtualizedGridHandle>,
 ): React.ReactElement {
@@ -254,18 +262,42 @@ function VirtualizedGridInner<T>(
     }
   }, [initialScrollOffset, virtualizer]);
 
+  // Track whether the user has scrolled away from the end-reached band, so
+  // we only fire `onEndReached` on each re-entry rather than continuously.
+  const endReachedFiredRef = useRef(false);
+
   // Handle scroll events
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !onScroll) return;
+    if (!container || (!onScroll && !onEndReached)) return;
 
     const handleScroll = () => {
-      onScroll(container.scrollTop);
+      if (onScroll) onScroll(container.scrollTop);
+      if (onEndReached) {
+        const distanceFromEnd =
+          container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distanceFromEnd <= endReachedThreshold) {
+          if (!endReachedFiredRef.current) {
+            endReachedFiredRef.current = true;
+            onEndReached();
+          }
+        } else {
+          endReachedFiredRef.current = false;
+        }
+      }
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
+    // Run once on attach so an initially-underfilled grid (content shorter
+    // than viewport) can still request the next page — without this the user
+    // would have to manually scroll to trigger load-more, which is impossible
+    // when there's nothing to scroll. Guard on `scrollHeight > 0` so we don't
+    // fire spuriously before layout has measured the container.
+    if (container.scrollHeight > 0) {
+      handleScroll();
+    }
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [onScroll]);
+  }, [onScroll, onEndReached, endReachedThreshold]);
 
   // Handle loading state
   if (isLoading && loadingState) {

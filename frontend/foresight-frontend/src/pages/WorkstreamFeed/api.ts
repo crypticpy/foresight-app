@@ -41,9 +41,33 @@ export async function fetchWorkstream(
   return data;
 }
 
+export interface WorkstreamFeedPage {
+  cards: Card[];
+  hasMore: boolean;
+  nextOffset: number;
+}
+
+const DEFAULT_FEED_PAGE_SIZE = 30;
+
+/**
+ * Escape a keyword for inclusion in a Supabase PostgREST `.or()` chain.
+ * - `%` and `_` are PostgreSQL `LIKE` metachars (Supabase `.ilike` does not
+ *   escape them); they would otherwise act as wildcards.
+ * - `,` would be parsed as a delimiter between OR branches.
+ * - `(` and `)` are reserved by the PostgREST OR-expression grammar.
+ * We drop the latter three rather than try to escape them — the workstream
+ * keyword field is short user-controlled text and these characters are
+ * effectively noise inside a substring match.
+ */
+function escapeKeywordForOr(raw: string): string {
+  return raw.replace(/[%_]/g, " ").replace(/[,()]/g, " ").trim();
+}
+
 export async function fetchWorkstreamFeed(
   workstream: Workstream,
-): Promise<Card[]> {
+  offset = 0,
+  limit = DEFAULT_FEED_PAGE_SIZE,
+): Promise<WorkstreamFeedPage> {
   let query = supabase.from("cards").select("*").eq("status", "active");
 
   if (workstream.pillar_ids && workstream.pillar_ids.length > 0) {
@@ -61,22 +85,36 @@ export async function fetchWorkstreamFeed(
     }
   }
 
-  const { data, error } = await query.order("created_at", { ascending: false });
-  if (error) throw new Error(error.message || "Failed to load feed");
-
-  let cards = (data || []) as Card[];
-
-  // Keyword filtering would ideally be server-side via FTS, but the workstream
-  // schema doesn't ship the query syntax — filter in-memory for now.
+  // Server-side keyword filter via PostgREST `.or()` (previously was an
+  // in-memory `.filter()` after fetching every card). For each keyword we
+  // require it to match either `name` OR `summary`; across keywords we OR
+  // the matches so any keyword hit qualifies the card. The result is one
+  // flat OR chain: `name.ilike.%k1%,summary.ilike.%k1%,name.ilike.%k2%,...`
   if (workstream.keywords && workstream.keywords.length > 0) {
-    const needles = workstream.keywords.map((k) => k.toLowerCase());
-    cards = cards.filter((card) => {
-      const haystack = `${card.name} ${card.summary}`.toLowerCase();
-      return needles.some((n) => haystack.includes(n));
-    });
+    const branches = workstream.keywords
+      .map((k) => escapeKeywordForOr(k))
+      .filter((k) => k.length > 0)
+      .flatMap((k) => [`name.ilike.%${k}%`, `summary.ilike.%${k}%`]);
+    if (branches.length > 0) {
+      query = query.or(branches.join(","));
+    }
   }
 
-  return cards;
+  // Over-fetch by 1 row to derive `has_more` without a separate count query.
+  // `.order("id")` as a deterministic secondary sort — bulk-imported cards
+  // can share a created_at value and would otherwise reshuffle between
+  // pages, causing duplicate or skipped rows.
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(offset, offset + limit);
+
+  if (error) throw new Error(error.message || "Failed to load feed");
+
+  const rows = (data || []) as Card[];
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  return { cards: page, hasMore, nextOffset: offset + page.length };
 }
 
 export async function fetchFollowedCardIds(

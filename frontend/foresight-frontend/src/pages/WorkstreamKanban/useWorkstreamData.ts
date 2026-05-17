@@ -7,7 +7,7 @@
  * @module pages/WorkstreamKanban/useWorkstreamData
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { User } from "@supabase/supabase-js";
@@ -18,6 +18,7 @@ import { supabase } from "../../lib/supabase";
 import {
   autoPopulateWorkstream,
   fetchWorkstreamCards,
+  fetchWorkstreamCardsByStatus,
 } from "../../lib/workstream-api";
 import {
   materializeAndResolveTemplateClone,
@@ -35,6 +36,22 @@ const EMPTY_COLUMNS: Record<KanbanStatus, WorkstreamCard[]> = {
   archived: [],
 };
 
+const EMPTY_HAS_MORE: Record<KanbanStatus, boolean> = {
+  inbox: false,
+  working: false,
+  ready: false,
+  archived: false,
+};
+
+const EMPTY_OFFSETS: Record<KanbanStatus, number> = {
+  inbox: 0,
+  working: 0,
+  ready: 0,
+  archived: 0,
+};
+
+const COLUMN_PAGE_SIZE = 50;
+
 export interface UseWorkstreamDataOptions {
   workstreamId: string | undefined;
   user: User | null;
@@ -50,6 +67,15 @@ export function useWorkstreamData({
   const [workstream, setWorkstream] = useState<Workstream | null>(null);
   const [cards, setCards] =
     useState<Record<KanbanStatus, WorkstreamCard[]>>(EMPTY_COLUMNS);
+  const [hasMore, setHasMore] =
+    useState<Record<KanbanStatus, boolean>>(EMPTY_HAS_MORE);
+  const offsetsRef = useRef<Record<KanbanStatus, number>>({ ...EMPTY_OFFSETS });
+  const loadingMoreRef = useRef<Record<KanbanStatus, boolean>>({
+    inbox: false,
+    working: false,
+    ready: false,
+    archived: false,
+  });
   const [loading, setLoading] = useState(true);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -136,8 +162,30 @@ export function useWorkstreamData({
     }
     try {
       setCardsLoading(true);
-      const groupedCards = await fetchWorkstreamCards(token, workstreamId);
-      setCards(groupedCards);
+      const grouped = await fetchWorkstreamCards(
+        token,
+        workstreamId,
+        COLUMN_PAGE_SIZE,
+      );
+      setCards({
+        inbox: grouped.inbox,
+        working: grouped.working,
+        ready: grouped.ready,
+        archived: grouped.archived,
+      });
+      setHasMore(grouped.has_more);
+      offsetsRef.current = {
+        inbox: grouped.inbox.length,
+        working: grouped.working.length,
+        ready: grouped.ready.length,
+        archived: grouped.archived.length,
+      };
+      loadingMoreRef.current = {
+        inbox: false,
+        working: false,
+        ready: false,
+        archived: false,
+      };
     } catch (err) {
       console.error("Error loading cards:", err);
       showToast("error", "Failed to load signals");
@@ -145,6 +193,41 @@ export function useWorkstreamData({
       setCardsLoading(false);
     }
   }, [workstreamId, showToast]);
+
+  const loadMoreColumn = useCallback(
+    async (status: KanbanStatus) => {
+      if (!workstreamId) return;
+      if (loadingMoreRef.current[status]) return;
+      if (!hasMore[status]) return;
+      const token = await getAuthToken();
+      if (!token) return;
+      loadingMoreRef.current[status] = true;
+      try {
+        const page = await fetchWorkstreamCardsByStatus(
+          token,
+          workstreamId,
+          status,
+          offsetsRef.current[status],
+          COLUMN_PAGE_SIZE,
+        );
+        // Dedupe by id — defensive against rare timing where a card was
+        // added/moved between pages.
+        setCards((prev) => {
+          const seen = new Set(prev[status].map((c) => c.id));
+          const incoming = page.cards.filter((c) => !seen.has(c.id));
+          return { ...prev, [status]: [...prev[status], ...incoming] };
+        });
+        offsetsRef.current[status] = page.next_offset;
+        setHasMore((prev) => ({ ...prev, [status]: page.has_more }));
+      } catch (err) {
+        console.error(`Error loading more ${status} cards:`, err);
+        showToast("error", "Failed to load more signals");
+      } finally {
+        loadingMoreRef.current[status] = false;
+      }
+    },
+    [workstreamId, hasMore, showToast],
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -215,6 +298,8 @@ export function useWorkstreamData({
     workstream,
     cards,
     setCards,
+    hasMore,
+    loadMoreColumn,
     loading,
     cardsLoading,
     refreshing,

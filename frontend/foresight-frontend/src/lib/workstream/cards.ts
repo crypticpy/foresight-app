@@ -14,6 +14,7 @@ import {
   type GroupedWorkstreamCards,
   type KanbanStatus,
   type WorkstreamCard,
+  type WorkstreamCardsColumnPage,
 } from "./shared";
 
 // ----------------------------------------------------------------------------
@@ -32,36 +33,65 @@ export async function listWorkstreams<
 }
 
 /**
- * Fetches all cards in a workstream, grouped by Kanban status.
- * Cards within each status group are sorted by position.
+ * Fetches the first page of cards per Kanban column.
+ *
+ * Each column is capped at `limit` rows (default 50, max 200). The returned
+ * `has_more` map signals which columns still have additional rows that can be
+ * fetched via {@link fetchWorkstreamCardsByStatus}.
  *
  * @param token - Bearer authentication token
  * @param workstreamId - UUID of the workstream
- * @returns Cards grouped by status for Kanban display
- *
- * @example
- * ```typescript
- * const grouped = await fetchWorkstreamCards(token, workstreamId);
- * console.log(`${grouped.inbox.length} cards in inbox`);
- * ```
+ * @param limit - Optional per-column page size (default 50, max 200)
  */
 export async function fetchWorkstreamCards(
   token: string,
   workstreamId: string,
+  limit?: number,
 ): Promise<GroupedWorkstreamCards> {
-  // Backend returns already grouped response
+  // Use explicit-undefined check so caller-passed `0` surfaces backend
+  // validation (limit must be ≥ 1) instead of being silently dropped.
+  const qs = limit !== undefined ? `?limit=${limit}` : "";
   const response = await apiRequest<GroupedWorkstreamCards>(
-    `/api/v1/me/workstreams/${workstreamId}/cards`,
+    `/api/v1/me/workstreams/${workstreamId}/cards${qs}`,
     token,
   );
 
-  // Ensure all stage keys exist with proper defaults.
+  // Ensure all stage keys exist with proper defaults — the backend always
+  // emits them, but we normalize defensively for older response shapes
+  // (e.g. fixture-driven tests).
   return {
     inbox: response.inbox || [],
     working: response.working || [],
     ready: response.ready || [],
     archived: response.archived || [],
+    has_more: {
+      inbox: response.has_more?.inbox ?? false,
+      working: response.has_more?.working ?? false,
+      ready: response.has_more?.ready ?? false,
+      archived: response.has_more?.archived ?? false,
+    },
   };
+}
+
+/**
+ * Load more cards for a single kanban column starting at `offset`.
+ *
+ * Used by the kanban board's per-column infinite scroll when the user reaches
+ * the bottom of a column whose `has_more` was true.
+ */
+export async function fetchWorkstreamCardsByStatus(
+  token: string,
+  workstreamId: string,
+  status: KanbanStatus,
+  offset: number,
+  limit?: number,
+): Promise<WorkstreamCardsColumnPage> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (limit !== undefined) params.set("limit", String(limit));
+  return apiRequest<WorkstreamCardsColumnPage>(
+    `/api/v1/me/workstreams/${workstreamId}/cards/by-status/${status}?${params.toString()}`,
+    token,
+  );
 }
 
 // ----------------------------------------------------------------------------

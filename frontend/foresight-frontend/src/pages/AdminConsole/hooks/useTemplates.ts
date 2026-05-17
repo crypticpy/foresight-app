@@ -25,6 +25,17 @@ export interface TemplateCounts {
   ready: number;
   archived: number;
   total: number;
+  /**
+   * Per-column flag: true when the backend still had additional rows beyond
+   * the fetched window. The admin UI renders "{n}+" on a true flag so a
+   * 250-card column doesn't show as "200" without explanation.
+   */
+  has_more: {
+    inbox: boolean;
+    working: boolean;
+    ready: boolean;
+    archived: boolean;
+  };
 }
 
 export interface TemplateRow {
@@ -32,12 +43,22 @@ export interface TemplateRow {
   counts: TemplateCounts | null;
 }
 
+// Mirrors backend `KANBAN_COLUMN_MAX_LIMIT` in
+// `app/routers/workstream_kanban.py`. Templates can hold hundreds of cards;
+// the default page size of 50 is too small for an admin counts view and was
+// silently capping totals before the page-load PR added an explicit limit.
+const TEMPLATE_COUNT_LIMIT = 200;
+
 async function fetchCounts(
   token: string,
   workstreamId: string,
 ): Promise<TemplateCounts | null> {
   try {
-    const grouped = await fetchWorkstreamCards(token, workstreamId);
+    const grouped = await fetchWorkstreamCards(
+      token,
+      workstreamId,
+      TEMPLATE_COUNT_LIMIT,
+    );
     return {
       inbox: grouped.inbox.length,
       working: grouped.working.length,
@@ -48,6 +69,12 @@ async function fetchCounts(
         grouped.working.length +
         grouped.ready.length +
         grouped.archived.length,
+      has_more: {
+        inbox: grouped.has_more.inbox,
+        working: grouped.has_more.working,
+        ready: grouped.has_more.ready,
+        archived: grouped.has_more.archived,
+      },
     };
   } catch {
     return null;

@@ -48,6 +48,7 @@ import {
   useFollowedCards,
   useSearchHistory,
 } from "./hooks";
+import type { QualityFilter } from "./hooks/useCardLoader";
 import type { Card, FilterState, SortOption } from "./types";
 
 const Discover: React.FC = () => {
@@ -68,7 +69,7 @@ const Discover: React.FC = () => {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [useSemanticSearch, setUseSemanticSearch] = useState<boolean>(false);
-  const [qualityFilter, setQualityFilter] = useState<string>("all");
+  const [qualityFilter, setQualityFilter] = useState<QualityFilter>("all");
 
   // Modal + sidebar state --------------------------------------------------
   const [showSaveSearchModal, setShowSaveSearchModal] = useState(false);
@@ -143,6 +144,7 @@ const Discover: React.FC = () => {
         relevanceMin,
         noveltyMin,
         useSemanticSearch,
+        qualityFilter,
       }),
     [
       searchTerm,
@@ -155,6 +157,7 @@ const Discover: React.FC = () => {
       relevanceMin,
       noveltyMin,
       useSemanticSearch,
+      qualityFilter,
     ],
   );
 
@@ -177,6 +180,7 @@ const Discover: React.FC = () => {
       confidenceFilter,
       issueTagFilter,
       goalFilter,
+      qualityFilter,
     }),
     [
       debouncedFilters,
@@ -192,34 +196,41 @@ const Discover: React.FC = () => {
       confidenceFilter,
       issueTagFilter,
       goalFilter,
+      qualityFilter,
     ],
   );
 
-  const { cards, pillars, stages, loading, error, setError, reload } =
-    useCardLoader({
-      filters: loaderFilters,
-      currentQueryConfig,
-      followedCardIds,
-      recordSearch,
-    });
+  const {
+    cards,
+    pillars,
+    stages,
+    loading,
+    isFetchingMore,
+    hasMore,
+    error,
+    setError,
+    reload,
+    loadMore,
+  } = useCardLoader({
+    filters: loaderFilters,
+    currentQueryConfig,
+    followedCardIds,
+    recordSearch,
+  });
 
-  // Apply client-side quality tier filter ----------------------------------
-  const filteredCards = useMemo(() => {
-    if (qualityFilter === "all") return cards;
-    return cards.filter((card) => {
-      const score = card.signal_quality_score;
-      switch (qualityFilter) {
-        case "high":
-          return score != null && score >= 75;
-        case "moderate":
-          return score != null && score >= 50 && score < 75;
-        case "low":
-          return score == null || score < 50;
-        default:
-          return true;
-      }
-    });
-  }, [cards, qualityFilter]);
+  // Only fire `loadMore` when more pages remain and the page isn't already
+  // mid-fetch. Guarding here keeps the virtualizer's scroll callback wired
+  // to a no-op once we've exhausted the result set.
+  const handleEndReached = useCallback(() => {
+    if (!hasMore || loading || isFetchingMore) return;
+    loadMore();
+  }, [hasMore, loading, isFetchingMore, loadMore]);
+
+  // Quality-tier filtering now happens server-side inside `useCardLoader`
+  // (see the qualityFilter branch in fetchPage). Keeping a single alias here
+  // means downstream call sites (`filteredCards.length`, `cards={filteredCards}`)
+  // stay readable without re-plumbing every reference.
+  const filteredCards = cards;
 
   // Mirror ?confidence=high onto the local Quality chip so the UI shows the
   // active state. Driving qualityFilter purely from URL would re-architect
@@ -247,6 +258,17 @@ const Discover: React.FC = () => {
       setImpactMin(filters.score_thresholds?.impact_score?.min ?? 0);
       setRelevanceMin(filters.score_thresholds?.relevance_score?.min ?? 0);
       setNoveltyMin(filters.score_thresholds?.novelty_score?.min ?? 0);
+      // Restore the saved quality tier; default to "all" when the payload
+      // predates the field or stored an unknown value.
+      const savedQuality = filters.quality_filter;
+      setQualityFilter(
+        savedQuality === "high" ||
+          savedQuality === "moderate" ||
+          savedQuality === "low" ||
+          savedQuality === "all"
+          ? savedQuality
+          : "all",
+      );
 
       setSearchParams({});
       setIsSidebarOpen(false);
@@ -318,6 +340,7 @@ const Discover: React.FC = () => {
     setRelevanceMin(0);
     setNoveltyMin(0);
     setUseSemanticSearch(false);
+    setQualityFilter("all");
   };
 
   const clearLensFilters = () => {
@@ -465,6 +488,8 @@ const Discover: React.FC = () => {
             renderItem={renderCardItem}
             listRef={virtualizedListRef}
             gridRef={virtualizedGridRef}
+            onEndReached={handleEndReached}
+            isFetchingMore={isFetchingMore}
           />
         ) : null}
 

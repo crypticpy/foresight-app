@@ -6,9 +6,10 @@
  * @module pages/WorkstreamFeed
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Edit, Filter, Loader2 } from "lucide-react";
+import { VirtualizedGrid } from "../../components/VirtualizedGrid";
 import { WorkstreamChatPanel } from "../../components/WorkstreamChatPanel";
 import { useToast } from "../../components/ui/Toast";
 import { useAuthContext } from "../../hooks/useAuthContext";
@@ -44,7 +45,15 @@ export default function WorkstreamFeed() {
   );
   const [loading, setLoading] = useState(true);
   const [cardsLoading, setCardsLoading] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Per-page cursor for the active workstream + a token so a late page from
+  // a previous workstream (e.g. after `loadWorkstream` swaps it) cannot
+  // overwrite the freshly loaded one.
+  const feedOffsetRef = useRef(0);
+  const feedTokenRef = useRef(0);
 
   const [exportLoading, setExportLoading] = useState<"pdf" | "pptx" | null>(
     null,
@@ -108,18 +117,61 @@ export default function WorkstreamFeed() {
 
   const loadFeed = useCallback(async () => {
     if (!workstream) return;
+    const token = ++feedTokenRef.current;
+    // Reset every piece of feed state SYNCHRONOUSLY before the await so that:
+    //   1. an in-flight loadMoreFeed call sees `token !== feedTokenRef.current`
+    //      at its early return AND has its own setIsFetchingMore(false) cleanup
+    //      superseded by ours — otherwise `isFetchingMore` could be stuck true
+    //      when the user switches workstreams mid-load, permanently blocking
+    //      infinite scroll on the new feed.
+    //   2. if the fetch fails, the user sees an empty feed for the NEW
+    //      workstream rather than stale cards from the old one.
+    setCardsLoading(true);
+    setIsFetchingMore(false);
+    setCards([]);
+    setHasMore(false);
+    feedOffsetRef.current = 0;
     try {
-      setCardsLoading(true);
-      const result = await fetchWorkstreamFeed(workstream);
-      setCards(result);
+      const page = await fetchWorkstreamFeed(workstream, 0);
+      if (token !== feedTokenRef.current) return;
+      setCards(page.cards);
+      setHasMore(page.hasMore);
+      feedOffsetRef.current = page.nextOffset;
     } catch (err) {
+      if (token !== feedTokenRef.current) return;
       pushToast(err instanceof Error ? err.message : "Failed to load feed", {
         variant: "error",
       });
     } finally {
-      setCardsLoading(false);
+      if (token === feedTokenRef.current) setCardsLoading(false);
     }
   }, [workstream, pushToast]);
+
+  const loadMoreFeed = useCallback(async () => {
+    if (!workstream) return;
+    if (cardsLoading || isFetchingMore || !hasMore) return;
+    const token = feedTokenRef.current;
+    setIsFetchingMore(true);
+    try {
+      const page = await fetchWorkstreamFeed(workstream, feedOffsetRef.current);
+      if (token !== feedTokenRef.current) return;
+      setCards((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        const incoming = page.cards.filter((c) => !seen.has(c.id));
+        return [...prev, ...incoming];
+      });
+      feedOffsetRef.current = page.nextOffset;
+      setHasMore(page.hasMore);
+    } catch (err) {
+      if (token !== feedTokenRef.current) return;
+      pushToast(
+        err instanceof Error ? err.message : "Failed to load more signals",
+        { variant: "error" },
+      );
+    } finally {
+      if (token === feedTokenRef.current) setIsFetchingMore(false);
+    }
+  }, [workstream, cardsLoading, isFetchingMore, hasMore, pushToast]);
 
   const loadFollowed = useCallback(async () => {
     if (!user) return;
@@ -302,19 +354,35 @@ export default function WorkstreamFeed() {
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Showing {cards.length} {cards.length === 1 ? "card" : "cards"}
+              {hasMore ? "+" : ""}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {cards.map((card) => (
-              <CardItem
-                key={card.id}
-                card={card}
-                isFollowed={followedCardIds.has(card.id)}
-                onToggleFollow={handleToggleFollow}
-              />
-            ))}
+          <div className="h-[calc(100vh-360px)] min-h-[500px]">
+            <VirtualizedGrid
+              items={cards}
+              getItemKey={(card) => card.id}
+              estimatedRowHeight={280}
+              gap={24}
+              columns={{ sm: 1, md: 2, lg: 3 }}
+              overscan={3}
+              onEndReached={loadMoreFeed}
+              renderItem={(card) => (
+                <div className="h-full">
+                  <CardItem
+                    card={card}
+                    isFollowed={followedCardIds.has(card.id)}
+                    onToggleFollow={handleToggleFollow}
+                  />
+                </div>
+              )}
+            />
           </div>
+          {isFetchingMore && (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-6 w-6 animate-spin text-brand-blue" />
+            </div>
+          )}
         </>
       )}
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.authz import require_paid_user, require_workstream_access
 from app.clone_service import record_dismissal_if_clone
@@ -16,6 +16,7 @@ from app.models.workstream import (
     WorkstreamCardWithDetails,
     WorkstreamCardCreate,
     WorkstreamCardUpdate,
+    WorkstreamCardsColumnPage,
     WorkstreamCardsGroupedResponse,
     WorkstreamCardWatchingUpdate,
     BulkCardActionRequest,
@@ -109,69 +110,155 @@ def _row_to_card_with_details(item: Dict[str, Any]) -> WorkstreamCardWithDetails
     )
 
 
+KANBAN_STATUSES = ("inbox", "working", "ready", "archived")
+KANBAN_COLUMN_DEFAULT_LIMIT = 50
+KANBAN_COLUMN_MAX_LIMIT = 200
+
+
+async def _fetch_status_page(
+    workstream_id: str, status: str, offset: int, limit: int
+) -> tuple[list[dict], bool]:
+    """Fetch one kanban column page; returns (rows, has_more)."""
+    # Fetch limit+1 to derive has_more without a separate count query.
+    # `.order("id")` as a deterministic secondary sort — position ties on a
+    # large/freshly-imported column would otherwise let rows shift between
+    # pages, causing duplicate or skipped cards.
+    response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
+        .select("*, cards(*)")
+        .eq("workstream_id", workstream_id)
+        .eq("status", status)
+        .order("position")
+        .order("id")
+        .range(offset, offset + limit)
+        .execute()
+    )
+    rows = response.data or []
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+    return rows, has_more
+
+
+async def _enrich_rows_with_collab(rows: list[dict], user_id: str | None) -> None:
+    """Mutate `rows` in place, replacing joined `cards` payload with the
+    collab-enriched version (followers/artifacts/etc)."""
+    joined_cards = [row.get("cards") for row in rows if row.get("cards")]
+    if not joined_cards:
+        return
+    enriched_cards = await asyncio.to_thread(
+        enrich_cards_with_collab,
+        supabase,
+        joined_cards,
+        user_id,
+    )
+    enriched_by_id = {card["id"]: card for card in enriched_cards}
+    for row in rows:
+        card = row.get("cards")
+        if card and card.get("id") in enriched_by_id:
+            row["cards"] = enriched_by_id[card["id"]]
+
+
 @router.get(
     "/me/workstreams/{workstream_id}/cards",
     response_model=WorkstreamCardsGroupedResponse,
 )
 async def get_workstream_cards(
-    workstream_id: str, current_user: dict = Depends(get_current_user)
+    workstream_id: str,
+    limit: int = Query(
+        KANBAN_COLUMN_DEFAULT_LIMIT,
+        ge=1,
+        le=KANBAN_COLUMN_MAX_LIMIT,
+        description="Max cards per column on the initial load.",
+    ),
+    current_user: dict = Depends(get_current_user),
 ):
     """
-    Get all cards in a workstream grouped by stage (Kanban view).
+    Get the first page of cards per kanban column.
 
     Stages (v2): inbox / working / ready / archived. Watching is a card
     attribute (`is_watching`), not a stage. See
     docs/16_PRD_Kanban_Redesign_and_Sharing.md.
 
+    Each column returns at most ``limit`` cards (default 50, max 200). The
+    response's ``has_more`` map signals which columns still have additional
+    rows; clients fetch them via
+    ``GET /me/workstreams/{id}/cards/by-status/{status}?offset=N&limit=M``.
+
     Args:
         workstream_id: UUID of the workstream
+        limit: Per-column page size cap
         current_user: Authenticated user (injected)
-
-    Returns:
-        WorkstreamCardsGroupedResponse with cards grouped by status
 
     Raises:
         HTTPException 404: Workstream not found or not owned by user
     """
     _require_workstream_read(workstream_id, current_user)
 
-    # Fetch all cards with joined card details, ordered by position
-    cards_response = await asyncio.to_thread(
-        lambda: supabase.table("workstream_cards")
-        .select("*, cards(*)")
-        .eq("workstream_id", workstream_id)
-        .order("position")
-        .execute()
+    pages = await asyncio.gather(
+        *[
+            _fetch_status_page(workstream_id, status, 0, limit)
+            for status in KANBAN_STATUSES
+        ]
     )
-    rows = cards_response.data or []
-    joined_cards = [row.get("cards") for row in rows if row.get("cards")]
-    if joined_cards:
-        enriched_cards = await asyncio.to_thread(
-            enrich_cards_with_collab,
-            supabase,
-            joined_cards,
-            current_user.get("id"),
-        )
-        enriched_by_id = {card["id"]: card for card in enriched_cards}
-        for row in rows:
-            card = row.get("cards")
-            if card and card.get("id") in enriched_by_id:
-                row["cards"] = enriched_by_id[card["id"]]
+
+    # Collect rows for batched collab enrichment so we issue one followers/
+    # artifacts roundtrip instead of four.
+    all_rows: list[dict] = []
+    rows_by_status: Dict[str, list[dict]] = {}
+    has_more_by_status: Dict[str, bool] = {}
+    for status, (rows, has_more) in zip(KANBAN_STATUSES, pages):
+        rows_by_status[status] = rows
+        has_more_by_status[status] = has_more
+        all_rows.extend(rows)
+
+    await _enrich_rows_with_collab(all_rows, current_user.get("id"))
 
     grouped: Dict[str, List[WorkstreamCardWithDetails]] = {
-        "inbox": [],
-        "working": [],
-        "ready": [],
-        "archived": [],
+        status: [_row_to_card_with_details(item) for item in rows_by_status[status]]
+        for status in KANBAN_STATUSES
     }
 
-    for item in rows:
-        card_status = item.get("status", "inbox")
-        if card_status not in grouped:
-            card_status = "inbox"
-        grouped[card_status].append(_row_to_card_with_details(item))
+    return WorkstreamCardsGroupedResponse(
+        **grouped,
+        has_more=has_more_by_status,
+    )
 
-    return WorkstreamCardsGroupedResponse(**grouped)
+
+@router.get(
+    "/me/workstreams/{workstream_id}/cards/by-status/{status}",
+    response_model=WorkstreamCardsColumnPage,
+)
+async def get_workstream_cards_by_status(
+    workstream_id: str,
+    status: str,
+    offset: int = Query(0, ge=0, description="Number of cards to skip."),
+    limit: int = Query(
+        KANBAN_COLUMN_DEFAULT_LIMIT,
+        ge=1,
+        le=KANBAN_COLUMN_MAX_LIMIT,
+        description="Page size for this column.",
+    ),
+    current_user: dict = Depends(get_current_user),
+):
+    """Paginated load-more for a single kanban column."""
+    if status not in KANBAN_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of: {', '.join(KANBAN_STATUSES)}",
+        )
+
+    _require_workstream_read(workstream_id, current_user)
+
+    rows, has_more = await _fetch_status_page(workstream_id, status, offset, limit)
+    await _enrich_rows_with_collab(rows, current_user.get("id"))
+
+    return WorkstreamCardsColumnPage(
+        status=status,
+        cards=[_row_to_card_with_details(item) for item in rows],
+        has_more=has_more,
+        next_offset=offset + len(rows),
+    )
 
 
 @router.post(

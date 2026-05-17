@@ -7,7 +7,7 @@
  * toolbar now. The column header is purely informational + drop target.
  */
 
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -49,6 +49,10 @@ export interface KanbanColumnProps {
   selectedCardIds?: Set<string>;
   /** Toggle a card's membership in the bulk-action selection. */
   onToggleSelect?: (cardId: string) => void;
+  /** When true, an IntersectionObserver sentinel triggers `onLoadMore`. */
+  hasMore?: boolean;
+  /** Called when the column's bottom sentinel scrolls into view. */
+  onLoadMore?: () => void;
   /** Optional additional class names for responsive board layouts. */
   className?: string;
 }
@@ -136,6 +140,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   cardActions,
   selectedCardIds,
   onToggleSelect,
+  hasMore = false,
+  onLoadMore,
   className,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
@@ -179,6 +185,24 @@ export const KanbanColumn = memo(function KanbanColumn({
   });
 
   const virtualItems = virtualizer.getVirtualItems();
+
+  // Infinite-scroll sentinel — fires `onLoadMore` when the bottom marker
+  // enters the column's scroll area (with a 240px head start). Re-binds
+  // when the deps change so it picks up the new offset on each page.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    const root = scrollParentRef.current;
+    if (!node || !root || !hasMore || !onLoadMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore();
+      },
+      { root, rootMargin: "240px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, cards.length]);
 
   return (
     <div
@@ -281,6 +305,14 @@ export const KanbanColumn = memo(function KanbanColumn({
             <EmptyColumnState columnId={id} hint={columnDef?.emptyStateHint} />
           )}
         </SortableContext>
+        {hasMore && cards.length > 0 && (
+          <div
+            ref={sentinelRef}
+            className="h-4 w-full"
+            aria-hidden="true"
+            data-kanban-loadmore-sentinel
+          />
+        )}
       </div>
     </div>
   );

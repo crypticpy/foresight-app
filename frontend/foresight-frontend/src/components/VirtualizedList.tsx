@@ -70,6 +70,12 @@ export interface VirtualizedListProps<T> {
   ariaLabel?: string;
   /** Test ID for testing */
   testId?: string;
+  /** Fires when the user scrolls within `endReachedThreshold` pixels of the
+   *  bottom — used to drive infinite-scroll. Re-fires whenever the user
+   *  re-enters the threshold band after scrolling away. */
+  onEndReached?: () => void;
+  /** Pixel distance from the scroll bottom at which `onEndReached` fires. */
+  endReachedThreshold?: number;
 }
 
 /**
@@ -139,6 +145,8 @@ function VirtualizedListInner<T>(
     scrollMargin = 0,
     ariaLabel,
     testId,
+    onEndReached,
+    endReachedThreshold = 480,
   } = props;
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -276,6 +284,39 @@ function VirtualizedListInner<T>(
     },
     [onItemClick, onFocusedIndexChange],
   );
+
+  // Infinite-scroll sentinel. Tracks whether the user has scrolled out of the
+  // end-reached band so `onEndReached` re-fires only when they re-enter it
+  // (rather than continuously while the scrollbar sits near the bottom).
+  const endReachedFiredRef = useRef(false);
+  useEffect(() => {
+    const container = parentRef.current;
+    if (!container || !onEndReached) return;
+
+    const handleScroll = () => {
+      const distanceFromEnd =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromEnd <= endReachedThreshold) {
+        if (!endReachedFiredRef.current) {
+          endReachedFiredRef.current = true;
+          onEndReached();
+        }
+      } else {
+        endReachedFiredRef.current = false;
+      }
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    // Run once on attach so an initially-underfilled list (content shorter
+    // than viewport) can still trigger `onEndReached` — without this short
+    // first pages would deadlock pagination because there's nothing to
+    // scroll. Guard on `scrollHeight > 0` so we don't fire before layout has
+    // measured the container.
+    if (container.scrollHeight > 0) {
+      handleScroll();
+    }
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [onEndReached, endReachedThreshold]);
 
   // Loading state
   if (isLoading) {
