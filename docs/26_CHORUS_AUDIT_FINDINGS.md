@@ -1,7 +1,7 @@
 # Chorus Audit — Findings & PR Plan
 
 **Run date**: 2026-05-17
-**Chorus chat**: `019E369FDAB3B1088A57C13A2DD2332C` — http://127.0.0.1:5050/runs/bug-hunting-and-code-quality-audit-of-the-foresight-codebase
+**Chorus chat**: `019E369FDAB3B1088A57C13A2DD2332C` — local Chorus UI at `http://127.0.0.1:5050/runs/bug-hunting-and-code-quality-audit-of-the-foresight-codebase` (local-only reference; not reachable externally — the chat id above is the canonical handle if you need to look up the run elsewhere).
 **Template**: `review-only` (6 reviewers, single pass)
 **Base commit**: `738456f` (post-merge of PR #124 perf/page-load-improvements)
 **Verdict**: `request_changes` — 1/6 nominal agreement (the only reviewer that "approved" was reviewing the brief itself, not the code)
@@ -121,7 +121,7 @@ Small, focused PR.
 - [ ] `frontend/foresight-frontend/src/pages/Methodology/sections/Pipeline.tsx:32` — mentions Tavily in pipeline doc. **[codex-cli-0]**
 - [ ] `frontend/foresight-frontend/src/lib/discovery/runs.ts:17` — TypeDoc comment uses `tavily` as a source-type example. **[claude-code-4]**
 
-After this PR, grep should return zero hits for `tavily` and `firecrawl` (case-insensitive) outside of changelog/history docs.
+After this PR, grep should return zero hits for `tavily` and `firecrawl` (case-insensitive) outside of changelog, audit findings, and other historical docs (this file itself preserves those terms for context).
 
 ---
 

@@ -193,7 +193,7 @@ async def get_workstream_cards(
     Raises:
         HTTPException 404: Workstream not found or not owned by user
     """
-    _require_workstream_read(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_read, workstream_id, current_user)
 
     pages = await asyncio.gather(
         *[
@@ -248,7 +248,7 @@ async def get_workstream_cards_by_status(
             detail=f"Invalid status. Must be one of: {', '.join(KANBAN_STATUSES)}",
         )
 
-    _require_workstream_read(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_read, workstream_id, current_user)
 
     rows, has_more = await _fetch_status_page(workstream_id, status, offset, limit)
     await _enrich_rows_with_collab(rows, current_user.get("id"))
@@ -289,7 +289,7 @@ async def add_card_to_workstream(
         HTTPException 403: Not authorized
         HTTPException 409: Card already in workstream
     """
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     # Verify card exists
     card_response = await asyncio.to_thread(
@@ -381,7 +381,7 @@ async def update_workstream_card(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized
     """
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     # Fetch the workstream card by its junction table ID (card_id param is actually workstream_card.id)
     # The frontend passes the workstream_card junction table ID, not the underlying card UUID
@@ -502,7 +502,7 @@ async def remove_card_from_workstream(
         HTTPException 404: Workstream or card not found
         HTTPException 403: Not authorized
     """
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     # Pull the row first so we can read its underlying card_id (for the
     # dismissal tombstone) and confirm the workstream/junction match.
@@ -568,7 +568,7 @@ async def trigger_card_deep_dive(
         HTTPException 429: Daily rate limit exceeded
     """
     require_paid_user(current_user)
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = await asyncio.to_thread(
@@ -640,7 +640,7 @@ async def trigger_card_quick_update(
         HTTPException 403: Not authorized
     """
     require_paid_user(current_user)
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     # Verify card exists in workstream (card_id param is actually workstream_card.id - the junction table ID)
     wsc_response = await asyncio.to_thread(
@@ -730,7 +730,7 @@ async def get_workstream_research_status(
         HTTPException 404: Workstream not found
         HTTPException 403: Not authorized
     """
-    _require_workstream_read(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_read, workstream_id, current_user)
 
     # Get all card_ids in this workstream
     wsc_response = await asyncio.to_thread(
@@ -837,7 +837,7 @@ async def toggle_workstream_card_watching(
     current_user: dict = Depends(get_current_user),
 ):
     """Toggle the `is_watching` flag on a workstream card."""
-    _require_workstream_edit(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     wsc_response = await asyncio.to_thread(
         lambda: supabase.table("workstream_cards")
@@ -888,7 +888,7 @@ async def get_workstream_card_share_payload(
     so the body wording stays consistent regardless of which surface triggers
     the share.
     """
-    _require_workstream_read(workstream_id, current_user)
+    await asyncio.to_thread(_require_workstream_read, workstream_id, current_user)
 
     wsc_response = await asyncio.to_thread(
         lambda: supabase.table("workstream_cards")
@@ -947,7 +947,7 @@ async def bulk_workstream_card_action(
     export_raw) are stubbed out for now and return 501.
     """
     if body.action in {"copy_share_links", "email_selection"}:
-        _require_workstream_read(workstream_id, current_user)
+        await asyncio.to_thread(_require_workstream_read, workstream_id, current_user)
     else:
         if body.action in {
             "rerun_research",
@@ -956,7 +956,7 @@ async def bulk_workstream_card_action(
             "export_raw",
         }:
             require_paid_user(current_user)
-        _require_workstream_edit(workstream_id, current_user)
+        await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
     rows_response = await asyncio.to_thread(
         lambda: supabase.table("workstream_cards")
