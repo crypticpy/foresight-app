@@ -16,6 +16,7 @@ from typing import List, Optional
 
 from app.ai_service import AnalysisResult, TriageResult
 from app.openai_provider import (
+    EMBEDDING_DIM,
     azure_openai_async_embedding_client,
     get_embedding_deployment,
 )
@@ -39,12 +40,16 @@ async def _generate_embedding(text: str) -> List[float]:
             timeout=60,
         )
         return resp.data[0].embedding
+    except asyncio.CancelledError:
+        # Cooperative cancellation must propagate so the surrounding task
+        # actually shuts down — don't swallow it as a generic API failure.
+        raise
     except Exception:
         logger.error(
             "Embedding generation failed; falling back to zero vector",
             exc_info=True,
         )
-        return [0.0] * 1536
+        return [0.0] * EMBEDDING_DIM
 
 
 def _reconstruct_processed_source(ds: dict) -> Optional[ProcessedSource]:
