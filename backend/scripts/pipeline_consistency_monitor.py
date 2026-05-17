@@ -229,7 +229,7 @@ class PipelineConsistencyMonitor:
     def generate_report(self, days: int = 7) -> ConsistencyReport:
         """Generate a comprehensive 7-day consistency report."""
         report = ConsistencyReport(
-            report_date=datetime.now(timezone.utc).isoformat()[:19] + "Z",
+            report_date=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             days_monitored=days
         )
 
