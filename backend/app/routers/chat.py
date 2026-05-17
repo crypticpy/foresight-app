@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
-from app.authz import is_admin
+from app.authz import is_admin, require_workstream_access
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -225,6 +225,17 @@ async def chat_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"scope_id is required for '{request.scope}' scope.",
+        )
+
+    # Gate workstream scope behind ownership before any RAG/LLM work runs.
+    # Cards (signal scope) are a shared global library per product design.
+    if request.scope == "workstream":
+        await asyncio.to_thread(
+            require_workstream_access,
+            supabase,
+            request.scope_id,
+            current_user,
+            "read",
         )
 
     # Convert MentionRef models to dicts for the service layer
@@ -549,6 +560,15 @@ async def chat_suggestions(
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
         )
 
+    if scope == "workstream" and scope_id:
+        await asyncio.to_thread(
+            require_workstream_access,
+            supabase,
+            scope_id,
+            current_user,
+            "read",
+        )
+
     try:
         return await chat_generate_suggestions(
             scope=scope,
@@ -588,6 +608,15 @@ async def smart_chat_suggestions(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid scope. Must be 'signal', 'workstream', or 'global'.",
+        )
+
+    if scope == "workstream" and scope_id:
+        await asyncio.to_thread(
+            require_workstream_access,
+            supabase,
+            scope_id,
+            current_user,
+            "read",
         )
 
     try:
