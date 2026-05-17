@@ -904,16 +904,23 @@ async def search_mentions(
                 # Empty set for a non-admin = nothing to show; admin sentinel
                 # (None) skips the filter entirely.
                 if accessible_ids is None or accessible_ids:
-                    query = (
-                        supabase.table("workstreams")
-                        .select("id, name")
-                        .ilike("name", search_term)
-                        .order("name")
-                        .limit(remaining)
-                    )
-                    if accessible_ids is not None:
-                        query = query.in_("id", list(accessible_ids))
-                    ws_result = query.execute()
+                    def _run_workstream_query():
+                        # Wrap the sync Supabase build+execute in to_thread to
+                        # avoid blocking the event loop (the ACL lookup above
+                        # already offloads its query; this kept the actual
+                        # autocomplete read on the loop).
+                        query = (
+                            supabase.table("workstreams")
+                            .select("id, name")
+                            .ilike("name", search_term)
+                            .order("name")
+                            .limit(remaining)
+                        )
+                        if accessible_ids is not None:
+                            query = query.in_("id", list(accessible_ids))
+                        return query.execute()
+
+                    ws_result = await asyncio.to_thread(_run_workstream_query)
                     for ws in ws_result.data or []:
                         results.append(
                             {

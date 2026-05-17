@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app import rag_engine as rag_engine_module
+from app.authz import accessible_workstream_ids
 from app.rag_engine import RAGEngine
 from app.routers import chat as chat_router
 
@@ -168,10 +169,21 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 
+def _acl(stub, user_id, is_admin=False):
+    """Compute the workstream ACL the way `_resolve_mentions` does."""
+    if is_admin:
+        return None
+    if not user_id:
+        return set()
+    return accessible_workstream_ids(stub, user_id, is_admin_user=False)
+
+
 def test_lookup_workstream_by_id_returns_owned(stub):
     engine = RAGEngine(stub)
     ws = _run(
-        engine._lookup_workstream(OWNER_WS_ID, "", user_id=OWNER_ID, is_admin=False)
+        engine._lookup_workstream(
+            OWNER_WS_ID, "", accessible_ids=_acl(stub, OWNER_ID)
+        )
     )
     assert ws is not None
     assert ws["id"] == OWNER_WS_ID
@@ -180,7 +192,9 @@ def test_lookup_workstream_by_id_returns_owned(stub):
 def test_lookup_workstream_by_id_blocks_cross_user(stub):
     engine = RAGEngine(stub)
     ws = _run(
-        engine._lookup_workstream(VICTIM_WS_ID, "", user_id=OWNER_ID, is_admin=False)
+        engine._lookup_workstream(
+            VICTIM_WS_ID, "", accessible_ids=_acl(stub, OWNER_ID)
+        )
     )
     # Owner of OWNER_WS_ID has no access to ATTACKER's private workstream.
     assert ws is None
@@ -191,7 +205,7 @@ def test_lookup_workstream_by_title_blocks_cross_user(stub):
     # Owner probes the attacker's private workstream by name fragment.
     ws = _run(
         engine._lookup_workstream(
-            None, "secret confidential", user_id=OWNER_ID, is_admin=False
+            None, "secret confidential", accessible_ids=_acl(stub, OWNER_ID)
         )
     )
     assert ws is None
@@ -202,7 +216,7 @@ def test_lookup_workstream_by_title_returns_member_shared(stub):
     # OWNER_ID is a member of SHARED_WS_ID. Title lookup should resolve it.
     ws = _run(
         engine._lookup_workstream(
-            None, "shared collab", user_id=OWNER_ID, is_admin=False
+            None, "shared collab", accessible_ids=_acl(stub, OWNER_ID)
         )
     )
     assert ws is not None
@@ -211,7 +225,11 @@ def test_lookup_workstream_by_title_returns_member_shared(stub):
 
 def test_lookup_workstream_admin_sees_any_by_id(stub):
     engine = RAGEngine(stub)
-    ws = _run(engine._lookup_workstream(VICTIM_WS_ID, "", user_id=None, is_admin=True))
+    ws = _run(
+        engine._lookup_workstream(
+            VICTIM_WS_ID, "", accessible_ids=_acl(stub, None, is_admin=True)
+        )
+    )
     assert ws is not None
     assert ws["id"] == VICTIM_WS_ID
 
@@ -220,7 +238,9 @@ def test_lookup_workstream_admin_sees_any_by_title(stub):
     engine = RAGEngine(stub)
     ws = _run(
         engine._lookup_workstream(
-            None, "secret confidential", user_id=None, is_admin=True
+            None,
+            "secret confidential",
+            accessible_ids=_acl(stub, None, is_admin=True),
         )
     )
     assert ws is not None
@@ -229,9 +249,13 @@ def test_lookup_workstream_admin_sees_any_by_title(stub):
 
 def test_lookup_workstream_no_user_misses_silently(stub):
     engine = RAGEngine(stub)
-    # No user identity + not admin → no access. Must miss rather than leak.
+    # No user identity + not admin → empty ACL → silent miss (no leak).
     ws = _run(
-        engine._lookup_workstream(VICTIM_WS_ID, "secret confidential", user_id=None)
+        engine._lookup_workstream(
+            VICTIM_WS_ID,
+            "secret confidential",
+            accessible_ids=_acl(stub, None, is_admin=False),
+        )
     )
     assert ws is None
 

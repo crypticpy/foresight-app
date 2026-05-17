@@ -474,12 +474,31 @@ class RAGEngine:
         if not mention_refs:
             return []
 
+        # Resolve the caller's accessible workstream ids exactly once per
+        # retrieve pass, off the event loop. Without this, each workstream
+        # mention would issue its own synchronous owned+member scan inside
+        # the async loop. `None` is the admin sentinel ("no filter"); a
+        # missing user_id with non-admin yields an empty set so workstream
+        # lookups short-circuit and never enumerate other users' titles.
+        accessible_ids: Optional[set[str]]
+        if is_admin:
+            accessible_ids = None
+        elif not user_id:
+            accessible_ids = set()
+        else:
+            accessible_ids = await asyncio.to_thread(
+                accessible_workstream_ids,
+                self.supabase,
+                user_id,
+                False,
+            )
+
         resolved: List[Dict[str, Any]] = []
 
         for ref in mention_refs:
             try:
                 entity = await self._resolve_single_mention(
-                    ref, user_id=user_id, is_admin=is_admin
+                    ref, accessible_ids=accessible_ids
                 )
                 if entity:
                     resolved.append(entity)
@@ -494,13 +513,15 @@ class RAGEngine:
         self,
         ref: Dict[str, Any],
         *,
-        user_id: Optional[str] = None,
-        is_admin: bool = False,
+        accessible_ids: Optional[set[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Resolve one mention reference to a card or workstream dict.
 
-        Workstream resolution is scoped by ``user_id``/``is_admin`` so that
-        mentions can't enumerate other users' private workstreams.
+        ``accessible_ids`` carries the caller's workstream ACL precomputed
+        once by ``_resolve_mentions``: ``None`` = admin (no filter), a set
+        (possibly empty) = the workstream ids the caller can read. An empty
+        set short-circuits workstream lookups so non-admin callers can't
+        enumerate other users' private workstreams.
         """
         entity_type = ref.get("type")
         entity_id = ref.get("id")
@@ -528,7 +549,7 @@ class RAGEngine:
         # Try workstream resolution
         if entity_type in ("workstream", None):
             ws = await self._lookup_workstream(
-                entity_id, title, user_id=user_id, is_admin=is_admin
+                entity_id, title, accessible_ids=accessible_ids
             )
             if ws:
                 try:
@@ -1091,26 +1112,25 @@ class RAGEngine:
         workstream_id: Optional[str],
         title: str,
         *,
-        user_id: Optional[str] = None,
-        is_admin: bool = False,
+        accessible_ids: Optional[set[str]],
     ) -> Optional[Dict[str, Any]]:
         """Look up a workstream by ID or by ILIKE name search.
 
-        Scoped to workstreams the caller can read. Without a ``user_id`` and
-        ``is_admin=False``, all lookups miss — this prevents anonymous /
-        unattributed callers from discovering private workstreams.
+        Scoped via the pre-resolved ``accessible_ids`` set:
+          - ``None`` is the admin sentinel — no scoping, see everything.
+          - A populated set restricts both id and title lookups.
+          - An empty set short-circuits to a miss (non-admin caller with no
+            accessible workstreams). Emitting ``in_([])`` would still return
+            every row in PostgREST, so we must early-return instead.
+
+        Callers resolve the ACL once via
+        ``accessible_workstream_ids(...)`` (typically inside
+        ``_resolve_mentions`` via ``asyncio.to_thread``) and pass the result
+        down to avoid a synchronous Supabase scan per mention.
         """
         try:
-            # Admin sentinel → no scoping. Non-admin → restrict to accessible ids.
-            accessible_ids: Optional[set[str]] = None
-            if not is_admin:
-                if not user_id:
-                    return None
-                accessible_ids = accessible_workstream_ids(
-                    self.supabase, user_id, is_admin_user=False
-                )
-                if not accessible_ids:
-                    return None
+            if accessible_ids is not None and not accessible_ids:
+                return None
 
             if workstream_id:
                 if accessible_ids is not None and workstream_id not in accessible_ids:

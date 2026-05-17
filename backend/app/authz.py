@@ -183,7 +183,10 @@ def accessible_workstream_ids(
 
     For non-admins the set covers:
       - workstreams the user owns (``workstreams.user_id == user_id``)
-      - workstreams the user is a member of via ``workstream_members``
+      - workstreams the user is a member of via ``workstream_members`` with a
+        role that carries the read capability (matches
+        ``get_workstream_access`` semantics — unknown/future non-readable roles
+        do not grant visibility)
 
     Org templates are intentionally excluded; non-admins see their per-user
     clones via the ownership branch.
@@ -204,10 +207,19 @@ def accessible_workstream_ids(
         if ws_id:
             accessible.add(ws_id)
 
+    # Mirror get_workstream_access: only roles whose first capability tuple
+    # entry (can_read) is True grant visibility. This keeps the helper aligned
+    # with the canonical ACL — a malformed or future non-readable role can't
+    # silently make a workstream discoverable via mention/autocomplete.
+    readable_roles = [
+        role for role, caps in WORKSTREAM_MEMBER_CAPABILITIES.items() if caps[0]
+    ]
+
     shared = (
         supabase.table("workstream_members")
         .select("workstream_id")
         .eq("user_id", user_id)
+        .in_("role", readable_roles)
         .execute()
     )
     for row in shared.data or []:
