@@ -30,10 +30,15 @@ from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, limiter, supabase
 from app.models import (
     AdminPillarCoverageResponse,
+    AdminScheduleRow,
+    AdminSchedulesListResponse,
     AdminSourceCategoriesResponse,
     AdminSourceRow,
     AdminSourcesListResponse,
+    AdminWorkstreamScanResponse,
+    BalanceDispatchResponse,
     CoverageGapsResponse,
+    DiscoveryRunDetailResponse,
     WorkstreamCoverageResponse,
 )
 
@@ -1324,7 +1329,11 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
     return [g for _score, g in scored[:BALANCE_MAX_GOALS]]
 
 
-@router.post("/admin/discovery/balance", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/admin/discovery/balance",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BalanceDispatchResponse,
+)
 @limiter.limit("10/minute")
 async def admin_balance_dispatch(
     request: Request,
@@ -1536,7 +1545,9 @@ async def admin_balance_dispatch(
 
 
 @router.post(
-    "/admin/workstreams/{workstream_id}/scan", status_code=status.HTTP_201_CREATED
+    "/admin/workstreams/{workstream_id}/scan",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AdminWorkstreamScanResponse,
 )
 async def admin_force_workstream_scan(
     request: Request,
@@ -1731,7 +1742,10 @@ def _aggregate_run_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-@router.get("/admin/discovery/runs/{run_id}/detail")
+@router.get(
+    "/admin/discovery/runs/{run_id}/detail",
+    response_model=DiscoveryRunDetailResponse,
+)
 async def get_discovery_run_detail(
     run_id: str,
     limit: int = 50,
@@ -1951,7 +1965,9 @@ def _serialize_schedule(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@router.get("/admin/discovery/schedules")
+@router.get(
+    "/admin/discovery/schedules", response_model=AdminSchedulesListResponse
+)
 async def list_admin_schedules(
     current_user: dict = Depends(get_current_user),
 ):
@@ -1998,7 +2014,9 @@ def _coerce_schedule_payload(body: AdminScheduleBase) -> dict[str, Any]:
 
 
 @router.post(
-    "/admin/discovery/schedules", status_code=status.HTTP_201_CREATED
+    "/admin/discovery/schedules",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AdminScheduleRow,
 )
 async def create_admin_schedule(
     request: Request,
@@ -2053,7 +2071,10 @@ async def create_admin_schedule(
     return _serialize_schedule(row)
 
 
-@router.patch("/admin/discovery/schedules/{schedule_id}")
+@router.patch(
+    "/admin/discovery/schedules/{schedule_id}",
+    response_model=AdminScheduleRow,
+)
 async def update_admin_schedule(
     request: Request,
     schedule_id: str,
