@@ -29,9 +29,12 @@ from app.audit_service import log_admin_action
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, limiter, supabase
 from app.models import (
+    AdminPillarCoverageResponse,
     AdminSourceCategoriesResponse,
     AdminSourceRow,
     AdminSourcesListResponse,
+    CoverageGapsResponse,
+    WorkstreamCoverageResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -646,7 +649,9 @@ ALLOWED_COVERAGE_MODES = ("primary", "primary_or_secondary", "union")
 CoverageMode = Literal["primary", "primary_or_secondary", "union"]
 
 
-@router.get("/admin/coverage/pillars")
+@router.get(
+    "/admin/coverage/pillars", response_model=AdminPillarCoverageResponse
+)
 async def get_pillar_coverage(
     days: int = 7,
     mode: CoverageMode = "primary",
@@ -847,7 +852,7 @@ def _gap_priority(drift_score: float) -> str:
     return "none"
 
 
-@router.get("/admin/coverage/gaps")
+@router.get("/admin/coverage/gaps", response_model=CoverageGapsResponse)
 @limiter.limit("30/minute")
 async def get_coverage_gaps(
     request: Request,
@@ -1089,7 +1094,9 @@ def _aggregate_workstream_freshness(
     return rows
 
 
-@router.get("/admin/coverage/workstreams")
+@router.get(
+    "/admin/coverage/workstreams", response_model=WorkstreamCoverageResponse
+)
 async def get_workstream_coverage(
     current_user: dict = Depends(get_current_user),
 ):
