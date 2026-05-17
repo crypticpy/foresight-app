@@ -245,6 +245,38 @@ def test_by_status_pagination_walks_full_set_with_cursor(patched):
     assert len(set(ids)) == len(ids) == 120
 
 
+def test_grouped_fetch_empty_board_returns_all_columns_with_has_more_false(patched):
+    """A workstream with zero cards in every status still returns the full
+    four-column shape (``inbox`` / ``working`` / ``ready`` / ``archived``)
+    with empty arrays and ``has_more=False`` for every column.
+
+    Locks the empty-board response contract the frontend relies on — without
+    it the kanban page would have to special-case "missing column" alongside
+    "empty column"."""
+    workstream_id = "ws-empty"
+    stub = _SupabaseStub([])
+    patched.setattr(kanban_router, "supabase", stub)
+
+    response = _run(
+        kanban_router.get_workstream_cards(
+            workstream_id=workstream_id,
+            limit=50,
+            current_user={"id": "user-1"},
+        )
+    )
+
+    assert response.inbox == []
+    assert response.working == []
+    assert response.ready == []
+    assert response.archived == []
+    assert response.has_more == {
+        "inbox": False,
+        "working": False,
+        "ready": False,
+        "archived": False,
+    }
+
+
 def test_by_status_rejects_unknown_status(patched):
     """Status strings outside KANBAN_STATUSES return 400 so we never run an
     unrestricted scan against ``workstream_cards``."""

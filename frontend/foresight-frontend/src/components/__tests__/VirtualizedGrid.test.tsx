@@ -418,5 +418,53 @@ describe("VirtualizedGrid", () => {
       // Should not throw — just verify the scroll handler is a no-op for end-reached.
       expect(() => fireEvent.scroll(scrollContainer)).not.toThrow();
     });
+
+    // Locks in the default endReachedThreshold (480px). All other tests pass
+    // an explicit `endReachedThreshold`, so without this case a regression that
+    // changed the default would slip through.
+    it("uses the default endReachedThreshold (480px) when none is provided", () => {
+      const onEndReached = vi.fn();
+      const items = createTestItems(100);
+      const { container } = renderVirtualizedGrid({
+        items,
+        onEndReached,
+        // Intentionally omit endReachedThreshold to exercise the default.
+      });
+
+      const scrollContainer = container.querySelector(
+        ".overflow-auto",
+      ) as HTMLDivElement;
+
+      // distance = 2000 - 1121 - 400 = 479 (≤ 480, inside the default band)
+      mockScrollDims(scrollContainer, {
+        scrollHeight: 2000,
+        clientHeight: 400,
+        scrollTop: 1121,
+      });
+      fireEvent.scroll(scrollContainer);
+      expect(onEndReached).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fire under the default threshold when just outside the band", () => {
+      const onEndReached = vi.fn();
+      const items = createTestItems(100);
+      const { container } = renderVirtualizedGrid({
+        items,
+        onEndReached,
+      });
+
+      const scrollContainer = container.querySelector(
+        ".overflow-auto",
+      ) as HTMLDivElement;
+
+      // distance = 2000 - 1119 - 400 = 481 (> 480, outside the default band)
+      mockScrollDims(scrollContainer, {
+        scrollHeight: 2000,
+        clientHeight: 400,
+        scrollTop: 1119,
+      });
+      fireEvent.scroll(scrollContainer);
+      expect(onEndReached).not.toHaveBeenCalled();
+    });
   });
 });

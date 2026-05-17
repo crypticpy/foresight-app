@@ -71,6 +71,24 @@ export interface UseCardLoaderReturn {
   loadMore: () => void;
 }
 
+/**
+ * One fetched page. `cards` is what the UI shows; `cursorAdvance` is the
+ * number the caller must add to its server-side cursor.
+ *
+ * For the standard / following paths the two are equal (server filters apply
+ * before the page is sliced). For the semantic path they diverge: the server
+ * returns up to PAGE_SIZE results from offset N, and the client further
+ * filters by `quickFilter === "new"/"updated"`. The cursor must advance by
+ * the number of raw server rows consumed (so the next request asks for the
+ * NEXT page) — not by the smaller filtered card count, which would re-fetch
+ * already-seen rows.
+ */
+interface FetchPageResult {
+  cards: Card[];
+  hasMore: boolean;
+  cursorAdvance: number;
+}
+
 async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {
   const token = await getAuthToken();
   if (!token || rawCards.length === 0) return rawCards;
@@ -167,7 +185,7 @@ export function useCardLoader({
       activeFilters: CardLoaderFilters,
       followed: Set<string>,
       offset: number,
-    ): Promise<{ cards: Card[]; hasMore: boolean }> => {
+    ): Promise<FetchPageResult> => {
       const {
         searchTerm,
         impactMin,
@@ -190,7 +208,7 @@ export function useCardLoader({
       // -- Path 1: "following" filter ---------------------------------------
       if (quickFilter === "following") {
         if (followed.size === 0) {
-          return { cards: [], hasMore: false };
+          return { cards: [], hasMore: false, cursorAdvance: 0 };
         }
 
         let query = supabase
@@ -232,7 +250,8 @@ export function useCardLoader({
         const hasMore = rows.length > PAGE_SIZE;
         const slice = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
         const hydrated = await hydrateCardCollab(slice);
-        return { cards: hydrated, hasMore };
+        // Server-side filtered — cursor advances by what we keep.
+        return { cards: hydrated, hasMore, cursorAdvance: slice.length };
       }
 
       // -- Path 2: semantic search ------------------------------------------
@@ -277,6 +296,12 @@ export function useCardLoader({
           const rawResults = response.results;
           const hasMore = rawResults.length > PAGE_SIZE;
           const sliced = hasMore ? rawResults.slice(0, PAGE_SIZE) : rawResults;
+          // Cursor advances by raw server rows consumed (the PAGE_SIZE slice we
+          // map into cards). Client-side `new`/`updated` quick filters below
+          // may drop some of those cards, but the server has already returned
+          // those rows — the next page must start AFTER them, not before, or
+          // we'd re-fetch the rows we just filtered out.
+          const cursorAdvance = sliced.length;
 
           let mappedCards: Card[] = sliced.map((result) => ({
             id: result.id,
@@ -330,7 +355,7 @@ export function useCardLoader({
           });
 
           const hydrated = await hydrateCardCollab(mappedCards);
-          return { cards: hydrated, hasMore };
+          return { cards: hydrated, hasMore, cursorAdvance };
         }
         // No token — fall through to the standard supabase path so the user
         // still sees results (server-side semantic search needs auth).
@@ -392,7 +417,8 @@ export function useCardLoader({
       const hasMore = rows.length > PAGE_SIZE;
       const slice = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
       const hydrated = await hydrateCardCollab(slice);
-      return { cards: hydrated, hasMore };
+      // Server-side filtered — cursor advances by what we keep.
+      return { cards: hydrated, hasMore, cursorAdvance: slice.length };
     },
     [],
   );
@@ -417,7 +443,7 @@ export function useCardLoader({
         if (token !== inflightTokenRef.current) return;
         setCards(page.cards);
         setHasMore(page.hasMore);
-        offsetRef.current = page.cards.length;
+        offsetRef.current = page.cursorAdvance;
 
         // Record search history once per initial load (same triggers as
         // before): user-typed semantic/text searches + non-quick-filter
@@ -464,7 +490,7 @@ export function useCardLoader({
         const incoming = page.cards.filter((c) => !seen.has(c.id));
         return [...prev, ...incoming];
       });
-      offsetRef.current += page.cards.length;
+      offsetRef.current += page.cursorAdvance;
       setHasMore(page.hasMore);
     } catch (err) {
       if (token !== inflightTokenRef.current) return;
