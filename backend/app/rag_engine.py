@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import (
     azure_openai_async_client,
     azure_openai_async_embedding_client,
@@ -1042,7 +1043,7 @@ class RAGEngine:
                         "id, slug, name, summary, description, pillar_id, "
                         "horizon, stage_id, impact_score, relevance_score"
                     )
-                    .ilike("name", f"%{title}%")
+                    .ilike("name", f"%{sanitize_ilike(title)}%")
                     .limit(1)
                     .execute()
                 )
@@ -1073,7 +1074,7 @@ class RAGEngine:
                 result = (
                     self.supabase.table("workstreams")
                     .select("id, name, description")
-                    .ilike("name", f"%{title}%")
+                    .ilike("name", f"%{sanitize_ilike(title)}%")
                     .limit(1)
                     .execute()
                 )

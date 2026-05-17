@@ -23,6 +23,7 @@ from app.chat_service import (
     chat as chat_service_chat,
     generate_suggestions as chat_generate_suggestions,
 )
+from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import azure_openai_async_client, get_chat_mini_deployment
 from app.usage_telemetry import llm_usage_context
 
@@ -348,11 +349,12 @@ async def search_chat_conversations(
     user_id = current_user["id"]
     try:
         # Search conversation titles
+        safe_q = sanitize_ilike(q)
         title_result = (
             supabase.table("chat_conversations")
             .select("id, scope, scope_id, title, created_at, updated_at")
             .eq("user_id", user_id)
-            .ilike("title", f"%{q}%")
+            .ilike("title", f"%{safe_q}%")
             .order("updated_at", desc=True)
             .limit(limit)
             .execute()
@@ -362,7 +364,7 @@ async def search_chat_conversations(
         msg_result = (
             supabase.table("chat_messages")
             .select("conversation_id, content")
-            .ilike("content", f"%{q}%")
+            .ilike("content", f"%{safe_q}%")
             .limit(50)
             .execute()
         )
@@ -864,7 +866,7 @@ async def search_mentions(
     """
     try:
         results: List[Dict[str, Any]] = []
-        search_term = f"%{q}%"
+        search_term = f"%{sanitize_ilike(q)}%"
 
         # Search cards (signals) by name
         try:

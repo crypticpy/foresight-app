@@ -9,6 +9,18 @@ from typing import Any, Dict, List, Optional
 from app.models.search import SearchFilters
 
 
+def sanitize_ilike(value: str) -> str:
+    """Escape LIKE metacharacters in user input before passing to ``.ilike()``.
+
+    Supabase's ``.ilike()`` does not escape ``%`` / ``_`` / ``\\``, so a caller
+    that interpolates raw user input into the pattern turns those characters
+    into wildcards. ``q="%"`` would match every row; ``q="_"`` would match
+    every single-character value. Escape with the default ``\\`` escape char
+    so they're treated as literal characters.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _apply_search_filters(
     results: List[Dict[str, Any]], filters: SearchFilters
 ) -> List[Dict[str, Any]]:
