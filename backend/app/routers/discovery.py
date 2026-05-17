@@ -49,8 +49,8 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
     logger.info(f"Distributing {len(new_card_ids)} new cards to auto_add workstreams")
 
     # Fetch the new cards
-    cards_response = (
-        supabase.table("cards")
+    cards_response = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("id, pillar_id, goal_id, stage_id, horizon, name, summary, description")
         .in_("id", new_card_ids)
         .execute()
@@ -60,8 +60,8 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
         return
 
     # Fetch all active workstreams with auto_add enabled
-    ws_response = (
-        supabase.table("workstreams")
+    ws_response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
         .select("id, user_id, pillar_ids, goal_ids, stage_ids, horizon, keywords")
         .eq("auto_add", True)
         .eq("is_active", True)
@@ -77,10 +77,11 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
     for ws in workstreams:
         try:
             # Get existing card IDs in this workstream to avoid duplicates
-            existing_response = (
-                supabase.table("workstream_cards")
+            # Bind ws_id as default arg to avoid late-binding closure trap in loop
+            existing_response = await asyncio.to_thread(
+                lambda ws_id=ws["id"]: supabase.table("workstream_cards")
                 .select("card_id")
-                .eq("workstream_id", ws["id"])
+                .eq("workstream_id", ws_id)
                 .execute()
             )
             existing_card_ids = {
@@ -97,10 +98,11 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
                 continue
 
             # Get current max position in inbox for this workstream
-            pos_response = (
-                supabase.table("workstream_cards")
+            # Bind ws_id as default arg to avoid late-binding closure trap in loop
+            pos_response = await asyncio.to_thread(
+                lambda ws_id=ws["id"]: supabase.table("workstream_cards")
                 .select("position")
-                .eq("workstream_id", ws["id"])
+                .eq("workstream_id", ws_id)
                 .eq("status", "inbox")
                 .order("position", desc=True)
                 .limit(1)
@@ -126,7 +128,11 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
                 for idx, card in enumerate(matching_cards)
             ]
 
-            supabase.table("workstream_cards").insert(records).execute()
+            await asyncio.to_thread(
+                lambda recs=records: supabase.table("workstream_cards")
+                .insert(recs)
+                .execute()
+            )
             total_distributed += len(records)
             logger.info(
                 f"Auto-added {len(records)} cards to workstream "
@@ -287,7 +293,9 @@ async def run_weekly_discovery():
 
     try:
         # Get system user for automated tasks
-        system_user = supabase.table("users").select("id").limit(1).execute()
+        system_user = await asyncio.to_thread(
+            lambda: supabase.table("users").select("id").limit(1).execute()
+        )
         user_id = system_user.data[0]["id"] if system_user.data else None
 
         if not user_id:
@@ -311,7 +319,9 @@ async def run_weekly_discovery():
             "summary_report": {"stage": "queued", "config": config.dict()},
         }
 
-        supabase.table("discovery_runs").insert(run_record).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs").insert(run_record).execute()
+        )
 
         logger.info(f"Weekly discovery run queued: {run_id}")
 
@@ -385,7 +395,9 @@ async def trigger_discovery_run(
             "started_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        result = supabase.table("discovery_runs").insert(run_record).execute()
+        result = await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs").insert(run_record).execute()
+        )
 
         if not result.data:
             raise HTTPException(
@@ -415,8 +427,12 @@ async def get_discovery_run(
     Use this endpoint to poll for run completion after triggering a discovery run.
     Status values: running, completed, failed, cancelled
     """
-    result = (
-        supabase.table("discovery_runs").select("*").eq("id", run_id).single().execute()
+    result = await asyncio.to_thread(
+        lambda: supabase.table("discovery_runs")
+        .select("*")
+        .eq("id", run_id)
+        .single()
+        .execute()
     )
 
     if not result.data:
@@ -434,8 +450,8 @@ async def list_discovery_runs(
 
     Returns the most recent runs, ordered by start time descending.
     """
-    result = (
-        supabase.table("discovery_runs")
+    result = await asyncio.to_thread(
+        lambda: supabase.table("discovery_runs")
         .select("*")
         .order("started_at", desc=True)
         .limit(limit)
@@ -455,7 +471,12 @@ async def cancel_discovery_run(
     Only runs with status 'running' can be cancelled.
     """
     # Get current run status
-    response = supabase.table("discovery_runs").select("*").eq("id", run_id).execute()
+    response = await asyncio.to_thread(
+        lambda: supabase.table("discovery_runs")
+        .select("*")
+        .eq("id", run_id)
+        .execute()
+    )
 
     if not response.data:
         raise HTTPException(status_code=404, detail="Discovery run not found")
@@ -470,8 +491,8 @@ async def cancel_discovery_run(
         )
 
     # Update status to cancelled
-    update_response = (
-        supabase.table("discovery_runs")
+    update_response = await asyncio.to_thread(
+        lambda: supabase.table("discovery_runs")
         .update(
             {
                 "status": "cancelled",
@@ -644,8 +665,8 @@ async def list_card_snapshots(
     current_user: dict = Depends(get_current_user),
 ):
     """List all snapshots for a card field, newest first."""
-    result = (
-        supabase.table("card_snapshots")
+    result = await asyncio.to_thread(
+        lambda: supabase.table("card_snapshots")
         .select("id, field_name, content_length, trigger, created_at, created_by")
         .eq("card_id", card_id)
         .eq("field_name", field_name)
@@ -663,8 +684,8 @@ async def get_card_snapshot(
     current_user: dict = Depends(get_current_user),
 ):
     """Get full content of a specific snapshot."""
-    result = (
-        supabase.table("card_snapshots")
+    result = await asyncio.to_thread(
+        lambda: supabase.table("card_snapshots")
         .select("*")
         .eq("id", snapshot_id)
         .eq("card_id", card_id)
@@ -684,8 +705,8 @@ async def restore_card_snapshot(
 ):
     """Restore a card field from a snapshot. Saves current value as a new snapshot first."""
     # Get the snapshot to restore
-    snapshot = (
-        supabase.table("card_snapshots")
+    snapshot = await asyncio.to_thread(
+        lambda: supabase.table("card_snapshots")
         .select("*")
         .eq("id", snapshot_id)
         .eq("card_id", card_id)
@@ -699,8 +720,8 @@ async def restore_card_snapshot(
     restore_content = snapshot.data["content"]
 
     # Get current value and save it as a snapshot before overwriting
-    card = (
-        supabase.table("cards")
+    card = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select(f"id, {field_name}")
         .eq("id", card_id)
         .single()
@@ -713,22 +734,29 @@ async def restore_card_snapshot(
     now = datetime.now(timezone.utc).isoformat()
 
     if current_content and len(current_content) > 10:
-        supabase.table("card_snapshots").insert(
-            {
-                "card_id": card_id,
-                "field_name": field_name,
-                "content": current_content,
-                "content_length": len(current_content),
-                "trigger": "restore",
-                "created_at": now,
-                "created_by": current_user.get("id", "user"),
-            }
-        ).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("card_snapshots")
+            .insert(
+                {
+                    "card_id": card_id,
+                    "field_name": field_name,
+                    "content": current_content,
+                    "content_length": len(current_content),
+                    "trigger": "restore",
+                    "created_at": now,
+                    "created_by": current_user.get("id", "user"),
+                }
+            )
+            .execute()
+        )
 
     # Restore the old content
-    supabase.table("cards").update({field_name: restore_content, "updated_at": now}).eq(
-        "id", card_id
-    ).execute()
+    await asyncio.to_thread(
+        lambda: supabase.table("cards")
+        .update({field_name: restore_content, "updated_at": now})
+        .eq("id", card_id)
+        .execute()
+    )
 
     logger.info(
         f"Card {card_id} {field_name} restored from snapshot {snapshot_id} "
@@ -799,8 +827,8 @@ async def get_discovery_schedule(current_user: dict = Depends(get_current_user))
     automated discovery runs in the background worker.
     """
     try:
-        result = (
-            supabase.table("discovery_schedule")
+        result = await asyncio.to_thread(
+            lambda: supabase.table("discovery_schedule")
             .select("*")
             .order("created_at", desc=False)
             .limit(1)
@@ -837,8 +865,8 @@ async def update_discovery_schedule(
     """
     try:
         # Get existing schedule
-        existing = (
-            supabase.table("discovery_schedule")
+        existing = await asyncio.to_thread(
+            lambda: supabase.table("discovery_schedule")
             .select("id")
             .order("created_at", desc=False)
             .limit(1)
@@ -860,8 +888,8 @@ async def update_discovery_schedule(
 
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        result = (
-            supabase.table("discovery_schedule")
+        result = await asyncio.to_thread(
+            lambda: supabase.table("discovery_schedule")
             .update(update_data)
             .eq("id", schedule_id)
             .execute()
