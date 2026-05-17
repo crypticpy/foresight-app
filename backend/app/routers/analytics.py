@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.deps import supabase, get_current_user, _safe_error, openai_client
+from app.supabase_retry import execute_with_h2_retry
 from app.openai_provider import get_chat_mini_deployment
 from app.models.analytics import (
     VelocityDataPoint,
@@ -1710,36 +1711,20 @@ async def _fetch_all_paginated(
     truncates the result. We page with ``.range(start, end)`` until a partial
     page comes back. ``builder_factory`` returns a fresh query builder so
     filters/order are reapplied cleanly per page.
-    """
-    import httpx
 
+    Each page is dispatched via ``execute_with_h2_retry`` so that a transient
+    HTTP/2 GOAWAY on Supabase's shared connection retries once rather than
+    bubbling as a 500.
+    """
     rows: list = []
     start = 0
     while True:
         # Default arg binds ``start`` for the thread closure.
-        # Supabase's shared sync client multiplexes over a single HTTP/2
-        # connection; under fan-out (e.g. asyncio.gather of 5–7 paginated
-        # queries) the upstream sometimes terminates the connection mid-stream.
-        # The query is read-only and idempotent, so a single retry with a tiny
-        # backoff is safe and avoids surfacing a 500 to the user.
-        last_exc: Optional[BaseException] = None
-        for attempt in range(2):
-            try:
-                resp = await asyncio.to_thread(
-                    lambda s=start: builder_factory()
-                    .range(s, s + page_size - 1)
-                    .execute()
-                )
-                last_exc = None
-                break
-            except httpx.RemoteProtocolError as exc:
-                last_exc = exc
-                if attempt == 0:
-                    await asyncio.sleep(0.25)
-                    continue
-                raise
-        if last_exc is not None:
-            raise last_exc
+        resp = await execute_with_h2_retry(
+            lambda s=start: builder_factory()
+            .range(s, s + page_size - 1)
+            .execute()
+        )
         page = resp.data or []
         rows.extend(page)
         if len(page) < page_size:

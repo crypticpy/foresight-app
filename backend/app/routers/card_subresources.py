@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.deps import supabase, get_current_user, _safe_error
+from app.supabase_retry import execute_with_h2_retry
 from app.models.history import (
     ScoreHistory,
     ScoreHistoryResponse,
@@ -620,21 +621,20 @@ class _SignalContext:
         }
 
 
-def _load_workstream_card_map(
+async def _load_workstream_card_map(
     workstreams: List[dict],
 ) -> Dict[str, List[str]]:
     """Map card_id -> list of workstream names the card sits in."""
     if not workstreams:
         return {}
     ws_ids = [ws["id"] for ws in workstreams]
-    rows = (
-        supabase.table("workstream_cards")
+    resp = await execute_with_h2_retry(
+        lambda: supabase.table("workstream_cards")
         .select("card_id, workstream_id")
         .in_("workstream_id", ws_ids)
         .execute()
-        .data
-        or []
     )
+    rows = resp.data or []
     name_by_id = {ws["id"]: ws["name"] for ws in workstreams}
     out: Dict[str, List[str]] = {}
     for row in rows:
@@ -647,20 +647,19 @@ def _load_workstream_card_map(
     return out
 
 
-def _load_user_prefs(user_id: str) -> Dict[str, dict]:
+async def _load_user_prefs(user_id: str) -> Dict[str, dict]:
     """Pin/notes preferences. Returns {} only when the table itself is missing;
     other Supabase failures are re-raised so a transient auth/query error can't
     silently strip every user's pins + notes from the response.
     """
     try:
-        rows = (
-            supabase.table("user_signal_preferences")
+        resp = await execute_with_h2_retry(
+            lambda: supabase.table("user_signal_preferences")
             .select("card_id, is_pinned, notes")
             .eq("user_id", user_id)
             .execute()
-            .data
-            or []
         )
+        rows = resp.data or []
     except Exception as exc:
         # Postgres signals a missing table with SQLSTATE 42P01 (relation does
         # not exist). Only swallow that — anything else must bubble up.
@@ -677,47 +676,42 @@ def _load_user_prefs(user_id: str) -> Dict[str, dict]:
 async def _build_signal_context(
     user_id: str, source: Optional[str]
 ) -> _SignalContext:
-    """Run the four user-scoped reads in parallel."""
+    """Run the four user-scoped reads in parallel.
 
-    def follows():
-        return (
-            supabase.table("card_follows")
+    Each leg uses ``execute_with_h2_retry`` so a transient HTTP/2 GOAWAY on
+    the shared Supabase connection doesn't surface as a 500. Without the
+    retry, fan-out from this gather (5+ concurrent streams on one connection)
+    is enough to occasionally trip ``RemoteProtocolError`` mid-stream.
+    """
+
+    follows_rows, created_rows, workstreams, prefs_map = await asyncio.gather(
+        execute_with_h2_retry(
+            lambda: supabase.table("card_follows")
             .select("card_id, created_at, priority")
             .eq("user_id", user_id)
             .execute()
-            .data
-            or []
-        )
-
-    def created():
-        return (
-            supabase.table("cards")
+        ),
+        execute_with_h2_retry(
+            lambda: supabase.table("cards")
             .select("id")
             .eq("created_by", user_id)
             .eq("status", "active")
             .execute()
-            .data
-            or []
-        )
-
-    def workstreams_owned():
-        return (
-            supabase.table("workstreams")
+        ),
+        execute_with_h2_retry(
+            lambda: supabase.table("workstreams")
             .select("id, name")
             .eq("user_id", user_id)
             .execute()
-            .data
-            or []
-        )
-
-    follows_rows, created_rows, workstreams, prefs_map = await asyncio.gather(
-        asyncio.to_thread(follows),
-        asyncio.to_thread(created),
-        asyncio.to_thread(workstreams_owned),
-        asyncio.to_thread(_load_user_prefs, user_id),
+        ),
+        _load_user_prefs(user_id),
     )
+
+    follows_rows = follows_rows.data or []
+    created_rows = created_rows.data or []
+    workstreams = workstreams.data or []
     # workstream_cards depends on workstreams, so it sequences after the gather.
-    ws_card_map = await asyncio.to_thread(_load_workstream_card_map, workstreams or [])
+    ws_card_map = await _load_workstream_card_map(workstreams)
 
     followed_map = {r["card_id"]: r for r in (follows_rows or []) if r.get("card_id")}
     created_ids = [r["id"] for r in (created_rows or []) if r.get("id")]
@@ -732,7 +726,7 @@ async def _build_signal_context(
     )
 
 
-def _count_in_set(
+async def _count_in_set(
     ids: List[str],
     search: Optional[str],
     pillar: Optional[str],
@@ -747,20 +741,24 @@ def _count_in_set(
     """
     if not ids:
         return 0
-    q = (
-        supabase.table("cards")
-        .select("id", count="exact")
-        .in_("id", ids)
-        .eq("status", "active")
-    )
-    q = _apply_card_filters(
-        q,
-        search=search,
-        pillar=pillar,
-        horizon=horizon,
-        quality_min=quality_min,
-    )
-    resp = q.range(0, 0).execute()
+
+    def build_and_execute():
+        q = (
+            supabase.table("cards")
+            .select("id", count="exact")
+            .in_("id", ids)
+            .eq("status", "active")
+        )
+        q = _apply_card_filters(
+            q,
+            search=search,
+            pillar=pillar,
+            horizon=horizon,
+            quality_min=quality_min,
+        )
+        return q.range(0, 0).execute()
+
+    resp = await execute_with_h2_retry(build_and_execute)
     return getattr(resp, "count", None) or 0
 
 
@@ -1079,24 +1077,27 @@ async def get_my_signals_stats(
 
     one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
-    def count(extra_filter):
-        q = (
-            supabase.table("cards")
-            .select("id", count="exact")
-            .in_("id", filtered_ids)
-            .eq("status", "active")
-        )
-        q = _apply_card_filters(
-            q,
-            search=search,
-            pillar=pillar,
-            horizon=horizon,
-            quality_min=quality_min,
-        )
-        q = extra_filter(q)
-        # `select("id", count="exact")` returns rows too — fetch just one to keep
-        # the response light; we only care about resp.count.
-        resp = q.range(0, 0).execute()
+    async def count(extra_filter):
+        def build_and_execute():
+            q = (
+                supabase.table("cards")
+                .select("id", count="exact")
+                .in_("id", filtered_ids)
+                .eq("status", "active")
+            )
+            q = _apply_card_filters(
+                q,
+                search=search,
+                pillar=pillar,
+                horizon=horizon,
+                quality_min=quality_min,
+            )
+            q = extra_filter(q)
+            # `select("id", count="exact")` returns rows too — fetch just one
+            # to keep the response light; we only care about resp.count.
+            return q.range(0, 0).execute()
+
+        resp = await execute_with_h2_retry(build_and_execute)
         return getattr(resp, "count", None) or 0
 
     # followed_count + created_count must mirror the feed's filter/status
@@ -1113,13 +1114,11 @@ async def get_my_signals_stats(
         followed_count,
         created_count,
     ) = await asyncio.gather(
-        asyncio.to_thread(count, lambda q: q),
-        asyncio.to_thread(count, lambda q: q.gte("updated_at", one_week_ago)),
-        asyncio.to_thread(
-            count, lambda q: q.lt("signal_quality_score", NEEDS_RESEARCH_QUALITY_THRESHOLD)
-        ),
-        asyncio.to_thread(_count_in_set, followed_id_list, search, pillar, horizon, quality_min),
-        asyncio.to_thread(_count_in_set, created_id_list, search, pillar, horizon, quality_min),
+        count(lambda q: q),
+        count(lambda q: q.gte("updated_at", one_week_ago)),
+        count(lambda q: q.lt("signal_quality_score", NEEDS_RESEARCH_QUALITY_THRESHOLD)),
+        _count_in_set(followed_id_list, search, pillar, horizon, quality_min),
+        _count_in_set(created_id_list, search, pillar, horizon, quality_min),
     )
 
     return {
