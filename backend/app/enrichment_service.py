@@ -262,8 +262,13 @@ async def enrich_weak_signals(
                                     )
                                     .execute()
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning(
+                                    "Enrichment: failed to insert card_sources row "
+                                    "for card %s: %s",
+                                    card["id"],
+                                    exc,
+                                )
 
                             sources_added += 1
                             existing_urls.add(url)
@@ -303,8 +308,13 @@ async def enrich_weak_signals(
                             )
                             .execute()
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "Enrichment: failed to insert card_timeline "
+                            "'sources_enriched' event for card %s: %s",
+                            card["id"],
+                            exc,
+                        )
 
                 logger.info(
                     f"Enrichment: Added {sources_added} sources to "
@@ -435,8 +445,15 @@ async def enrich_signal_profiles(
                                     supabase.table("sources").update(
                                         {"full_text": text[:10000]}
                                     ).eq("id", src["id"]).execute()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            # Content backfill is best-effort; URL fetches fail
+                            # often (404, timeout, paywall). Keep behavior, just
+                            # leave a low-volume breadcrumb at DEBUG.
+                            logger.debug(
+                                "Enrichment: extract_content failed for %s: %s",
+                                src.get("url"),
+                                exc,
+                            )
 
             # Build source analyses for profile generation
             source_analyses = []

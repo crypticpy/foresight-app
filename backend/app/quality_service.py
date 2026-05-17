@@ -444,8 +444,11 @@ def _calculate_municipal_specificity(sources: list[dict]) -> int:
                 hostname = urlparse(url).hostname or ""
                 if hostname.lower().endswith(".gov"):
                     has_gov_domain = True
-            except Exception:
-                pass
+            except Exception as exc:
+                # Failure means no .gov bonus for this source; not worth WARNING.
+                logger.debug(
+                    "quality: urlparse failed for %s: %s", url, exc
+                )
 
     if not relevance_values:
         # No relevance data available; use a conservative baseline

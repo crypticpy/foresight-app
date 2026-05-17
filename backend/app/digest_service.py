@@ -410,9 +410,13 @@ class DigestService:
                     }
                     for pi in pi_resp.data or []
                 )
-            except Exception:
-                # pattern_insights table may not exist yet
-                pass
+            except Exception as exc:
+                # pattern_insights table may not exist yet; fall through to
+                # the cached_insights query below.
+                logger.debug(
+                    "digest: pattern_insights query failed (may not exist yet): %s",
+                    exc,
+                )
 
             # Fall back to cached_insights if no pattern insights found
             if not results:
@@ -446,8 +450,11 @@ class DigestService:
                             }
                             for insight in insights_list[:MAX_PATTERN_INSIGHTS]
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "digest: cached_insights fallback query failed: %s",
+                        exc,
+                    )
 
         except Exception as e:
             logger.error(f"Failed to get pattern insights: {e}")
@@ -488,7 +495,12 @@ class DigestService:
                         .execute()
                     )
                     ws_update["new_cards_count"] = cards_resp.count or 0
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "digest: new-cards count failed for ws %s: %s",
+                        ws["id"],
+                        exc,
+                    )
                     ws_update["new_cards_count"] = 0
 
                 # Check for completed scans
@@ -502,7 +514,12 @@ class DigestService:
                         .execute()
                     )
                     ws_update["scans_completed"] = len(scans_resp.data or [])
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "digest: scans-completed count failed for ws %s: %s",
+                        ws["id"],
+                        exc,
+                    )
                     ws_update["scans_completed"] = 0
 
                 # Only include if there's something to report
@@ -919,8 +936,16 @@ class DigestService:
                             ).limit(
                                 1
                             ).execute()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            # Status-tracking write failures shouldn't fail the
+                            # whole batch (email already went out), but they do
+                            # mean the digest log row stays stuck in 'generated'.
+                            logger.warning(
+                                "digest: failed to mark digest_logs row 'sent' "
+                                "for user %s: %s",
+                                user_id,
+                                exc,
+                            )
                     else:
                         stats["failed"] += 1
 

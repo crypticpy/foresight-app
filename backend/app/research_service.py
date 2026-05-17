@@ -497,8 +497,15 @@ class ResearchService:
                             url=url,
                             content_snippet=content_for_title[:1000],
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # LLM call cost was already incurred; falling back to
+                        # filename-derived title below. Worth a WARNING so we
+                        # see persistent OpenAI failures in the pipeline.
+                        logger.warning(
+                            "research: generate_source_title failed for %s: %s",
+                            url,
+                            exc,
+                        )
 
                 if not raw_title and url.lower().endswith(".pdf"):
                     from urllib.parse import urlparse, unquote
@@ -660,8 +667,13 @@ class ResearchService:
                         logger.debug(
                             f"LLM-generated title after backfill: {llm_title[:50]}"
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "research: post-backfill generate_source_title "
+                        "failed for %s: %s",
+                        source.url,
+                        exc,
+                    )
 
         logger.info(
             f"Crawler backfilled content for {backfilled_count}/{len(sources_needing_content)} sources"

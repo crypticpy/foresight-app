@@ -1879,8 +1879,15 @@ class SignalAgentService:
                     text, _ = await extract_content(src.raw.url)
                     if text and len(text) > len(content):
                         content = text[:10000]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort content backfill from URL; failures are
+                    # frequent (404/timeout/paywall) and non-fatal — original
+                    # snippet stays in use. Keep at DEBUG to avoid log noise.
+                    logger.debug(
+                        "signal_agent: extract_content failed for %s: %s",
+                        src.raw.url,
+                        exc,
+                    )
 
             source_analyses.append(
                 {
