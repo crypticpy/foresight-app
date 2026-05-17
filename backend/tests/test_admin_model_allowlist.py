@@ -58,6 +58,18 @@ def test_model_settings_carry_allowed_values(key, allowlist):
         f"{key} must declare allowed_values so the admin endpoint rejects "
         f"retired or typo'd model IDs"
     )
+    # Hardening: catch malformed definitions early — an empty list would
+    # silently accept any value (membership check passes when set is empty
+    # only against another empty set, but a missing/None entry could fail
+    # confusingly downstream); a non-string entry would never match a real
+    # admin payload (always str) and is almost certainly a typo.
+    assert definition["allowed_values"], (
+        f"{key} allowed_values must be non-empty"
+    )
+    assert all(isinstance(v, str) for v in definition["allowed_values"]), (
+        f"{key} allowed_values must be strings; got "
+        f"{definition['allowed_values']!r}"
+    )
     assert set(definition["allowed_values"]) == set(allowlist), (
         f"{key} allowed_values drifted from openai_provider; keep them in sync"
     )
