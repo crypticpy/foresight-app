@@ -41,12 +41,21 @@ class _Query:
         self._stub = stub
         self._table_name = table_name
         self._rows = rows
+        # Capture the projection list. The router asks for a deliberately
+        # narrow set of columns on the chat_messages query (conversation_id
+        # only — never `content`) to avoid pulling other users' message
+        # bodies into worker memory if scoping ever regresses. Tests assert
+        # against this exact tuple so a future change that re-adds `content`
+        # to the projection trips the suite.
+        self._select: tuple[Any, ...] = ()
         self._eq: Dict[str, Any] = {}
         self._in: Dict[str, List[Any]] = {}
         self._ilike: Optional[tuple[str, str]] = None
         self._limit: Optional[int] = None
+        self._range: Optional[tuple[int, int]] = None
 
-    def select(self, *_a, **_kw):
+    def select(self, *columns, **_kw):
+        self._select = columns
         return self
 
     def eq(self, key, value):
@@ -70,6 +79,10 @@ class _Query:
         self._limit = n
         return self
 
+    def range(self, start, end):
+        self._range = (start, end)
+        return self
+
     def _matches(self, row: Dict[str, Any]) -> bool:
         for k, v in self._eq.items():
             if row.get(k) != v:
@@ -90,13 +103,18 @@ class _Query:
         self._stub.calls.append(
             {
                 "table": self._table_name,
+                "select": self._select,
                 "eq": dict(self._eq),
                 "in": {k: list(v) for k, v in self._in.items()},
                 "ilike": self._ilike,
                 "limit": self._limit,
+                "range": self._range,
             }
         )
         rows = [r for r in self._rows if self._matches(r)]
+        if self._range is not None:
+            start, end = self._range
+            rows = rows[start : end + 1]
         if self._limit is not None:
             rows = rows[: self._limit]
         return _Resp(rows)
@@ -222,10 +240,15 @@ def test_search_only_returns_callers_conversation(stub, monkeypatch):
         "to scope to the caller's conversations"
     )
     assert set(msg_call["in"]["conversation_id"]) == {CONV_A}
-    # And it must not pull `content` back into memory.
-    # (We record select args separately to keep the stub simple; assert via
-    # the column list we asked for is `conversation_id`-only by checking that
-    # no returned record carries other users' bodies — see next test.)
+    # The chat_messages projection MUST be conversation_id-only. Re-adding
+    # `content` (or `*`) would re-open the side-channel: even though scoping
+    # narrows the rows to the caller's own conversations, ILIKE matches over
+    # message bodies would pull those bodies back into worker memory, error
+    # logs, and telemetry — exactly what Sentinel P1 #6 closed.
+    assert msg_call["select"] == ("conversation_id",), (
+        "chat_messages search must request conversation_id ONLY — never "
+        "`content` or `*` — to keep message bodies out of memory/logs."
+    )
 
 
 def test_search_does_not_load_other_users_message_bodies(stub, monkeypatch):

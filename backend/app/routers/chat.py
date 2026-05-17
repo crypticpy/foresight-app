@@ -366,13 +366,30 @@ async def search_chat_conversations(
         # pulls matching bodies into memory / error logs / telemetry, even
         # though the downstream re-fetch only displays the caller's own
         # conversations. (Sentinel P1 #6.)
-        user_conv_resp = (
-            supabase.table("chat_conversations")
-            .select("id")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        user_conv_ids = [c["id"] for c in (user_conv_resp.data or [])]
+        #
+        # Paginate the prefetch: PostgREST caps a single .execute() at ~1000
+        # rows by default. Without paging, a power user with >1000
+        # conversations would only have their first page of ids fed into the
+        # subsequent .in_() filter, silently dropping matches from older
+        # conversations AND (worse) creating a partial-scope situation that
+        # is easy to mistake for the empty-IN footgun this fix already
+        # guards against.
+        user_conv_ids: List[str] = []
+        page_size = 1000
+        start = 0
+        while True:
+            user_conv_resp = (
+                supabase.table("chat_conversations")
+                .select("id")
+                .eq("user_id", user_id)
+                .range(start, start + page_size - 1)
+                .execute()
+            )
+            page = user_conv_resp.data or []
+            user_conv_ids.extend(c["id"] for c in page)
+            if len(page) < page_size:
+                break
+            start += page_size
 
         # CRITICAL: never call `.in_("conversation_id", [])` — PostgREST
         # treats an empty IN list as "match everything", which would re-open
