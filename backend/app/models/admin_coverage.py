@@ -9,9 +9,17 @@ Shapes the payloads returned by:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# Mirror the Literal aliases defined in ``routers/admin_discovery.py`` so the
+# response schema reflects the constrained values the endpoints actually
+# return. Sourcery flagged these as plain ``str`` in PR #144 review.
+CoverageMode = Literal["primary", "primary_or_secondary", "union"]
+TargetDistribution = Literal["uniform"]
+# ``_gap_priority`` in admin_discovery.py returns exactly these three strings.
+CoverageGapPriority = Literal["high", "medium", "none"]
 
 
 # --- Pillar coverage --------------------------------------------------------
@@ -38,7 +46,7 @@ class AdminPillarCoverageResponse(BaseModel):
     """Envelope returned by ``GET /admin/coverage/pillars``."""
 
     window_days: int
-    mode: str
+    mode: CoverageMode
     since: str
     total: int
     mode_total: int
@@ -59,7 +67,7 @@ class CoverageGapCell(BaseModel):
     expected: float
     drift: float
     drift_score: float
-    priority: str
+    priority: CoverageGapPriority
 
 
 class CoverageGapTotals(BaseModel):
@@ -75,7 +83,7 @@ class CoverageGapsResponse(BaseModel):
     """Envelope returned by ``GET /admin/coverage/gaps``."""
 
     window_days: int
-    target_distribution: str
+    target_distribution: TargetDistribution
     since: str
     cells: List[CoverageGapCell]
     totals: CoverageGapTotals
