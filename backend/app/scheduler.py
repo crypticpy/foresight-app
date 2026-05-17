@@ -524,4 +524,8 @@ def shutdown_scheduler():
         if getattr(scheduler, "running", False):
             scheduler.shutdown()
     except Exception as exc:
-        logger.warning("shutdown_scheduler: scheduler.shutdown() failed: %s", exc)
+        logger.warning(
+            "shutdown_scheduler: scheduler.shutdown() failed: %s",
+            exc,
+            exc_info=True,
+        )
