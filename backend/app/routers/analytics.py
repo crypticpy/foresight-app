@@ -393,7 +393,7 @@ async def get_pillar_coverage(
         if stage_id:
             query = query.eq("stage_id", stage_id)
 
-        response = query.execute()
+        response = await asyncio.to_thread(query.execute)
         cards_data = response.data or []
 
         # Count cards per pillar and sum velocity scores
@@ -778,7 +778,9 @@ async def get_trend_velocity(
         query = query.gte("created_at", f"{start_date}T00:00:00")
         query = query.lte("created_at", f"{end_date}T23:59:59")
 
-        response = query.order("created_at", desc=False).execute()
+        response = await asyncio.to_thread(
+            lambda: query.order("created_at", desc=False).execute()
+        )
 
         cards = response.data or []
         total_cards = len(cards)
@@ -2105,7 +2107,7 @@ async def get_top_domains(
         if category:
             query = query.eq("category", category)
         query = query.order("composite_score", desc=True).limit(limit)
-        result = query.execute()
+        result = await asyncio.to_thread(query.execute)
         return result.data
     except Exception as e:
         logger.error(f"Failed to get top domains: {str(e)}")

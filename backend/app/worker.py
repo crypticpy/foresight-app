@@ -224,16 +224,15 @@ class ForesightWorker:
         logger.info("Worker stopping", extra={"worker_id": self.worker_id})
 
     async def _process_one_research_task(self) -> bool:
-        tasks = (
-            supabase.table("research_tasks")
+        tasks_res = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .select("id,user_id,card_id,workstream_id,task_type")
             .eq("status", "queued")
             .order("created_at", desc=False)
             .limit(1)
             .execute()
-            .data
-            or []
         )
+        tasks = tasks_res.data or []
         if not tasks:
             return False
 
@@ -241,8 +240,8 @@ class ForesightWorker:
         task_id = task["id"]
 
         now = datetime.now(timezone.utc).isoformat()
-        claimed = (
-            supabase.table("research_tasks")
+        claimed_res = await asyncio.to_thread(
+            lambda: supabase.table("research_tasks")
             .update(
                 {
                     "status": "processing",
@@ -256,9 +255,8 @@ class ForesightWorker:
             .eq("id", task_id)
             .eq("status", "queued")
             .execute()
-            .data
         )
-        if not claimed:
+        if not claimed_res.data:
             return False
 
         task_data = ResearchTaskCreate(
@@ -282,31 +280,29 @@ class ForesightWorker:
         return True
 
     async def _process_one_brief(self) -> bool:
-        briefs = (
-            supabase.table("executive_briefs")
+        briefs_res = await asyncio.to_thread(
+            lambda: supabase.table("executive_briefs")
             .select("id,workstream_card_id,card_id,sources_since_previous,status")
             .eq("status", "pending")
             .order("created_at", desc=False)
             .limit(1)
             .execute()
-            .data
-            or []
         )
+        briefs = briefs_res.data or []
         if not briefs:
             return False
 
         brief = briefs[0]
         brief_id = brief["id"]
 
-        claimed = (
-            supabase.table("executive_briefs")
+        claimed_res = await asyncio.to_thread(
+            lambda: supabase.table("executive_briefs")
             .update({"status": "generating"})
             .eq("id", brief_id)
             .eq("status", "pending")
             .execute()
-            .data
         )
-        if not claimed:
+        if not claimed_res.data:
             return False
 
         record_event(
@@ -368,17 +364,16 @@ class ForesightWorker:
         return True
 
     async def _process_one_discovery_run(self) -> bool:
-        runs = (
-            supabase.table("discovery_runs")
+        runs_res = await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs")
             .select("id,triggered_by_user,summary_report,status")
             .eq("status", "running")
             .contains("summary_report", {"stage": "queued"})
             .order("started_at", desc=False)
             .limit(1)
             .execute()
-            .data
-            or []
         )
+        runs = runs_res.data or []
         if not runs:
             return False
 
@@ -393,16 +388,15 @@ class ForesightWorker:
         summary_report["stage"] = "running"
         summary_report["worker_id"] = self.worker_id
 
-        claimed = (
-            supabase.table("discovery_runs")
+        claimed_res = await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs")
             .update({"summary_report": summary_report})
             .eq("id", run_id)
             .eq("status", "running")
             .contains("summary_report", {"stage": "queued"})
             .execute()
-            .data
         )
-        if not claimed:
+        if not claimed_res.data:
             return False
 
         config_data = (
@@ -415,9 +409,10 @@ class ForesightWorker:
 
         if not triggered_by_user:
             # Defensive fallback: pick any system user.
-            system_user = (
-                supabase.table("users").select("id").limit(1).execute().data or []
+            system_user_res = await asyncio.to_thread(
+                lambda: supabase.table("users").select("id").limit(1).execute()
             )
+            system_user = system_user_res.data or []
             triggered_by_user = system_user[0]["id"] if system_user else None
 
         if not triggered_by_user:
@@ -482,8 +477,8 @@ class ForesightWorker:
     async def _process_one_workstream_scan(self) -> bool:
         """Process one queued workstream scan job."""
         try:
-            result = (
-                supabase.table("workstream_scans")
+            result = await asyncio.to_thread(
+                lambda: supabase.table("workstream_scans")
                 .select("id,workstream_id,user_id,config,status")
                 .eq("status", "queued")
                 .order("created_at", desc=False)
@@ -507,15 +502,14 @@ class ForesightWorker:
 
         # Claim the scan by setting status to running
         now = datetime.now(timezone.utc).isoformat()
-        claimed = (
-            supabase.table("workstream_scans")
+        claimed_res = await asyncio.to_thread(
+            lambda: supabase.table("workstream_scans")
             .update({"status": "running", "started_at": now})
             .eq("id", scan_id)
             .eq("status", "queued")
             .execute()
-            .data
         )
-        if not claimed:
+        if not claimed_res.data:
             return False
 
         record_event(

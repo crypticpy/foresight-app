@@ -815,20 +815,25 @@ class SignalAgentService:
 
             # Store stats on the discovery run
             try:
-                self.supabase.table("discovery_runs").update(
-                    {
-                        "signal_agent_stats": {
-                            "signals_created": len(result.signals_created),
-                            "signals_enriched": len(result.signals_enriched),
-                            "sources_linked": result.sources_linked,
-                            "junction_entries": result.junction_entries_created,
-                            "agent_calls": result.agent_calls_made,
-                            "tokens_used": result.total_tokens_used,
-                            "cost_estimate": round(result.cost_estimate, 4),
-                            "pillar_stats": result.pillar_stats,
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("discovery_runs")
+                    .update(
+                        {
+                            "signal_agent_stats": {
+                                "signals_created": len(result.signals_created),
+                                "signals_enriched": len(result.signals_enriched),
+                                "sources_linked": result.sources_linked,
+                                "junction_entries": result.junction_entries_created,
+                                "agent_calls": result.agent_calls_made,
+                                "tokens_used": result.total_tokens_used,
+                                "cost_estimate": round(result.cost_estimate, 4),
+                                "pillar_stats": result.pillar_stats,
+                            }
                         }
-                    }
-                ).eq("id", self.run_id).execute()
+                    )
+                    .eq("id", self.run_id)
+                    .execute()
+                )
             except Exception as e:
                 logger.warning(f"Signal agent: Failed to store stats on run: {e}")
 
@@ -954,14 +959,16 @@ class SignalAgentService:
         centroid = _compute_centroid(embeddings)
 
         try:
-            match_result = self.supabase.rpc(
-                "find_similar_cards",
-                {
-                    "query_embedding": centroid,
-                    "match_threshold": 0.7,
-                    "match_count": 10,
-                },
-            ).execute()
+            match_result = await asyncio.to_thread(
+                lambda: self.supabase.rpc(
+                    "find_similar_cards",
+                    {
+                        "query_embedding": centroid,
+                        "match_threshold": 0.7,
+                        "match_count": 10,
+                    },
+                ).execute()
+            )
 
             if match_result.data:
                 logger.debug(
@@ -1229,14 +1236,16 @@ class SignalAgentService:
             embedding = resp.data[0].embedding
 
             # Search for similar cards
-            match_result = self.supabase.rpc(
-                "find_similar_cards",
-                {
-                    "query_embedding": embedding,
-                    "match_threshold": 0.7,
-                    "match_count": 10,
-                },
-            ).execute()
+            match_result = await asyncio.to_thread(
+                lambda: self.supabase.rpc(
+                    "find_similar_cards",
+                    {
+                        "query_embedding": embedding,
+                        "match_threshold": 0.7,
+                        "match_count": 10,
+                    },
+                ).execute()
+            )
 
             matches = match_result.data or []
 
@@ -1397,8 +1406,8 @@ class SignalAgentService:
 
         # Validate the signal (card) exists in the DB
         try:
-            card_check = (
-                self.supabase.table("cards")
+            card_check = await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
                 .select("id, name")
                 .eq("id", signal_id)
                 .execute()
@@ -1671,8 +1680,11 @@ class SignalAgentService:
         # Generate unique slug
         slug = _generate_slug(action.signal_name)
         try:
-            existing = (
-                self.supabase.table("cards").select("id").eq("slug", slug).execute()
+            existing = await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .select("id")
+                .eq("slug", slug)
+                .execute()
             )
             if existing.data:
                 slug = f"{slug}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
@@ -1728,7 +1740,9 @@ class SignalAgentService:
         }
 
         try:
-            result = self.supabase.table("cards").insert(card_data).execute()
+            result = await asyncio.to_thread(
+                lambda: self.supabase.table("cards").insert(card_data).execute()
+            )
         except Exception as e:
             logger.error(
                 f"Signal agent: Failed to insert card '{action.signal_name}': {e}"
@@ -1755,9 +1769,12 @@ class SignalAgentService:
             ]
             if source_embeddings:
                 centroid = _compute_centroid(source_embeddings)
-                self.supabase.table("cards").update({"embedding": centroid}).eq(
-                    "id", card_id
-                ).execute()
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("cards")
+                    .update({"embedding": centroid})
+                    .eq("id", card_id)
+                    .execute()
+                )
         except Exception as e:
             logger.warning(
                 f"Signal agent: Failed to store embedding on card {card_id}: {e}"
@@ -1899,12 +1916,17 @@ class SignalAgentService:
         )
 
         if profile and len(profile) > 100:
-            self.supabase.table("cards").update(
-                {
-                    "description": profile,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", card_id).execute()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .update(
+                    {
+                        "description": profile,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .eq("id", card_id)
+                .execute()
+            )
 
             await self._create_timeline_event(
                 card_id=card_id,
@@ -2077,7 +2099,9 @@ class SignalAgentService:
             ):
                 source_record["duplicate_of"] = dedup_result.duplicate_of_id
 
-            result = self.supabase.table("sources").insert(source_record).execute()
+            result = await asyncio.to_thread(
+                lambda: self.supabase.table("sources").insert(source_record).execute()
+            )
 
             if result.data:
                 source_id = result.data[0]["id"]
