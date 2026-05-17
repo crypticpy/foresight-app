@@ -139,7 +139,7 @@ export function ShareSignalModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -147,7 +147,7 @@ export function ShareSignalModal({
         aria-modal="true"
         aria-labelledby={titleId}
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-md rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-dark-surface"
+        className="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-dark-surface"
       >
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-700">
           <h2

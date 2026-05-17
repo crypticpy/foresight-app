@@ -155,7 +155,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/50 z-40"
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
         onClick={onClose}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
         role="button"
@@ -284,7 +284,7 @@ export const DescriptionHistory: React.FC<DescriptionHistoryProps> = ({
       {previewSnapshot && (
         <>
           <div
-            className="fixed inset-0 bg-black/60 z-[60]"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]"
             onClick={() => setPreviewSnapshot(null)}
             onKeyDown={(e) => e.key === "Escape" && setPreviewSnapshot(null)}
             role="button"
