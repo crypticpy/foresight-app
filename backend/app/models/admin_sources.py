@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 CategoryLiteral = Literal[
@@ -32,7 +32,7 @@ class AdminSourceRow(BaseModel):
     category: CategoryLiteral
     name: str
     url: Optional[str] = None
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     weight: float = 1.0
     notes: Optional[str] = None
@@ -47,7 +47,7 @@ class AdminSourceRow(BaseModel):
     items_7d: Optional[int] = None
     passed_7d: Optional[int] = None
     accept_rate_7d: Optional[float] = None
-    last_discovered_at: Optional[str] = None
+    last_discovered_at: Optional[datetime] = None
 
     model_config = {"extra": "allow"}
 
