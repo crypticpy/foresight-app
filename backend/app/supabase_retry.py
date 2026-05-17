@@ -54,15 +54,12 @@ async def execute_with_h2_retry(
 
     Returns whatever ``builder`` returns.
     """
-    last_exc: BaseException | None = None
     for attempt in range(retries + 1):
         try:
             return await asyncio.to_thread(builder)
-        except _H2_ERRORS as exc:
-            last_exc = exc
-            if attempt < retries:
-                await asyncio.sleep(backoff_seconds)
-                continue
-            raise
-    assert last_exc is not None
-    raise last_exc
+        except _H2_ERRORS:
+            if attempt >= retries:
+                raise
+            await asyncio.sleep(backoff_seconds)
+    # Unreachable: the loop body always returns or raises.
+    raise RuntimeError("execute_with_h2_retry exited loop unexpectedly")
