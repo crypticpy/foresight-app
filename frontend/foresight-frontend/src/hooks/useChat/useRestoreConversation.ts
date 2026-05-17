@@ -76,6 +76,10 @@ export function useRestoreConversation(deps: RestoreConversationDeps): void {
     return () => {
       cancelled = true;
     };
+    // Empty deps are intentional: this effect captures the initial scope/id
+    // and must run exactly once on mount. Re-running on dep changes would
+    // re-restore mid-conversation; consumers swap scopes via a `key` prop on
+    // ChatPanel, which remounts the hook and re-triggers this effect cleanly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
