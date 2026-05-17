@@ -10,7 +10,7 @@
  * @module pages/Discover/hooks/useCardLoader
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuthToken } from "../../../lib/auth";
 import { getCardsArtifacts } from "../../../lib/card-artifacts-api";
 import { getCardsFollowerStatus } from "../../../lib/card-followers-api";
@@ -22,6 +22,8 @@ import {
 import { supabase } from "../../../lib/supabase";
 import type { Card, Pillar, SortOption, Stage } from "../types";
 import { getSortConfig } from "../utils";
+
+const PAGE_SIZE = 30;
 
 export interface CardLoaderFilters {
   searchTerm: string;
@@ -57,10 +59,16 @@ export interface UseCardLoaderReturn {
   pillars: Pillar[];
   stages: Stage[];
   loading: boolean;
+  /** True while a follow-up `loadMore()` page is in flight. */
+  isFetchingMore: boolean;
+  /** True when more pages remain server-side. */
+  hasMore: boolean;
   error: string | null;
   setError: (value: string | null) => void;
   /** Imperative re-fetch (used by error-banner "Try again" button). */
   reload: () => void;
+  /** Fetch the next page; safe to call repeatedly while loading. */
+  loadMore: () => void;
 }
 
 async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {
@@ -112,8 +120,19 @@ export function useCardLoader({
   const [pillars, setPillars] = useState<Pillar[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Cursor + filter snapshot for the in-flight fetch. The cursor advances by
+  // PAGE_SIZE as pages append. The snapshot lets `loadMore()` re-issue the
+  // SAME filter set even if `filters` has since changed — late pages from a
+  // stale filter would otherwise pollute the new result set.
+  const offsetRef = useRef(0);
+  const inflightTokenRef = useRef(0);
+  const activeFiltersRef = useRef<CardLoaderFilters | null>(null);
+  const activeFollowedRef = useRef<Set<string>>(new Set());
 
   const reload = useCallback(() => {
     setReloadKey((k) => k + 1);
@@ -139,15 +158,16 @@ export function useCardLoader({
     })();
   }, []);
 
-  // Load cards whenever filters change. The composer is responsible for
-  // debouncing rapidly-changing values before they reach `filters`.
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      setLoading(true);
-      setError(null);
-
+  // Fetch a single page of cards using the active filters. Returns
+  // {cards, hasMore} so the caller can decide whether to allow further
+  // pagination. Each of the three filter paths (following / semantic /
+  // standard) supports offset+limit pagination.
+  const fetchPage = useCallback(
+    async (
+      activeFilters: CardLoaderFilters,
+      followed: Set<string>,
+      offset: number,
+    ): Promise<{ cards: Card[]; hasMore: boolean }> => {
       const {
         searchTerm,
         impactMin,
@@ -165,240 +185,305 @@ export function useCardLoader({
         confidenceFilter,
         issueTagFilter,
         goalFilter,
-      } = filters;
+      } = activeFilters;
 
-      try {
-        // -- Path 1: "following" filter -----------------------------------
-        if (quickFilter === "following") {
-          if (followedCardIds.size === 0) {
-            if (!cancelled) {
-              setCards([]);
-              setLoading(false);
-            }
-            return;
-          }
-
-          let query = supabase
-            .from("cards")
-            .select("*")
-            .eq("status", "active")
-            .in("id", Array.from(followedCardIds));
-
-          if (searchTerm) {
-            query = query.or(
-              `name.ilike.%${searchTerm}%,summary.ilike.%${searchTerm}%`,
-            );
-          }
-          if (selectedPillar) query = query.eq("pillar_id", selectedPillar);
-          if (selectedStage) query = query.eq("stage_id", selectedStage);
-          if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
-          if (impactMin > 0) query = query.gte("impact_score", impactMin);
-          if (relevanceMin > 0)
-            query = query.gte("relevance_score", relevanceMin);
-          if (noveltyMin > 0) query = query.gte("novelty_score", noveltyMin);
-          if (dateFrom) query = query.gte("created_at", dateFrom);
-          if (dateTo) query = query.lte("created_at", dateTo);
-          if (flagFilter === "budget")
-            query = query.gte("budget_assessment->relevance", 60);
-          if (flagFilter === "climate")
-            query = query.gte("climate_assessment->relevance", 60);
-          if (confidenceFilter === "high")
-            query = query.gte("signal_quality_score", 75);
-          if (issueTagFilter)
-            query = query.contains("issue_tags", [issueTagFilter]);
-          if (goalFilter) query = query.contains("csp_goal_ids", [goalFilter]);
-
-          const sortConfig = getSortConfig(sortOption);
-          const { data } = await query.order(sortConfig.column, {
-            ascending: sortConfig.ascending,
-          });
-          const hydrated = await hydrateCardCollab(data || []);
-          if (!cancelled) {
-            setCards(hydrated);
-            setLoading(false);
-          }
-          return;
+      // -- Path 1: "following" filter ---------------------------------------
+      if (quickFilter === "following") {
+        if (followed.size === 0) {
+          return { cards: [], hasMore: false };
         }
 
-        // -- Path 2: semantic search --------------------------------------
-        if (useSemanticSearch && searchTerm.trim()) {
-          const token = await getAuthToken();
+        let query = supabase
+          .from("cards")
+          .select("*")
+          .eq("status", "active")
+          .in("id", Array.from(followed));
 
-          if (token) {
-            const searchRequest: AdvancedSearchRequest = {
-              query: searchTerm,
-              use_vector_search: true,
-              filters: {
-                ...(selectedPillar && { pillar_ids: [selectedPillar] }),
-                ...(selectedStage && { stage_ids: [selectedStage] }),
-                ...(selectedHorizon && {
-                  horizon: selectedHorizon as "H1" | "H2" | "H3",
-                }),
-                ...((dateFrom || dateTo) && {
-                  date_range: {
-                    ...(dateFrom && { start: dateFrom }),
-                    ...(dateTo && { end: dateTo }),
-                  },
-                }),
-                ...((impactMin > 0 || relevanceMin > 0 || noveltyMin > 0) && {
-                  score_thresholds: {
-                    ...(impactMin > 0 && {
-                      impact_score: { min: impactMin },
-                    }),
-                    ...(relevanceMin > 0 && {
-                      relevance_score: { min: relevanceMin },
-                    }),
-                    ...(noveltyMin > 0 && {
-                      novelty_score: { min: noveltyMin },
-                    }),
-                  },
-                }),
-              },
-              limit: 100,
-            };
-
-            const response = await advancedSearch(token, searchRequest);
-
-            let mappedCards: Card[] = response.results.map((result) => ({
-              id: result.id,
-              name: result.name,
-              slug: result.slug,
-              summary: result.summary || result.description || "",
-              pillar_id: result.pillar_id || "",
-              stage_id: result.stage_id || "",
-              horizon: (result.horizon as "H1" | "H2" | "H3") || "H1",
-              novelty_score: result.novelty_score || 0,
-              maturity_score: result.maturity_score || 0,
-              impact_score: result.impact_score || 0,
-              relevance_score: result.relevance_score || 0,
-              velocity_score: result.velocity_score || 0,
-              risk_score: result.risk_score || 0,
-              opportunity_score: result.opportunity_score || 0,
-              created_at: result.created_at || "",
-              updated_at: result.updated_at,
-              anchor_id: result.anchor_id,
-              search_relevance: result.search_relevance,
-            }));
-
-            // Apply quick filters client-side for semantic search results
-            if (quickFilter === "new") {
-              const oneWeekAgo = new Date();
-              oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-              mappedCards = mappedCards.filter(
-                (c) => c.created_at >= oneWeekAgo.toISOString(),
-              );
-            }
-            if (quickFilter === "updated") {
-              const oneWeekAgo = new Date();
-              oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-              mappedCards = mappedCards.filter(
-                (c) =>
-                  (c.updated_at ?? c.created_at) >= oneWeekAgo.toISOString(),
-              );
-            }
-
-            const sortConfig = getSortConfig(sortOption);
-            mappedCards = mappedCards.sort((a, b) => {
-              const aVal =
-                sortConfig.column === "created_at"
-                  ? a.created_at
-                  : a.updated_at || a.created_at;
-              const bVal =
-                sortConfig.column === "created_at"
-                  ? b.created_at
-                  : b.updated_at || b.created_at;
-              const comparison = aVal.localeCompare(bVal);
-              return sortConfig.ascending ? comparison : -comparison;
-            });
-
-            const hydrated = await hydrateCardCollab(mappedCards);
-            if (!cancelled) {
-              setCards(hydrated);
-              recordSearch(currentQueryConfig, mappedCards.length);
-              setLoading(false);
-            }
-            return;
-          }
-        }
-
-        // -- Path 3: standard Supabase query ------------------------------
-        let query = supabase.from("cards").select("*").eq("status", "active");
-
-        if (quickFilter === "new") {
-          const oneWeekAgo = new Date();
-          oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-          query = query.gte("created_at", oneWeekAgo.toISOString());
-        }
-
-        if (quickFilter === "updated") {
-          const oneWeekAgo = new Date();
-          oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-          query = query.gte("updated_at", oneWeekAgo.toISOString());
-        }
-
-        if (selectedPillar) query = query.eq("pillar_id", selectedPillar);
-        if (selectedStage) query = query.eq("stage_id", selectedStage);
-        if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
         if (searchTerm) {
           query = query.or(
             `name.ilike.%${searchTerm}%,summary.ilike.%${searchTerm}%`,
           );
         }
+        if (selectedPillar) query = query.eq("pillar_id", selectedPillar);
+        if (selectedStage) query = query.eq("stage_id", selectedStage);
+        if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
         if (impactMin > 0) query = query.gte("impact_score", impactMin);
         if (relevanceMin > 0)
           query = query.gte("relevance_score", relevanceMin);
         if (noveltyMin > 0) query = query.gte("novelty_score", noveltyMin);
         if (dateFrom) query = query.gte("created_at", dateFrom);
         if (dateTo) query = query.lte("created_at", dateTo);
-
-        // Lens filters (Dashboard tile click-throughs).
-        // PostgREST allows JSONB-path filtering via foo->bar; pass the
-        // threshold as numeric — PostgREST coerces JSONB to numeric for gte.
-        if (flagFilter === "budget") {
+        if (flagFilter === "budget")
           query = query.gte("budget_assessment->relevance", 60);
-        }
-        if (flagFilter === "climate") {
+        if (flagFilter === "climate")
           query = query.gte("climate_assessment->relevance", 60);
-        }
-        if (confidenceFilter === "high") {
+        if (confidenceFilter === "high")
           query = query.gte("signal_quality_score", 75);
-        }
-        if (issueTagFilter) {
+        if (issueTagFilter)
           query = query.contains("issue_tags", [issueTagFilter]);
-        }
-        if (goalFilter) {
-          query = query.contains("csp_goal_ids", [goalFilter]);
-        }
+        if (goalFilter) query = query.contains("csp_goal_ids", [goalFilter]);
 
         const sortConfig = getSortConfig(sortOption);
-        const { data } = await query.order(sortConfig.column, {
-          ascending: sortConfig.ascending,
-        });
+        // Fetch PAGE_SIZE+1 to detect has_more without a separate count.
+        const { data } = await query
+          .order(sortConfig.column, { ascending: sortConfig.ascending })
+          .range(offset, offset + PAGE_SIZE);
+        const rows = (data ?? []) as Card[];
+        const hasMore = rows.length > PAGE_SIZE;
+        const slice = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+        const hydrated = await hydrateCardCollab(slice);
+        return { cards: hydrated, hasMore };
+      }
 
-        const hydrated = await hydrateCardCollab(data || []);
-        if (cancelled) return;
+      // -- Path 2: semantic search ------------------------------------------
+      if (useSemanticSearch && searchTerm.trim()) {
+        const token = await getAuthToken();
+        if (token) {
+          const searchRequest: AdvancedSearchRequest = {
+            query: searchTerm,
+            use_vector_search: true,
+            filters: {
+              ...(selectedPillar && { pillar_ids: [selectedPillar] }),
+              ...(selectedStage && { stage_ids: [selectedStage] }),
+              ...(selectedHorizon && {
+                horizon: selectedHorizon as "H1" | "H2" | "H3",
+              }),
+              ...((dateFrom || dateTo) && {
+                date_range: {
+                  ...(dateFrom && { start: dateFrom }),
+                  ...(dateTo && { end: dateTo }),
+                },
+              }),
+              ...((impactMin > 0 || relevanceMin > 0 || noveltyMin > 0) && {
+                score_thresholds: {
+                  ...(impactMin > 0 && {
+                    impact_score: { min: impactMin },
+                  }),
+                  ...(relevanceMin > 0 && {
+                    relevance_score: { min: relevanceMin },
+                  }),
+                  ...(noveltyMin > 0 && {
+                    novelty_score: { min: noveltyMin },
+                  }),
+                },
+              }),
+            },
+            // Over-fetch by 1 to derive has_more.
+            limit: PAGE_SIZE + 1,
+            offset,
+          };
 
-        setCards(hydrated);
-        if (!quickFilter) {
-          recordSearch(currentQueryConfig, (data || []).length);
+          const response = await advancedSearch(token, searchRequest);
+          const rawResults = response.results;
+          const hasMore = rawResults.length > PAGE_SIZE;
+          const sliced = hasMore ? rawResults.slice(0, PAGE_SIZE) : rawResults;
+
+          let mappedCards: Card[] = sliced.map((result) => ({
+            id: result.id,
+            name: result.name,
+            slug: result.slug,
+            summary: result.summary || result.description || "",
+            pillar_id: result.pillar_id || "",
+            stage_id: result.stage_id || "",
+            horizon: (result.horizon as "H1" | "H2" | "H3") || "H1",
+            novelty_score: result.novelty_score || 0,
+            maturity_score: result.maturity_score || 0,
+            impact_score: result.impact_score || 0,
+            relevance_score: result.relevance_score || 0,
+            velocity_score: result.velocity_score || 0,
+            risk_score: result.risk_score || 0,
+            opportunity_score: result.opportunity_score || 0,
+            created_at: result.created_at || "",
+            updated_at: result.updated_at,
+            anchor_id: result.anchor_id,
+            search_relevance: result.search_relevance,
+          }));
+
+          // Apply quick filters client-side for semantic search results.
+          if (quickFilter === "new") {
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            mappedCards = mappedCards.filter(
+              (c) => c.created_at >= oneWeekAgo.toISOString(),
+            );
+          }
+          if (quickFilter === "updated") {
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            mappedCards = mappedCards.filter(
+              (c) => (c.updated_at ?? c.created_at) >= oneWeekAgo.toISOString(),
+            );
+          }
+
+          const sortConfig = getSortConfig(sortOption);
+          mappedCards = mappedCards.sort((a, b) => {
+            const aVal =
+              sortConfig.column === "created_at"
+                ? a.created_at
+                : a.updated_at || a.created_at;
+            const bVal =
+              sortConfig.column === "created_at"
+                ? b.created_at
+                : b.updated_at || b.created_at;
+            const comparison = aVal.localeCompare(bVal);
+            return sortConfig.ascending ? comparison : -comparison;
+          });
+
+          const hydrated = await hydrateCardCollab(mappedCards);
+          return { cards: hydrated, hasMore };
+        }
+        // No token — fall through to the standard supabase path so the user
+        // still sees results (server-side semantic search needs auth).
+      }
+
+      // -- Path 3: standard Supabase query ----------------------------------
+      let query = supabase.from("cards").select("*").eq("status", "active");
+
+      if (quickFilter === "new") {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        query = query.gte("created_at", oneWeekAgo.toISOString());
+      }
+
+      if (quickFilter === "updated") {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        query = query.gte("updated_at", oneWeekAgo.toISOString());
+      }
+
+      if (selectedPillar) query = query.eq("pillar_id", selectedPillar);
+      if (selectedStage) query = query.eq("stage_id", selectedStage);
+      if (selectedHorizon) query = query.eq("horizon", selectedHorizon);
+      if (searchTerm) {
+        query = query.or(
+          `name.ilike.%${searchTerm}%,summary.ilike.%${searchTerm}%`,
+        );
+      }
+      if (impactMin > 0) query = query.gte("impact_score", impactMin);
+      if (relevanceMin > 0) query = query.gte("relevance_score", relevanceMin);
+      if (noveltyMin > 0) query = query.gte("novelty_score", noveltyMin);
+      if (dateFrom) query = query.gte("created_at", dateFrom);
+      if (dateTo) query = query.lte("created_at", dateTo);
+
+      // Lens filters (Dashboard tile click-throughs).
+      // PostgREST allows JSONB-path filtering via foo->bar; pass the
+      // threshold as numeric — PostgREST coerces JSONB to numeric for gte.
+      if (flagFilter === "budget") {
+        query = query.gte("budget_assessment->relevance", 60);
+      }
+      if (flagFilter === "climate") {
+        query = query.gte("climate_assessment->relevance", 60);
+      }
+      if (confidenceFilter === "high") {
+        query = query.gte("signal_quality_score", 75);
+      }
+      if (issueTagFilter) {
+        query = query.contains("issue_tags", [issueTagFilter]);
+      }
+      if (goalFilter) {
+        query = query.contains("csp_goal_ids", [goalFilter]);
+      }
+
+      const sortConfig = getSortConfig(sortOption);
+      const { data } = await query
+        .order(sortConfig.column, { ascending: sortConfig.ascending })
+        .range(offset, offset + PAGE_SIZE);
+      const rows = (data ?? []) as Card[];
+      const hasMore = rows.length > PAGE_SIZE;
+      const slice = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+      const hydrated = await hydrateCardCollab(slice);
+      return { cards: hydrated, hasMore };
+    },
+    [],
+  );
+
+  // Initial-page load whenever filters change. Resets the cursor, snapshots
+  // the active filters for `loadMore()` to reuse, and uses a token to discard
+  // stale responses from prior filter sets.
+  useEffect(() => {
+    const token = ++inflightTokenRef.current;
+    setLoading(true);
+    setError(null);
+
+    const snapshot = filters;
+    const followedSnapshot = new Set(followedCardIds);
+    activeFiltersRef.current = snapshot;
+    activeFollowedRef.current = followedSnapshot;
+    offsetRef.current = 0;
+
+    (async () => {
+      try {
+        const page = await fetchPage(snapshot, followedSnapshot, 0);
+        if (token !== inflightTokenRef.current) return;
+        setCards(page.cards);
+        setHasMore(page.hasMore);
+        offsetRef.current = page.cards.length;
+
+        // Record search history once per initial load (same triggers as
+        // before): user-typed semantic/text searches + non-quick-filter
+        // standard loads.
+        const isSemanticPath =
+          snapshot.useSemanticSearch && snapshot.searchTerm.trim();
+        const isStandardWithoutQuickFilter =
+          !isSemanticPath &&
+          snapshot.quickFilter !== "following" &&
+          !snapshot.quickFilter;
+        if (isSemanticPath || isStandardWithoutQuickFilter) {
+          recordSearch(currentQueryConfig, page.cards.length);
         }
       } catch (err) {
-        if (cancelled) return;
+        if (token !== inflightTokenRef.current) return;
         setError(classifyError(err));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (token === inflightTokenRef.current) setLoading(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
     // `currentQueryConfig` is rebuilt from the same filter inputs the rest of
     // this effect already depends on; including it would just cause an extra
     // re-fetch on every render. `recordSearch` from useSearchHistory is a
-    // ref-backed stable callback.
+    // ref-backed stable callback. `fetchPage` is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, followedCardIds, reloadKey]);
 
-  return { cards, pillars, stages, loading, error, setError, reload };
+  const loadMore = useCallback(async () => {
+    if (loading || isFetchingMore || !hasMore) return;
+    const snapshot = activeFiltersRef.current;
+    const followedSnapshot = activeFollowedRef.current;
+    if (!snapshot) return;
+    const token = inflightTokenRef.current;
+    setIsFetchingMore(true);
+    try {
+      const page = await fetchPage(
+        snapshot,
+        followedSnapshot,
+        offsetRef.current,
+      );
+      if (token !== inflightTokenRef.current) return; // superseded by a new filter set
+      setCards((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        const incoming = page.cards.filter((c) => !seen.has(c.id));
+        return [...prev, ...incoming];
+      });
+      offsetRef.current += page.cards.length;
+      setHasMore(page.hasMore);
+    } catch (err) {
+      if (token !== inflightTokenRef.current) return;
+      setError(classifyError(err));
+    } finally {
+      if (token === inflightTokenRef.current) setIsFetchingMore(false);
+    }
+  }, [loading, isFetchingMore, hasMore, fetchPage]);
+
+  return {
+    cards,
+    pillars,
+    stages,
+    loading,
+    isFetchingMore,
+    hasMore,
+    error,
+    setError,
+    reload,
+    loadMore,
+  };
 }

@@ -324,12 +324,33 @@ class WorkstreamCardsGroupedResponse(BaseModel):
 
     v2: four stages — inbox / working / ready / archived. Watching is no
     longer a column; clients filter `is_watching` independently.
+
+    Per-column lists are capped at the requested ``limit`` (default 50). The
+    ``has_more`` map exposes which columns still have additional rows the
+    client can fetch via the per-status load-more endpoint.
     """
 
     inbox: List[WorkstreamCardWithDetails] = []
     working: List[WorkstreamCardWithDetails] = []
     ready: List[WorkstreamCardWithDetails] = []
     archived: List[WorkstreamCardWithDetails] = []
+    has_more: Dict[str, bool] = Field(
+        default_factory=lambda: {
+            "inbox": False,
+            "working": False,
+            "ready": False,
+            "archived": False,
+        }
+    )
+
+
+class WorkstreamCardsColumnPage(BaseModel):
+    """Paginated load-more response for a single kanban column."""
+
+    status: str
+    cards: List[WorkstreamCardWithDetails] = []
+    has_more: bool = False
+    next_offset: int = 0
 
 
 class AutoPopulateResponse(BaseModel):

@@ -62,6 +62,13 @@ export interface KanbanBoardProps {
   selectedCardIds?: Set<string>;
   /** Toggle a card's membership in the bulk-action selection. */
   onToggleSelect?: (cardId: string) => void;
+  /**
+   * Per-column `has_more` flags from the backend. When true the column will
+   * fire `onLoadMoreColumn(status)` when the user scrolls near the bottom.
+   */
+  hasMore?: Record<KanbanStatus, boolean>;
+  /** Called when a column with `has_more === true` scrolls near its end. */
+  onLoadMoreColumn?: (status: KanbanStatus) => void;
   /** Optional additional class names */
   className?: string;
 }
@@ -118,6 +125,8 @@ export function KanbanBoard({
   cardActions,
   selectedCardIds,
   onToggleSelect,
+  hasMore,
+  onLoadMoreColumn,
   className,
 }: KanbanBoardProps) {
   // Track the currently dragged card for the overlay
@@ -348,6 +357,10 @@ export function KanbanBoard({
             cardActions={cardActions}
             selectedCardIds={selectedCardIds}
             onToggleSelect={onToggleSelect}
+            hasMore={hasMore?.[column.id] ?? false}
+            onLoadMore={
+              onLoadMoreColumn ? () => onLoadMoreColumn(column.id) : undefined
+            }
             className={
               column.id === activeMobileColumn ? "max-md:flex" : "max-md:hidden"
             }

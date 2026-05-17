@@ -92,12 +92,25 @@ export interface WorkstreamCard {
 /**
  * Cards grouped by their Kanban stage.
  * Each stage key contains an array of workstream cards for that column.
+ *
+ * Per-column lists are paginated server-side (default 50 per column). The
+ * `has_more` map exposes which columns still have additional rows; clients
+ * fetch them via `fetchWorkstreamCardsByStatus`.
  */
 export interface GroupedWorkstreamCards {
   inbox: WorkstreamCard[];
   working: WorkstreamCard[];
   ready: WorkstreamCard[];
   archived: WorkstreamCard[];
+  has_more: Record<KanbanStatus, boolean>;
+}
+
+/** Paginated load-more response for a single kanban column. */
+export interface WorkstreamCardsColumnPage {
+  status: KanbanStatus;
+  cards: WorkstreamCard[];
+  has_more: boolean;
+  next_offset: number;
 }
 
 /**
@@ -177,6 +190,12 @@ function createEmptyGroupedCards(): GroupedWorkstreamCards {
     working: [],
     ready: [],
     archived: [],
+    has_more: {
+      inbox: false,
+      working: false,
+      ready: false,
+      archived: false,
+    },
   };
 }
 

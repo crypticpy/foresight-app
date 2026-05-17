@@ -195,13 +195,31 @@ const Discover: React.FC = () => {
     ],
   );
 
-  const { cards, pillars, stages, loading, error, setError, reload } =
-    useCardLoader({
-      filters: loaderFilters,
-      currentQueryConfig,
-      followedCardIds,
-      recordSearch,
-    });
+  const {
+    cards,
+    pillars,
+    stages,
+    loading,
+    isFetchingMore,
+    hasMore,
+    error,
+    setError,
+    reload,
+    loadMore,
+  } = useCardLoader({
+    filters: loaderFilters,
+    currentQueryConfig,
+    followedCardIds,
+    recordSearch,
+  });
+
+  // Only fire `loadMore` when more pages remain and the page isn't already
+  // mid-fetch. Guarding here keeps the virtualizer's scroll callback wired
+  // to a no-op once we've exhausted the result set.
+  const handleEndReached = useCallback(() => {
+    if (!hasMore || loading || isFetchingMore) return;
+    loadMore();
+  }, [hasMore, loading, isFetchingMore, loadMore]);
 
   // Apply client-side quality tier filter ----------------------------------
   const filteredCards = useMemo(() => {
@@ -465,6 +483,8 @@ const Discover: React.FC = () => {
             renderItem={renderCardItem}
             listRef={virtualizedListRef}
             gridRef={virtualizedGridRef}
+            onEndReached={handleEndReached}
+            isFetchingMore={isFetchingMore}
           />
         ) : null}
 

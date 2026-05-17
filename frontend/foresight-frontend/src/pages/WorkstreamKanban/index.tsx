@@ -74,6 +74,8 @@ const WorkstreamKanban: React.FC = () => {
     workstream,
     cards,
     setCards,
+    hasMore,
+    loadMoreColumn,
     loading,
     cardsLoading,
     refreshing,
@@ -353,6 +355,8 @@ const WorkstreamKanban: React.FC = () => {
                   ? handleToggleSelect
                   : undefined
               }
+              hasMore={hasMore}
+              onLoadMoreColumn={loadMoreColumn}
             />
           </KanbanErrorBoundary>
         )}
