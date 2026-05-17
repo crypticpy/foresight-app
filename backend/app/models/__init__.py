@@ -214,6 +214,10 @@ from .admin_runs import (
     AdminSchedulesListResponse,
 )
 
+from .admin_csp_goals import (
+    AdminCspGoalRefreshQueriesResponse,
+)
+
 from .review import (
     CardReviewRequest,
     BulkReviewRequest,
@@ -494,6 +498,8 @@ __all__ = [
     "DiscoveryRunDetailResponse",
     "AdminScheduleRow",
     "AdminSchedulesListResponse",
+    # admin_csp_goals
+    "AdminCspGoalRefreshQueriesResponse",
     # review
     "CardReviewRequest",
     "BulkReviewRequest",
