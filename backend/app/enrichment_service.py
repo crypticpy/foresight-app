@@ -266,7 +266,7 @@ async def enrich_weak_signals(
                                 logger.warning(
                                     "Enrichment: failed to insert card_sources row "
                                     "for card %s: %s",
-                                    card["id"],
+                                    card.get("id", "<unknown>"),
                                     exc,
                                 )
 
@@ -312,7 +312,7 @@ async def enrich_weak_signals(
                         logger.warning(
                             "Enrichment: failed to insert card_timeline "
                             "'sources_enriched' event for card %s: %s",
-                            card["id"],
+                            card.get("id", "<unknown>"),
                             exc,
                         )
 

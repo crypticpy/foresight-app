@@ -1328,9 +1328,11 @@ Example: ["query 1", "query 2", ...]"""
                     content = text[:10000]
             except Exception as exc:
                 # Best-effort content backfill; URL fetches fail often.
+                # Use getattr in the log so a missing-attr error in the
+                # original call doesn't re-raise here.
                 logger.debug(
                     "workstream_scan: extract_content failed for %s: %s",
-                    source.raw.url,
+                    getattr(getattr(source, "raw", None), "url", None),
                     exc,
                 )
 

@@ -1883,9 +1883,11 @@ class SignalAgentService:
                     # Best-effort content backfill from URL; failures are
                     # frequent (404/timeout/paywall) and non-fatal — original
                     # snippet stays in use. Keep at DEBUG to avoid log noise.
+                    # Use getattr in the log so a missing-attr KeyError/
+                    # AttributeError in the original call doesn't re-raise here.
                     logger.debug(
                         "signal_agent: extract_content failed for %s: %s",
-                        src.raw.url,
+                        getattr(getattr(src, "raw", None), "url", None),
                         exc,
                     )
 
