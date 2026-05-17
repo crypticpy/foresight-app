@@ -379,6 +379,55 @@ def test_redact_for_audit_masks_sensitive_keys():
     }
 
 
+def test_redact_for_audit_masks_nested_and_scalar_secrets():
+    """Defense-in-depth: redaction must walk nested dicts and lists, and
+    a sensitive ``target_id`` must mask scalar/list payloads too — not
+    just top-level dict values.
+
+    Current admin routes only pass flat dicts, but the audit_service is a
+    shared utility; a future caller passing ``{"config": {"api_key": ...}}``
+    or a bare scalar under a key like ``AZURE_OPENAI_API_KEY`` must not
+    leak the secret into ``admin_audit_log``.
+    """
+    from app.audit_service import redact_for_audit
+
+    # Nested dict — secret one level down is masked, surrounding structure
+    # is preserved so the audit row still tells the shape of what was hidden.
+    assert redact_for_audit(
+        "FORESIGHT_X", {"config": {"api_key": "sk-abc", "model": "gpt-5.4"}}
+    ) == {
+        "config": {"api_key": "***REDACTED***", "model": "gpt-5.4"}
+    }
+
+    # List of dicts — recursion walks every element.
+    assert redact_for_audit(
+        "FORESIGHT_X",
+        {"creds": [{"token": "t1"}, {"token": "t2"}, {"safe": "ok"}]},
+    ) == {
+        "creds": [
+            {"token": "***REDACTED***"},
+            {"token": "***REDACTED***"},
+            {"safe": "ok"},
+        ]
+    }
+
+    # Sensitive ``target_id`` + scalar payload — the bare value must be
+    # masked, not pass through.
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", "sk-xyz") == "***REDACTED***"
+
+    # Sensitive ``target_id`` + list payload — every leaf scalar masked.
+    assert redact_for_audit(
+        "AZURE_OPENAI_API_KEY", ["sk-1", "sk-2"]
+    ) == ["***REDACTED***", "***REDACTED***"]
+
+    # Sensitive ``target_id`` + None payload still preserves None.
+    assert redact_for_audit("AZURE_OPENAI_API_KEY", None) is None
+
+    # Non-sensitive ``target_id`` + scalar payload passes through (we only
+    # redact scalars when the target_id flags the whole subtree as suspect).
+    assert redact_for_audit("FORESIGHT_X", "plain-value") == "plain-value"
+
+
 def test_log_admin_action_swallows_insert_errors(monkeypatch, caplog):
     """Audit insert failure must not raise — the underlying mutation already
     succeeded by the time we get here, and a missed audit row is a logging

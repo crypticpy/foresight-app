@@ -43,25 +43,45 @@ _SENSITIVE_KEY_PATTERN = re.compile(
 _REDACTED = "***REDACTED***"
 
 
+def _redact_recursive(payload: Any, *, force_redact: bool) -> Any:
+    """Walk a payload depth-first, masking sensitive values.
+
+    ``force_redact`` propagates from parent context: once we're inside a
+    sensitive subtree (either because the ``target_id`` was sensitive or
+    we descended through a sensitive key), every scalar leaf becomes
+    ``_REDACTED``. Containers (dicts / lists) keep their structure so the
+    audit row still tells the operator the shape of what was masked.
+    """
+    if isinstance(payload, dict):
+        out: dict[str, Any] = {}
+        for key, value in payload.items():
+            key_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(str(key)))
+            child_force = force_redact or key_is_sensitive
+            out[key] = _redact_recursive(value, force_redact=child_force)
+        return out
+    if isinstance(payload, list):
+        return [_redact_recursive(item, force_redact=force_redact) for item in payload]
+    # Scalar leaf. ``None`` stays ``None`` — distinguishes "no override"
+    # from "had a value but we hid it".
+    if force_redact and payload is not None:
+        return _REDACTED
+    return payload
+
+
 def redact_for_audit(target_id: str, payload: Any) -> Any:
     """Mask sensitive values in an audit payload.
 
     Triggers on either a sensitive-looking ``target_id`` (the whole
-    payload is suspect) or sensitive-looking individual field names.
-    Non-dict payloads pass through — we only know how to redact
-    key/value maps.
+    payload is suspect, including scalar payloads and nested structures)
+    or sensitive-looking individual field names anywhere in the tree.
+
+    The redactor walks dicts and lists recursively so a payload shaped
+    like ``{"config": {"api_key": "..."}}`` cannot leak just because the
+    secret is one level down. ``None`` is preserved so the audit log can
+    still distinguish "no value" from "redacted value".
     """
-    if not isinstance(payload, dict):
-        return payload
     target_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(target_id or ""))
-    redacted: dict[str, Any] = {}
-    for key, value in payload.items():
-        field_is_sensitive = bool(_SENSITIVE_KEY_PATTERN.search(str(key)))
-        if (target_is_sensitive or field_is_sensitive) and value is not None:
-            redacted[key] = _REDACTED
-        else:
-            redacted[key] = value
-    return redacted
+    return _redact_recursive(payload, force_redact=target_is_sensitive)
 
 
 def log_admin_action(
