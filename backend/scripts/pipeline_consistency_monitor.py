@@ -20,7 +20,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 
@@ -109,7 +109,7 @@ class PipelineConsistencyMonitor:
 
     def get_discovery_runs(self, days: int = 7) -> List[Dict[str, Any]]:
         """Fetch discovery runs from the last N days."""
-        start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         response = self.supabase.table("discovery_runs").select(
             "*"
@@ -123,7 +123,7 @@ class PipelineConsistencyMonitor:
 
     def get_cards_count_by_date(self, days: int = 7) -> Dict[str, int]:
         """Get card counts grouped by date for variance calculation."""
-        start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         response = self.supabase.table("cards").select(
             "id, created_at"
@@ -229,7 +229,7 @@ class PipelineConsistencyMonitor:
     def generate_report(self, days: int = 7) -> ConsistencyReport:
         """Generate a comprehensive 7-day consistency report."""
         report = ConsistencyReport(
-            report_date=datetime.utcnow().isoformat()[:19] + "Z",
+            report_date=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             days_monitored=days
         )
 
@@ -355,7 +355,7 @@ class PipelineConsistencyMonitor:
 
     def check_today(self) -> DailyRunMetrics:
         """Check today's pipeline run status."""
-        today = datetime.utcnow().date().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
 
         response = self.supabase.table("discovery_runs").select(
             "*"

@@ -174,7 +174,7 @@ export default function HowItWorks() {
         intro="Pure keyword search misses paraphrases. Pure semantic search drifts off-topic. Foresight runs both in parallel and fuses them with Reciprocal Rank Fusion — then an LLM reranker picks the final order. Try a query and watch all three rankings appear side by side."
         icon={<Search className="h-4 w-4" />}
         alternate
-        techNote="Postgres tsvector full-text search + pgvector cosine similarity. RRF score: Σ 1/(k + rank), k=60. Top fused results are then reranked by GPT-5.4-mini against the user's intent before being passed to GPT-5.5 for synthesis."
+        techNote="Postgres tsvector full-text search + pgvector cosine similarity. RRF score: Σ 1/(k + rank), k=60. Top fused results are then reranked by the mini reasoning model against the user's intent before being passed to the premium chat model for synthesis."
       >
         <HybridSearchDemo />
       </Section>
@@ -183,7 +183,7 @@ export default function HowItWorks() {
         id="patterns"
         eyebrow="Step 5"
         title="Patterns: what weak signals add up to."
-        intro="The most valuable insights aren't in any single article. They're in the convergence of three or four. A scheduled job clusters cards across pillars, asks GPT-5.5 to find the cross-cutting story, and writes it back as a pattern card with an opportunity statement."
+        intro="The most valuable insights aren't in any single article. They're in the convergence of three or four. A scheduled job clusters cards across pillars, asks the premium chat model to find the cross-cutting story, and writes it back as a pattern card with an opportunity statement."
         icon={<Brain className="h-4 w-4" />}
       >
         <PatternIllustration />
@@ -193,7 +193,7 @@ export default function HowItWorks() {
         id="chat"
         eyebrow="Step 6"
         title="The chat agent has tools — and uses them."
-        intro="Ask Foresight isn't a wrapper around a chatbot. It's a tool-using agent backed by GPT-5.5 (via the OpenAI Responses API) with hybrid-search retrieval, citations from the library, and a curated set of read and write tools. It defaults to your current scope (signal, workstream, or global) but can broaden when you ask."
+        intro="Ask Foresight isn't a wrapper around a chatbot. It's a tool-using agent backed by the premium chat model (via the OpenAI Responses API) with hybrid-search retrieval, citations from the library, and a curated set of read and write tools. It defaults to your current scope (signal, workstream, or global) but can broaden when you ask."
         icon={<MessageSquare className="h-4 w-4" />}
         alternate
         techNote="System prompt enforces citation discipline; per-message budget caps tool calls (8) and web searches (2) to keep latency in check. Write tools (follow / pin) are reversible by design — the agent never takes destructive actions."

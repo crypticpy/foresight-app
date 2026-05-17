@@ -184,6 +184,18 @@ export async function apiRequest<T>(
 // Client-side grouping
 // ----------------------------------------------------------------------------
 
+/**
+ * Canonical list of kanban statuses. Used to iterate columns without picking
+ * up the sibling `has_more` key on `GroupedWorkstreamCards` (which lacks an
+ * array `.sort()` and would throw at runtime if traversed via Object.keys).
+ */
+const KANBAN_STATUSES: KanbanStatus[] = [
+  "inbox",
+  "working",
+  "ready",
+  "archived",
+];
+
 function createEmptyGroupedCards(): GroupedWorkstreamCards {
   return {
     inbox: [],
@@ -212,13 +224,15 @@ export function groupCardsByStatus(
   const grouped = createEmptyGroupedCards();
 
   for (const card of cards) {
-    if (card.status in grouped) {
+    if (KANBAN_STATUSES.includes(card.status)) {
       grouped[card.status].push(card);
     }
   }
 
-  // Sort each column by position
-  for (const status of Object.keys(grouped) as KanbanStatus[]) {
+  // Sort each column by position. Iterate `KANBAN_STATUSES` rather than
+  // `Object.keys(grouped)` so we don't accidentally call `.sort()` on the
+  // sibling `has_more` Record (which would throw TypeError at runtime).
+  for (const status of KANBAN_STATUSES) {
     grouped[status].sort((a, b) => a.position - b.position);
   }
 

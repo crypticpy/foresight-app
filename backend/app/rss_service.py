@@ -556,8 +556,12 @@ class RSSService:
                     .execute()
                 )
                 recent_count = count_result.count or 0
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "rss: recent-count query failed for feed %s: %s",
+                    feed.get("id"),
+                    exc,
+                )
 
             enriched.append(
                 {

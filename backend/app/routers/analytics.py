@@ -169,8 +169,8 @@ async def get_processing_metrics(
     # -------------------------------------------------------------------------
     # Discovery Run Metrics
     # -------------------------------------------------------------------------
-    discovery_runs_response = (
-        supabase.table("discovery_runs")
+    discovery_runs_response = await asyncio.to_thread(
+        lambda: supabase.table("discovery_runs")
         .select(
             "id, status, cards_created, cards_enriched, sources_found, sources_relevant, summary_report, started_at, completed_at"
         )
@@ -229,8 +229,8 @@ async def get_processing_metrics(
     # -------------------------------------------------------------------------
     # Research Task Metrics
     # -------------------------------------------------------------------------
-    research_tasks_response = (
-        supabase.table("research_tasks")
+    research_tasks_response = await asyncio.to_thread(
+        lambda: supabase.table("research_tasks")
         .select("id, status, started_at, completed_at")
         .gte("created_at", period_start_iso)
         .execute()
@@ -276,8 +276,8 @@ async def get_processing_metrics(
     # -------------------------------------------------------------------------
     # Classification Accuracy Metrics
     # -------------------------------------------------------------------------
-    validations_response = (
-        supabase.table("classification_validations")
+    validations_response = await asyncio.to_thread(
+        lambda: supabase.table("classification_validations")
         .select("is_correct")
         .not_.is_("is_correct", "null")
         .execute()
@@ -301,8 +301,8 @@ async def get_processing_metrics(
     # -------------------------------------------------------------------------
     # Card Generation Summary
     # -------------------------------------------------------------------------
-    cards_response = (
-        supabase.table("cards")
+    cards_response = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select(
             "id, impact_score, velocity_score, novelty_score, risk_score", count="exact"
         )
@@ -393,7 +393,7 @@ async def get_pillar_coverage(
         if stage_id:
             query = query.eq("stage_id", stage_id)
 
-        response = query.execute()
+        response = await asyncio.to_thread(query.execute)
         cards_data = response.data or []
 
         # Count cards per pillar and sum velocity scores
@@ -501,7 +501,9 @@ async def get_analytics_insights(
         if pillar_id:
             query = query.eq("pillar_id", pillar_id)
 
-        response = query.order("velocity_score", desc=True).limit(limit * 2).execute()
+        response = await asyncio.to_thread(
+            lambda: query.order("velocity_score", desc=True).limit(limit * 2).execute()
+        )
 
         if not response.data:
             return InsightsResponse(
@@ -538,8 +540,8 @@ async def get_analytics_insights(
         # -------------------------------------------------------------------------
         if not force_refresh:
             try:
-                cache_response = (
-                    supabase.table("cached_insights")
+                cache_response = await asyncio.to_thread(
+                    lambda: supabase.table("cached_insights")
                     .select("insights_json, generated_at, card_data_hash")
                     .eq("pillar_filter", pillar_id)
                     .eq("insight_limit", limit)
@@ -670,23 +672,27 @@ async def get_analytics_insights(
             }
 
             # Upsert cache entry
-            supabase.table("cached_insights").upsert(
-                {
-                    "pillar_filter": pillar_id,
-                    "insight_limit": limit,
-                    "cache_date": date_type.today().isoformat(),
-                    "insights_json": cache_json,
-                    "top_card_ids": top_card_ids,
-                    "card_data_hash": current_hash,
-                    "ai_model_used": (
-                        get_chat_mini_deployment() if ai_available else None
-                    ),
-                    "generation_time_ms": generation_time_ms,
-                    "generated_at": generated_at.isoformat(),
-                    "expires_at": (generated_at + timedelta(hours=24)).isoformat(),
-                },
-                on_conflict="pillar_filter,insight_limit,cache_date",
-            ).execute()
+            await asyncio.to_thread(
+                lambda: supabase.table("cached_insights")
+                .upsert(
+                    {
+                        "pillar_filter": pillar_id,
+                        "insight_limit": limit,
+                        "cache_date": date_type.today().isoformat(),
+                        "insights_json": cache_json,
+                        "top_card_ids": top_card_ids,
+                        "card_data_hash": current_hash,
+                        "ai_model_used": (
+                            get_chat_mini_deployment() if ai_available else None
+                        ),
+                        "generation_time_ms": generation_time_ms,
+                        "generated_at": generated_at.isoformat(),
+                        "expires_at": (generated_at + timedelta(hours=24)).isoformat(),
+                    },
+                    on_conflict="pillar_filter,insight_limit,cache_date",
+                )
+                .execute()
+            )
 
             logger.info(
                 f"Cached insights for pillar={pillar_id}, limit={limit}, took {generation_time_ms}ms"
@@ -778,7 +784,9 @@ async def get_trend_velocity(
         query = query.gte("created_at", f"{start_date}T00:00:00")
         query = query.lte("created_at", f"{end_date}T23:59:59")
 
-        response = query.order("created_at", desc=False).execute()
+        response = await asyncio.to_thread(
+            lambda: query.order("created_at", desc=False).execute()
+        )
 
         cards = response.data or []
         total_cards = len(cards)
@@ -2105,7 +2113,7 @@ async def get_top_domains(
         if category:
             query = query.eq("category", category)
         query = query.order("composite_score", desc=True).limit(limit)
-        result = query.execute()
+        result = await asyncio.to_thread(query.execute)
         return result.data
     except Exception as e:
         logger.error(f"Failed to get top domains: {str(e)}")

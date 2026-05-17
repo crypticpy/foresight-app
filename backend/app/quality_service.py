@@ -201,7 +201,7 @@ def _calculate_source_diversity(sources: list[dict]) -> int:
 
     Scoring examples
     ----------------
-    - Sources from rss, newsapi, tavily, academic, gov: 5 categories -> 100
+    - Sources from rss, newsapi, serper, academic, gov: 5 categories -> 100
     - Sources from rss, newsapi: 2 categories -> 50
     - All sources from rss only: 1 category -> 20
     - No sources: 0
@@ -444,8 +444,11 @@ def _calculate_municipal_specificity(sources: list[dict]) -> int:
                 hostname = urlparse(url).hostname or ""
                 if hostname.lower().endswith(".gov"):
                     has_gov_domain = True
-            except Exception:
-                pass
+            except Exception as exc:
+                # Failure means no .gov bonus for this source; not worth WARNING.
+                logger.debug(
+                    "quality: urlparse failed for %s: %s", url, exc
+                )
 
     if not relevance_values:
         # No relevance data available; use a conservative baseline

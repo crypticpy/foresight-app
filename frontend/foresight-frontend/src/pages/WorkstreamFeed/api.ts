@@ -60,7 +60,13 @@ const DEFAULT_FEED_PAGE_SIZE = 30;
  * effectively noise inside a substring match.
  */
 function escapeKeywordForOr(raw: string): string {
-  return raw.replace(/[%_]/g, " ").replace(/[,()]/g, " ").trim();
+  // Also neutralize `\` — PostgreSQL LIKE/ILIKE uses backslash as the default
+  // escape char, so a stray `\%` or `\_` would match a literal `%`/`_`
+  // instead of being treated as user noise.
+  return raw
+    .replace(/[%_\\]/g, " ")
+    .replace(/[,()]/g, " ")
+    .trim();
 }
 
 export async function fetchWorkstreamFeed(

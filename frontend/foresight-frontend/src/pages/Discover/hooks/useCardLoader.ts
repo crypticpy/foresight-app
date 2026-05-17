@@ -129,7 +129,14 @@ interface FetchPageResult {
  * change either.
  */
 function escapeSearchTermForOr(term: string): string {
-  return term.replace(/[%_]/g, " ").replace(/[,()]/g, " ").trim();
+  // Also strip `\` — PostgreSQL LIKE/ILIKE treats backslash as the default
+  // escape char, so `\%` / `\_` would otherwise match literal `%`/`_` rather
+  // than acting as plain text. Keep in sync with `escapeKeywordForOr` in
+  // `pages/WorkstreamFeed/api.ts`.
+  return term
+    .replace(/[%_\\]/g, " ")
+    .replace(/[,()]/g, " ")
+    .trim();
 }
 
 async function hydrateCardCollab(rawCards: Card[]): Promise<Card[]> {

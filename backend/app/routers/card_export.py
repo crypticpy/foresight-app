@@ -384,8 +384,15 @@ async def export_workstream_report(
         if export_path and Path(export_path).exists():
             try:
                 Path(export_path).unlink()
-            except Exception:
-                pass
+            except Exception as exc:
+                # The main export error is already logged above; the temp-file
+                # cleanup failure is secondary and just leaves a stale file
+                # for the system tmp reaper.
+                logger.debug(
+                    "card_export: temp file cleanup failed for %s: %s",
+                    export_path,
+                    exc,
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_safe_error("export generation", e),

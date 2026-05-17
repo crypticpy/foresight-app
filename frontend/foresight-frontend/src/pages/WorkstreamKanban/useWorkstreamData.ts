@@ -199,10 +199,14 @@ export function useWorkstreamData({
       if (!workstreamId) return;
       if (loadingMoreRef.current[status]) return;
       if (!hasMore[status]) return;
-      const token = await getAuthToken();
-      if (!token) return;
+      // Set the in-flight guard BEFORE awaiting any I/O. Otherwise the
+      // IntersectionObserver (240px rootMargin) can fire rapid successive
+      // callbacks that all pass the guard check during `await getAuthToken()`
+      // and issue duplicate page fetches.
       loadingMoreRef.current[status] = true;
       try {
+        const token = await getAuthToken();
+        if (!token) return;
         const page = await fetchWorkstreamCardsByStatus(
           token,
           workstreamId,

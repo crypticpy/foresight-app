@@ -22,7 +22,7 @@ export function ChatAgentTools() {
     {
       icon: Globe,
       name: "web_search",
-      desc: "Live web search via Tavily for breaking developments",
+      desc: "Live web search via Serper / SearXNG for breaking developments",
       kind: "Read",
     },
     {

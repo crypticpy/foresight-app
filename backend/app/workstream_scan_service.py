@@ -242,8 +242,11 @@ class WorkstreamScanService:
             # Clear domain reputation batch cache after triage (Task 2.7)
             try:
                 domain_reputation_service.clear_batch_cache()
-            except Exception:
-                pass  # Non-fatal
+            except Exception as exc:
+                # Non-fatal — cache will eventually time out on its own.
+                logger.debug(
+                    "workstream_scan: clear_batch_cache failed: %s", exc
+                )
 
             if not processed_sources:
                 logger.warning(
@@ -1323,8 +1326,15 @@ Example: ["query 1", "query 2", ...]"""
                 text, _ = await extract_content(source.raw.url)
                 if text and len(text) > len(content):
                     content = text[:10000]
-            except Exception:
-                pass
+            except Exception as exc:
+                # Best-effort content backfill; URL fetches fail often.
+                # Use getattr in the log so a missing-attr error in the
+                # original call doesn't re-raise here.
+                logger.debug(
+                    "workstream_scan: extract_content failed for %s: %s",
+                    getattr(getattr(source, "raw", None), "url", None),
+                    exc,
+                )
 
         source_analyses = [
             {
@@ -1382,8 +1392,13 @@ Example: ["query 1", "query 2", ...]"""
                     self.supabase, source.raw.url or ""
                 ):
                     _domain_reputation_id = _rep.get("id")
-            except Exception:
-                pass  # Non-fatal
+            except Exception as exc:
+                # Non-fatal — source row still gets stored without rep linkage.
+                logger.debug(
+                    "workstream_scan: get_reputation failed for %s: %s",
+                    source.raw.url,
+                    exc,
+                )
 
             source_record = {
                 "card_id": card_id,

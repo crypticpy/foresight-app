@@ -119,8 +119,8 @@ async def enrich_weak_signals(
         }
 
     # Step 1: Find cards with source counts
-    cards_resp = (
-        supabase.table("cards")
+    cards_resp = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("id, name, summary, pillar_id")
         .eq("status", "active")
         .limit(max_cards)
@@ -134,10 +134,10 @@ async def enrich_weak_signals(
     # For each card, count its sources
     weak_cards = []
     for card in all_cards:
-        src_resp = (
-            supabase.table("sources")
+        src_resp = await asyncio.to_thread(
+            lambda card_id=card["id"]: supabase.table("sources")
             .select("id", count="exact")
-            .eq("card_id", card["id"])
+            .eq("card_id", card_id)
             .execute()
         )
         source_count = (
@@ -195,8 +195,8 @@ async def enrich_weak_signals(
                     return 0
 
                 # Get existing source URLs to avoid duplicates
-                existing_resp = (
-                    supabase.table("sources")
+                existing_resp = await asyncio.to_thread(
+                    lambda: supabase.table("sources")
                     .select("url")
                     .eq("card_id", card["id"])
                     .execute()
@@ -234,28 +234,41 @@ async def enrich_weak_signals(
                     }
 
                     try:
-                        src_result = (
-                            supabase.table("sources").insert(source_record).execute()
+                        src_result = await asyncio.to_thread(
+                            lambda: supabase.table("sources")
+                            .insert(source_record)
+                            .execute()
                         )
                         if src_result.data:
                             source_id = src_result.data[0]["id"]
                             try:
-                                supabase.table("signal_sources").insert(
-                                    {
-                                        "card_id": card["id"],
-                                        "source_id": source_id,
-                                        "relationship_type": "supporting",
-                                        "confidence": min(wr.get("score", 0.7), 1.0),
-                                        "agent_reasoning": (
-                                            f"Web enrichment via {search_provider} "
-                                            f"for '{card_name[:60]}'"
-                                        ),
-                                        "created_by": "enrichment_service",
-                                        "created_at": now,
-                                    }
-                                ).execute()
-                            except Exception:
-                                pass
+                                await asyncio.to_thread(
+                                    lambda: supabase.table("signal_sources")
+                                    .insert(
+                                        {
+                                            "card_id": card["id"],
+                                            "source_id": source_id,
+                                            "relationship_type": "supporting",
+                                            "confidence": min(
+                                                wr.get("score", 0.7), 1.0
+                                            ),
+                                            "agent_reasoning": (
+                                                f"Web enrichment via {search_provider} "
+                                                f"for '{card_name[:60]}'"
+                                            ),
+                                            "created_by": "enrichment_service",
+                                            "created_at": now,
+                                        }
+                                    )
+                                    .execute()
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Enrichment: failed to insert card_sources row "
+                                    "for card %s: %s",
+                                    card.get("id", "<unknown>"),
+                                    exc,
+                                )
 
                             sources_added += 1
                             existing_urls.add(url)
@@ -267,29 +280,41 @@ async def enrich_weak_signals(
                             )
 
                 if sources_added > 0:
-                    supabase.table("cards").update({"updated_at": now}).eq(
-                        "id", card["id"]
-                    ).execute()
+                    await asyncio.to_thread(
+                        lambda: supabase.table("cards")
+                        .update({"updated_at": now})
+                        .eq("id", card["id"])
+                        .execute()
+                    )
 
                     try:
-                        supabase.table("card_timeline").insert(
-                            {
-                                "card_id": card["id"],
-                                "event_type": "sources_enriched",
-                                "title": "Additional sources discovered",
-                                "description": (
-                                    f"Found {sources_added} additional supporting "
-                                    f"sources via {search_provider} web search"
-                                ),
-                                "metadata": {
-                                    "source": f"{search_provider}_enrichment",
-                                    "count": sources_added,
-                                },
-                                "created_at": now,
-                            }
-                        ).execute()
-                    except Exception:
-                        pass
+                        await asyncio.to_thread(
+                            lambda: supabase.table("card_timeline")
+                            .insert(
+                                {
+                                    "card_id": card["id"],
+                                    "event_type": "sources_enriched",
+                                    "title": "Additional sources discovered",
+                                    "description": (
+                                        f"Found {sources_added} additional supporting "
+                                        f"sources via {search_provider} web search"
+                                    ),
+                                    "metadata": {
+                                        "source": f"{search_provider}_enrichment",
+                                        "count": sources_added,
+                                    },
+                                    "created_at": now,
+                                }
+                            )
+                            .execute()
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Enrichment: failed to insert card_timeline "
+                            "'sources_enriched' event for card %s: %s",
+                            card.get("id", "<unknown>"),
+                            exc,
+                        )
 
                 logger.info(
                     f"Enrichment: Added {sources_added} sources to "
@@ -354,8 +379,8 @@ async def enrich_signal_profiles(
     ai_service = AIService(azure_openai_client)
 
     # Fetch ALL active cards (scan everything, limit processing)
-    cards_resp = (
-        supabase.table("cards")
+    cards_resp = await asyncio.to_thread(
+        lambda: supabase.table("cards")
         .select("id, name, summary, description, pillar_id, horizon")
         .eq("status", "active")
         .order("created_at", desc=True)
@@ -420,8 +445,15 @@ async def enrich_signal_profiles(
                                     supabase.table("sources").update(
                                         {"full_text": text[:10000]}
                                     ).eq("id", src["id"]).execute()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            # Content backfill is best-effort; URL fetches fail
+                            # often (404, timeout, paywall). Keep behavior, just
+                            # leave a low-volume breadcrumb at DEBUG.
+                            logger.debug(
+                                "Enrichment: extract_content failed for %s: %s",
+                                src.get("url"),
+                                exc,
+                            )
 
             # Build source analyses for profile generation
             source_analyses = []
