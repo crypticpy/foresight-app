@@ -364,6 +364,7 @@ async def _validate_rss_url(url: str) -> None:
     "/admin/sources",
     status_code=status.HTTP_201_CREATED,
     response_model=AdminSourceRow,
+    response_model_exclude_none=True,
 )
 @limiter.limit("10/minute")
 async def create_admin_source(
@@ -437,7 +438,11 @@ async def create_admin_source(
     return row
 
 
-@router.patch("/admin/sources/{source_id}", response_model=AdminSourceRow)
+@router.patch(
+    "/admin/sources/{source_id}",
+    response_model=AdminSourceRow,
+    response_model_exclude_none=True,
+)
 @limiter.limit("30/minute")
 async def update_admin_source(
     request: Request,
