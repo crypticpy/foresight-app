@@ -52,15 +52,15 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
     if not admin:
         await asyncio.to_thread(ensure_user_clones_for_templates, user_id)
 
-    own = (
-        supabase.table("workstreams")
+    own = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
     )
-    memberships = (
-        supabase.table("workstream_members")
+    memberships = await asyncio.to_thread(
+        lambda: supabase.table("workstream_members")
         .select("workstream_id, role")
         .eq("user_id", user_id)
         .execute()
@@ -72,28 +72,26 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
     }
     shared_data: list[dict] = []
     if member_role_by_ws:
-        shared_data = (
-            supabase.table("workstreams")
+        shared_response = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
             .select("*")
             .in_("id", list(member_role_by_ws))
             .order("created_at", desc=True)
             .execute()
-            .data
-            or []
         )
+        shared_data = shared_response.data or []
 
     # Admins also see org templates directly (filter/curation surface).
     admin_templates: list[dict] = []
     if admin:
-        admin_templates = (
-            supabase.table("workstreams")
+        admin_response = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
             .select("*")
             .eq("owner_type", WORKSTREAM_OWNER_TYPE_ORG)
             .order("created_at", desc=True)
             .execute()
-            .data
-            or []
         )
+        admin_templates = admin_response.data or []
 
     seen: set[str] = set()
     rows: list[dict] = []
@@ -133,7 +131,9 @@ async def create_workstream(
         }
     )
 
-    response = supabase.table("workstreams").insert(ws_dict).execute()
+    response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams").insert(ws_dict).execute()
+    )
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create workstream")
 
@@ -148,7 +148,8 @@ async def create_workstream(
     try:
         # Fetch candidate cards from DB (broad filter via SQL where possible)
         query = supabase.table("cards").select("*").eq("status", "active")
-        cards_response = query.order("created_at", desc=True).limit(60).execute()
+        query = query.order("created_at", desc=True).limit(60)
+        cards_response = await asyncio.to_thread(query.execute)
         cards = cards_response.data or []
 
         # Apply workstream filters via shared helper
@@ -169,8 +170,8 @@ async def create_workstream(
                 }
                 for idx, card in enumerate(candidates)
             ]
-            insert_result = (
-                supabase.table("workstream_cards").insert(new_records).execute()
+            insert_result = await asyncio.to_thread(
+                lambda: supabase.table("workstream_cards").insert(new_records).execute()
             )
             auto_populated_count = len(insert_result.data) if insert_result.data else 0
 
@@ -257,8 +258,8 @@ async def update_workstream(
 
     if not update_dict:
         # No updates provided, return existing workstream
-        ws = (
-            supabase.table("workstreams")
+        ws = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
             .select("*")
             .eq("id", workstream_id)
             .limit(1)
@@ -270,8 +271,8 @@ async def update_workstream(
     update_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     # Perform update
-    response = (
-        supabase.table("workstreams")
+    response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
         .update(update_dict)
         .eq("id", workstream_id)
         .execute()
@@ -306,7 +307,9 @@ async def delete_workstream(
     require_workstream_access(supabase, workstream_id, current_user, "manage")
 
     # Perform delete
-    supabase.table("workstreams").delete().eq("id", workstream_id).execute()
+    await asyncio.to_thread(
+        lambda: supabase.table("workstreams").delete().eq("id", workstream_id).execute()
+    )
 
     return {"status": "deleted", "message": "Workstream successfully deleted"}
 
@@ -342,8 +345,8 @@ async def get_workstream_feed(
     """
     # Read access: owner OR any org-owned workstream.  Mutation routes still
     # require user_id ownership.
-    ws_response = (
-        supabase.table("workstreams")
+    ws_response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
         .select("*")
         .eq("id", workstream_id)
         .execute()
@@ -373,9 +376,8 @@ async def get_workstream_feed(
     if workstream.get("horizon") and workstream["horizon"] != "ALL":
         query = query.eq("horizon", workstream["horizon"])
 
-    response = (
-        query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
-    )
+    query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
+    response = await asyncio.to_thread(query.execute)
     cards = response.data or []
 
     if stage_ids := workstream.get("stage_ids", []):
@@ -436,8 +438,8 @@ async def auto_populate_workstream(
         HTTPException 403: Not authorized
     """
     # Verify workstream belongs to user
-    ws_response = (
-        supabase.table("workstreams")
+    ws_response = await asyncio.to_thread(
+        lambda: supabase.table("workstreams")
         .select("*")
         .eq("id", workstream_id)
         .eq("user_id", current_user["id"])
@@ -449,8 +451,8 @@ async def auto_populate_workstream(
     workstream = ws_response.data[0]
 
     # Get existing card IDs in workstream
-    existing_response = (
-        supabase.table("workstream_cards")
+    existing_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("card_id")
         .eq("workstream_id", workstream_id)
         .execute()
@@ -476,7 +478,8 @@ async def auto_populate_workstream(
 
     # Fetch more cards than limit to account for filtering
     fetch_limit = min(limit * 3, 100)
-    response = query.order("created_at", desc=True).limit(fetch_limit).execute()
+    query = query.order("created_at", desc=True).limit(fetch_limit)
+    response = await asyncio.to_thread(query.execute)
     cards = response.data or []
 
     if stage_ids := workstream.get("stage_ids", []):
@@ -512,8 +515,8 @@ async def auto_populate_workstream(
         return AutoPopulateResponse(added=0, cards=[])
 
     # Get current max position in inbox
-    position_response = (
-        supabase.table("workstream_cards")
+    position_response = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards")
         .select("position")
         .eq("workstream_id", workstream_id)
         .eq("status", "inbox")
@@ -544,7 +547,9 @@ async def auto_populate_workstream(
         )
 
     # Insert all records
-    result = supabase.table("workstream_cards").insert(new_records).execute()
+    result = await asyncio.to_thread(
+        lambda: supabase.table("workstream_cards").insert(new_records).execute()
+    )
 
     if not result.data:
         raise HTTPException(
@@ -589,8 +594,8 @@ async def toggle_workstream_auto_scan(
     """
     try:
         # Verify workstream exists and belongs to user
-        ws_check = (
-            supabase.table("workstreams")
+        ws_check = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
             .select("id, user_id")
             .eq("id", workstream_id)
             .execute()
@@ -607,8 +612,8 @@ async def toggle_workstream_auto_scan(
             )
 
         # Update auto_scan setting
-        result = (
-            supabase.table("workstreams")
+        result = await asyncio.to_thread(
+            lambda: supabase.table("workstreams")
             .update(
                 {
                     "auto_scan": enable,
