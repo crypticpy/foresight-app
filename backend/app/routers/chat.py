@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, FileResponse
 from starlette.background import BackgroundTask
 
-from app.authz import is_admin, require_workstream_access
+from app.authz import accessible_workstream_ids, is_admin, require_workstream_access
 from app.deps import supabase, get_current_user, _safe_error
 from app.models.chat import ChatRequest, ConversationUpdateRequest
 from app.export_service import ExportService
@@ -890,26 +890,38 @@ async def search_mentions(
         except Exception as exc:
             logger.warning(f"Mention search: cards query failed: {exc}")
 
-        # Search workstreams by name
+        # Search workstreams by name — scope to ones the caller can read so
+        # mention autocomplete doesn't enumerate other users' private titles.
         remaining = limit - len(results)
         if remaining > 0:
             try:
-                ws_result = (
-                    supabase.table("workstreams")
-                    .select("id, name")
-                    .ilike("name", search_term)
-                    .order("name")
-                    .limit(remaining)
-                    .execute()
+                accessible_ids = await asyncio.to_thread(
+                    accessible_workstream_ids,
+                    supabase,
+                    current_user["id"],
+                    is_admin(current_user),
                 )
-                for ws in ws_result.data or []:
-                    results.append(
-                        {
-                            "id": ws["id"],
-                            "type": "workstream",
-                            "title": ws["name"],
-                        }
+                # Empty set for a non-admin = nothing to show; admin sentinel
+                # (None) skips the filter entirely.
+                if accessible_ids is None or accessible_ids:
+                    query = (
+                        supabase.table("workstreams")
+                        .select("id, name")
+                        .ilike("name", search_term)
+                        .order("name")
+                        .limit(remaining)
                     )
+                    if accessible_ids is not None:
+                        query = query.in_("id", list(accessible_ids))
+                    ws_result = query.execute()
+                    for ws in ws_result.data or []:
+                        results.append(
+                            {
+                                "id": ws["id"],
+                                "type": "workstream",
+                                "title": ws["name"],
+                            }
+                        )
             except Exception as exc:
                 logger.warning(f"Mention search: workstreams query failed: {exc}")
 

@@ -714,6 +714,8 @@ async def chat(
                 scope_id=scope_id,
                 mentions=mentions,
                 max_context_chars=MAX_CONTEXT_CHARS,
+                user_id=user_id,
+                is_admin=is_admin,
             )
             source_map = scope_metadata.get("source_map", {})
         except Exception as e:

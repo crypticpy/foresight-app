@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.authz import accessible_workstream_ids
 from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import (
     azure_openai_async_client,
@@ -56,6 +57,8 @@ class RAGEngine:
         scope_id: Optional[str] = None,
         mentions: Optional[List[Dict[str, Any]]] = None,
         max_context_chars: Optional[int] = None,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Tuple[str, dict]:
         """
         Orchestrate the full hybrid-RAG pipeline.
@@ -72,6 +75,13 @@ class RAGEngine:
             Structured ``@mention`` references from the frontend.
         max_context_chars : int | None
             Override for :pyattr:`MAX_CONTEXT_CHARS`.
+        user_id : str | None
+            Authenticated caller id. Required to scope ``@workstream`` mention
+            resolution to workstreams the caller can read. ``None`` paired with
+            ``is_admin=False`` makes private-workstream mentions silently miss
+            rather than leak metadata.
+        is_admin : bool
+            When True, mention resolution skips the per-user workstream ACL.
 
         Returns
         -------
@@ -111,7 +121,9 @@ class RAGEngine:
         # Step 6: resolve @mentions
         mention_data: List[Dict[str, Any]] = []
         if mentions or _extract_mention_titles(query):
-            mention_data = await self._resolve_mentions(query, mentions)
+            mention_data = await self._resolve_mentions(
+                query, mentions, user_id=user_id, is_admin=is_admin
+            )
 
         # Step 7: assemble final context
         context_text, metadata = self._assemble_context(
@@ -431,10 +443,17 @@ class RAGEngine:
         self,
         message: str,
         mentions: Optional[List[Dict[str, Any]]] = None,
+        *,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Resolve ``@[Title]`` patterns or structured mentions and return
         a list of context dicts for each resolved entity.
+
+        ``user_id`` / ``is_admin`` scope ``@workstream`` resolution to
+        workstreams the caller can read; without them, private workstream
+        mentions silently miss rather than leak metadata.
         """
         mention_refs: List[Dict[str, Any]] = []
 
@@ -459,7 +478,9 @@ class RAGEngine:
 
         for ref in mention_refs:
             try:
-                entity = await self._resolve_single_mention(ref)
+                entity = await self._resolve_single_mention(
+                    ref, user_id=user_id, is_admin=is_admin
+                )
                 if entity:
                     resolved.append(entity)
             except Exception:
@@ -470,9 +491,17 @@ class RAGEngine:
         return resolved
 
     async def _resolve_single_mention(
-        self, ref: Dict[str, Any]
+        self,
+        ref: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Resolve one mention reference to a card or workstream dict."""
+        """Resolve one mention reference to a card or workstream dict.
+
+        Workstream resolution is scoped by ``user_id``/``is_admin`` so that
+        mentions can't enumerate other users' private workstreams.
+        """
         entity_type = ref.get("type")
         entity_id = ref.get("id")
         title = ref.get("title", "")
@@ -498,7 +527,9 @@ class RAGEngine:
 
         # Try workstream resolution
         if entity_type in ("workstream", None):
-            ws = await self._lookup_workstream(entity_id, title)
+            ws = await self._lookup_workstream(
+                entity_id, title, user_id=user_id, is_admin=is_admin
+            )
             if ws:
                 try:
                     wc_result = (
@@ -1056,11 +1087,34 @@ class RAGEngine:
         return None
 
     async def _lookup_workstream(
-        self, workstream_id: Optional[str], title: str
+        self,
+        workstream_id: Optional[str],
+        title: str,
+        *,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Look up a workstream by ID or by ILIKE name search."""
+        """Look up a workstream by ID or by ILIKE name search.
+
+        Scoped to workstreams the caller can read. Without a ``user_id`` and
+        ``is_admin=False``, all lookups miss — this prevents anonymous /
+        unattributed callers from discovering private workstreams.
+        """
         try:
+            # Admin sentinel → no scoping. Non-admin → restrict to accessible ids.
+            accessible_ids: Optional[set[str]] = None
+            if not is_admin:
+                if not user_id:
+                    return None
+                accessible_ids = accessible_workstream_ids(
+                    self.supabase, user_id, is_admin_user=False
+                )
+                if not accessible_ids:
+                    return None
+
             if workstream_id:
+                if accessible_ids is not None and workstream_id not in accessible_ids:
+                    return None
                 result = (
                     self.supabase.table("workstreams")
                     .select("id, name, description")
@@ -1071,13 +1125,14 @@ class RAGEngine:
                     return result.data[0]
 
             if title:
-                result = (
+                query = (
                     self.supabase.table("workstreams")
                     .select("id, name, description")
                     .ilike("name", f"%{sanitize_ilike(title)}%")
-                    .limit(1)
-                    .execute()
                 )
+                if accessible_ids is not None:
+                    query = query.in_("id", list(accessible_ids))
+                result = query.limit(1).execute()
                 if result.data:
                     return result.data[0]
         except Exception:

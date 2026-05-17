@@ -167,6 +167,57 @@ def get_workstream_access(
     )
 
 
+def accessible_workstream_ids(
+    supabase: Client,
+    user_id: str,
+    is_admin_user: bool = False,
+) -> set[str] | None:
+    """Return workstream ids the caller can read, or ``None`` for admins.
+
+    A ``None`` return is a sentinel meaning "no scoping needed — admin sees
+    everything". Callers that build an ``.in_("id", …)`` filter should treat
+    ``None`` as "skip the filter entirely". An empty set means the caller is
+    a non-admin with zero accessible workstreams; callers should short-circuit
+    rather than emit a query with an empty ``in_`` (which would still return
+    every row in PostgREST).
+
+    For non-admins the set covers:
+      - workstreams the user owns (``workstreams.user_id == user_id``)
+      - workstreams the user is a member of via ``workstream_members``
+
+    Org templates are intentionally excluded; non-admins see their per-user
+    clones via the ownership branch.
+    """
+    if is_admin_user:
+        return None
+
+    accessible: set[str] = set()
+
+    owned = (
+        supabase.table("workstreams")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    for row in owned.data or []:
+        ws_id = row.get("id")
+        if ws_id:
+            accessible.add(ws_id)
+
+    shared = (
+        supabase.table("workstream_members")
+        .select("workstream_id")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    for row in shared.data or []:
+        ws_id = row.get("workstream_id")
+        if ws_id:
+            accessible.add(ws_id)
+
+    return accessible
+
+
 def require_workstream_access(
     supabase: Client,
     workstream_id: str,
