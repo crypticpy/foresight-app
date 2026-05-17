@@ -176,12 +176,17 @@ def _disable_rate_limiter(monkeypatch):
 
 
 def _patch_supabase(monkeypatch, mock_sb):
-    """Patch supabase in both modules that touch the registry / audit log."""
+    """Patch supabase in every module that touches the registry / audit log."""
+    from app import audit_service
     from app.routers import admin as admin_router
     from app.routers import admin_discovery
 
     monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    # audit_service holds its own ``supabase`` reference (the audit insert
+    # was extracted out of admin.py); patch it too so audit rows land in the
+    # same mock as the primary mutation.
+    monkeypatch.setattr(audit_service, "supabase", mock_sb)
 
 
 def _stub_rss_validator(monkeypatch):
