@@ -58,9 +58,9 @@ export function LensFlagChips({
 
   return (
     <div className={cn("flex items-center gap-1.5 flex-wrap", className)}>
-      {showBudget && (
+      {showBudget && budgetRelevance !== null && (
         <Tooltip
-          content={`Budget-relevant — assessment ${Math.round(budgetRelevance!)}/100`}
+          content={`Budget-relevant — assessment ${Math.round(budgetRelevance)}/100`}
           side="top"
           align="center"
         >
@@ -74,9 +74,9 @@ export function LensFlagChips({
           </span>
         </Tooltip>
       )}
-      {showClimate && (
+      {showClimate && climateRelevance !== null && (
         <Tooltip
-          content={`Climate-relevant — assessment ${Math.round(climateRelevance!)}/100`}
+          content={`Climate-relevant — assessment ${Math.round(climateRelevance)}/100`}
           side="top"
           align="center"
         >
