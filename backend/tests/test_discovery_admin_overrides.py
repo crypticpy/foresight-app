@@ -210,10 +210,14 @@ def test_load_overrides_swallows_supabase_errors(monkeypatch, caplog):
 
 
 def test_build_discovery_config_merges_admin_overrides(monkeypatch):
-    from app import discovery_service
+    # Patch on ``discovery_config`` — that's where ``build_discovery_config``
+    # looks up ``load_discovery_admin_overrides`` (PR-D1 moved the function
+    # there). ``discovery_service`` re-exports for back-compat, but a patch
+    # on the alias doesn't intercept the call site inside the new module.
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service,
+        discovery_config,
         "load_discovery_admin_overrides",
         lambda: {"max_queries_per_run": 42, "auto_approve_threshold": 0.99},
     )
@@ -226,10 +230,10 @@ def test_build_discovery_config_explicit_wins(monkeypatch):
     """Per-call kwargs override admin settings — recovery / per-pillar runs
     set tighter caps and must not be relaxed by an aggressive admin preset.
     """
-    from app import discovery_service
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service,
+        discovery_config,
         "load_discovery_admin_overrides",
         lambda: {"max_new_cards_per_run": 5},
     )
@@ -241,10 +245,10 @@ def test_build_discovery_config_none_explicit_falls_through(monkeypatch):
     """An explicit ``max_queries_per_run=None`` (e.g. from a request that
     didn't specify) must NOT clobber the admin override with None.
     """
-    from app import discovery_service
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service,
+        discovery_config,
         "load_discovery_admin_overrides",
         lambda: {"max_queries_per_run": 42},
     )
@@ -255,13 +259,13 @@ def test_build_discovery_config_none_explicit_falls_through(monkeypatch):
 def test_build_discovery_config_categories_to_scan_disables_others(monkeypatch):
     """``categories_to_scan`` from a schedule must turn off any category
     not in the list, otherwise scope overrides have no effect."""
-    from app import discovery_service
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service, "load_discovery_admin_overrides", lambda: {}
+        discovery_config, "load_discovery_admin_overrides", lambda: {}
     )
     monkeypatch.setattr(
-        discovery_service, "load_active_source_urls", lambda category: []
+        discovery_config, "load_active_source_urls", lambda category: []
     )
     cfg = discovery_service.build_discovery_config(categories_to_scan=["rss"])
     cats = cfg.source_categories
@@ -274,13 +278,13 @@ def test_build_discovery_config_source_ids_filters_registry(monkeypatch):
     """``source_ids`` must restrict each category's URL list to URLs from
     those registry rows, and disable categories with no matching rows."""
     from app import deps
-    from app import discovery_service
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service, "load_discovery_admin_overrides", lambda: {}
+        discovery_config, "load_discovery_admin_overrides", lambda: {}
     )
     monkeypatch.setattr(
-        discovery_service, "load_active_source_urls", lambda category: []
+        discovery_config, "load_active_source_urls", lambda category: []
     )
 
     class _Tbl:
