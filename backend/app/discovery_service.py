@@ -166,7 +166,6 @@ from .discovery_cards_helpers import (
 # cascade has its own module.
 from .discovery_cards_persistence import (
     auto_approve_card,
-    create_timeline_event,
     store_source_to_card,
 )
 
@@ -176,6 +175,15 @@ from .discovery_cards_persistence import (
 # per-run service cache still lives on ``DiscoveryService`` via
 # ``_get_lens_service`` so the CSP-taxonomy load is only paid once.
 from .discovery_lens_cascade import classify_card_lens
+
+# Card creation extracted to ``discovery_card_creation`` in PR-D11d.
+# Stateless — takes the Supabase client, the ``AIService`` instance,
+# and the run context (triggering user id, pending lens tasks set,
+# per-run lens service) as explicit arguments. The orchestrator
+# (``_create_or_enrich_cards``) and its instance wrapper still live
+# here; the wrapper resolves the lens service via
+# ``self._get_lens_service()`` so the CSP-taxonomy load is paid lazily.
+from .discovery_card_creation import create_card_from_source
 
 __all__ = [
     "APITokenUsage",
@@ -1644,145 +1652,23 @@ class DiscoveryService:
         run_id: str,
         confidence: Optional[float] = None,
     ) -> Optional[str]:
+        """Create a new card; thin wrapper around ``create_card_from_source``.
+
+        Resolves the per-run lens service via the lazy
+        ``self._get_lens_service`` so the CSP-taxonomy load is only paid
+        once per run. The extracted module-level function (PR-D11d) does
+        the actual work.
         """
-        Create a new card from a processed source.
-
-        Args:
-            source: Processed source with analysis
-
-        Returns:
-            New card ID or None if failed
-        """
-        if not source.analysis:
-            return None
-
-        analysis = source.analysis
-
-        # Generate slug
-        slug = analysis.suggested_card_name.lower()
-        slug = "".join(c if c.isalnum() or c == " " else "" for c in slug)
-        slug = "-".join(slug.split())[:50]
-
-        # Ensure unique slug
-        existing = self.supabase.table("cards").select("id").eq("slug", slug).execute()
-        if existing.data:
-            slug = f"{slug}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-
-        # Convert stage number to stage_id (foreign key)
-        stage_id = STAGE_NUMBER_TO_ID.get(analysis.suggested_stage, "4_proof")
-
-        goal_id = convert_goal_id(analysis.goals[0]) if analysis.goals else None
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            ai_confidence = None
-            if confidence is not None:
-                try:
-                    ai_confidence = round(float(confidence), 2)
-                except Exception:
-                    ai_confidence = None
-
-            result = (
-                self.supabase.table("cards")
-                .insert(
-                    {
-                        "name": analysis.suggested_card_name,
-                        "slug": slug,
-                        "summary": analysis.summary,
-                        "horizon": analysis.horizon,
-                        "stage_id": stage_id,  # Use mapped stage_id, not integer
-                        "pillar_id": (
-                            convert_pillar_id(analysis.pillars[0])
-                            if analysis.pillars
-                            else None
-                        ),
-                        "goal_id": goal_id,  # Use converted goal_id
-                        # Scoring (4-dimensional: Impact, Velocity, Novelty, Risk)
-                        "maturity_score": int(analysis.credibility * 20),
-                        "novelty_score": int(analysis.novelty * 20),
-                        "impact_score": int(analysis.impact * 20),
-                        "relevance_score": int(analysis.relevance * 20),
-                        "velocity_score": int(
-                            analysis.velocity * 10
-                        ),  # 1-10 scale to 0-100
-                        "risk_score": int(analysis.risk * 10),  # 1-10 scale to 0-100
-                        "status": "draft",  # New cards start as draft (review queue)
-                        "review_status": "pending_review",
-                        "discovered_at": now,
-                        "discovery_run_id": run_id,
-                        "ai_confidence": ai_confidence,
-                        "discovery_metadata": {
-                            "source_url": source.raw.url,
-                            "source_title": source.raw.title,
-                            "source_name": source.raw.source_name,
-                        },
-                        # Note: removed discovery_source - column doesn't exist in schema
-                        "created_by": self.triggered_by_user_id,
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-                .execute()
-            )
-
-            if result.data:
-                card_id = result.data[0]["id"]
-
-                # Store embedding on the card for Related Trends feature
-                try:
-                    if source.embedding:
-                        self.supabase.table("cards").update(
-                            {"embedding": source.embedding}
-                        ).eq("id", card_id).execute()
-                    else:
-                        # Generate fresh embedding from card text
-                        embed_text = (
-                            f"{analysis.suggested_card_name} {analysis.summary}"
-                        )
-                        embedding = await self.ai_service.generate_embedding(embed_text)
-                        self.supabase.table("cards").update(
-                            {"embedding": embedding}
-                        ).eq("id", card_id).execute()
-                except Exception as e:
-                    logger.warning(f"Failed to store embedding on card {card_id}: {e}")
-
-                # Create timeline event
-                await create_timeline_event(
-                    self.supabase,
-                    card_id=card_id,
-                    event_type="discovered",
-                    description="Card discovered via automated scan",
-                )
-
-                # Lens cascade — fire-and-forget. The cascade does ~5 LLM
-                # round-trips (~$0.006/card); blocking would inflate the
-                # discovery-run wall clock by minutes. The admin backfill
-                # endpoint is the recovery path if any card slips through.
-                primary_pillar_code = (
-                    analysis.pillars[0] if analysis.pillars else None
-                )
-                lens_task = asyncio.create_task(
-                    self._classify_card_lens(
-                        card_id,
-                        {
-                            "name": analysis.suggested_card_name,
-                            "summary": analysis.summary,
-                            "pillar_id": convert_pillar_id(primary_pillar_code)
-                            if primary_pillar_code
-                            else None,
-                            "horizon": analysis.horizon,
-                            "stage_id": stage_id,
-                        },
-                    )
-                )
-                self._pending_lens_tasks.add(lens_task)
-                lens_task.add_done_callback(self._pending_lens_tasks.discard)
-
-                return card_id
-
-        except Exception as e:
-            logger.error(f"Failed to create card: {e}")
-
-        return None
+        return await create_card_from_source(
+            self.supabase,
+            self.ai_service,
+            source,
+            run_id,
+            triggered_by_user_id=self.triggered_by_user_id,
+            pending_lens_tasks=self._pending_lens_tasks,
+            lens_service=self._get_lens_service(),
+            confidence=confidence,
+        )
 
 # ============================================================================
 # Convenience Functions
