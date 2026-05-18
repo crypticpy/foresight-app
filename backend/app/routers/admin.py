@@ -493,10 +493,6 @@ def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
     return {item["key"]: item for item in SETTING_DEFINITIONS}
 
 
-# Single source of truth for which user fields the audit log is allowed to
-# capture. Used both to drive the SELECT in update_admin_user and to filter
-# the before/after snapshots, so adding a new updatable field cannot silently
-# log None for its prior value.
 @router.get("/admin/overview")
 async def get_admin_overview(current_user: dict = Depends(get_current_user)):
     """Return high-level operational metrics for the admin console."""
