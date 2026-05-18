@@ -24,6 +24,10 @@ Sub-routers mounted here
 * ``admin_embedding_backfill.py`` — ``POST /admin/embeddings/backfill``
   + ``GET /admin/embeddings/backfill/status`` (re-embed corpus after
   model rotation, with per-table cursor and 409 overlap guard).
+* ``admin_users.py`` — ``GET /admin/users``, ``PATCH /admin/users/{id}``,
+  ``GET /admin/users/guests``, ``POST /admin/users/{id}/account_type``
+  (admin user management with bounded audit logging + profile cache
+  eviction).
 
 When extracting another endpoint cluster, add the import + an
 ``include_router`` line below. Do NOT change the parent prefix — keep
@@ -37,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import (
     admin_domain_reputation,
@@ -47,6 +51,7 @@ from . import (
     admin_scan,
     admin_source_rating,
     admin_taxonomy,
+    admin_users,
     admin_velocity,
 )
 from app.authz import require_admin
@@ -54,7 +59,6 @@ from app.deps import (
     supabase,
     get_current_user,
     limiter,
-    evict_cached_profile,
 )
 from app import cost_guardrail
 from app.audit_service import log_admin_action as _log_admin_action
@@ -82,6 +86,7 @@ router.include_router(admin_domain_reputation.router)
 router.include_router(admin_velocity.router)
 router.include_router(admin_lens_backfill.router)
 router.include_router(admin_embedding_backfill.router)
+router.include_router(admin_users.router)
 
 # Back-compat re-exports for tests / legacy callers that reach handlers
 # by attribute on this module. Production code should import from the
@@ -112,16 +117,12 @@ get_embedding_backfill_status = (
     admin_embedding_backfill.get_embedding_backfill_status
 )
 EmbeddingBackfillRequest = admin_embedding_backfill.EmbeddingBackfillRequest
-
-
-class AccountTypeUpdate(BaseModel):
-    account_type: Literal["paid", "guest"]
-
-
-class AdminUserUpdate(BaseModel):
-    role: Optional[Literal["admin", "user", "service_role"]] = None
-    account_type: Optional[Literal["paid", "guest"]] = None
-    display_name: Optional[str] = Field(default=None, max_length=200)
+list_admin_users = admin_users.list_admin_users
+update_admin_user = admin_users.update_admin_user
+list_guest_users = admin_users.list_guest_users
+update_user_account_type = admin_users.update_user_account_type
+AccountTypeUpdate = admin_users.AccountTypeUpdate
+AdminUserUpdate = admin_users.AdminUserUpdate
 
 
 class AdminSettingUpdate(BaseModel):
@@ -492,13 +493,6 @@ def _setting_definitions_by_key() -> dict[str, dict[str, Any]]:
     return {item["key"]: item for item in SETTING_DEFINITIONS}
 
 
-# Single source of truth for which user fields the audit log is allowed to
-# capture. Used both to drive the SELECT in update_admin_user and to filter
-# the before/after snapshots, so adding a new updatable field cannot silently
-# log None for its prior value.
-_AUDITABLE_USER_FIELDS: tuple[str, ...] = ("role", "account_type", "display_name")
-
-
 @router.get("/admin/overview")
 async def get_admin_overview(current_user: dict = Depends(get_current_user)):
     """Return high-level operational metrics for the admin console."""
@@ -604,105 +598,6 @@ async def get_admin_overview(current_user: dict = Depends(get_current_user)):
         }
 
     return await asyncio.to_thread(load)
-
-
-@router.get("/admin/users")
-async def list_admin_users(
-    search: Optional[str] = Query(default=None, max_length=120),
-    account_type: Optional[Literal["paid", "guest"]] = None,
-    role: Optional[str] = Query(default=None, max_length=40),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    current_user: dict = Depends(get_current_user),
-):
-    """List users for administration."""
-    require_admin(current_user)
-
-    def load() -> dict[str, Any]:
-        query = supabase.table("users").select(
-            "id, email, display_name, role, account_type, department, created_at, updated_at",
-            count="exact",
-        )
-        if search:
-            safe_search = search.replace("%", "\\%").replace("_", "\\_")
-            query = query.or_(
-                f"email.ilike.%{safe_search}%,display_name.ilike.%{safe_search}%"
-            )
-        if account_type:
-            query = query.eq("account_type", account_type)
-        if role:
-            query = query.eq("role", role)
-        result = (
-            query.order("created_at", desc=True)
-            .range(offset, offset + limit - 1)
-            .execute()
-        )
-        return {"items": result.data or [], "total": result.count or 0}
-
-    return await asyncio.to_thread(load)
-
-
-@router.patch("/admin/users/{user_id}")
-@limiter.limit("30/minute")
-async def update_admin_user(
-    request: Request,
-    user_id: str,
-    update: AdminUserUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    """Update user role, account type, or display name."""
-    require_admin(current_user)
-
-    def update_row() -> tuple[dict[str, Any], dict[str, Any]]:
-        data = update.model_dump(exclude_none=True)
-        if not data:
-            raise HTTPException(status_code=400, detail="No user fields provided")
-
-        # Read the previous row so the audit `before` snapshot is meaningful.
-        # We keep the SELECT and the snapshot bounded to _AUDITABLE_USER_FIELDS
-        # so adding a new field to AdminUserUpdate later can't silently log
-        # None for its prior value. Use limit(1) instead of .single() so a
-        # missing row returns a clean 404 (PostgREST .single() raises on
-        # zero rows, which would 500 on a concurrent delete).
-        select_cols = ", ".join(("id",) + _AUDITABLE_USER_FIELDS)
-        previous_resp = (
-            supabase.table("users")
-            .select(select_cols)
-            .eq("id", user_id)
-            .limit(1)
-            .execute()
-        )
-        if not previous_resp.data:
-            raise HTTPException(status_code=404, detail="User not found")
-        previous_row = previous_resp.data[0]
-        before_snapshot = {
-            key: previous_row.get(key)
-            for key in data
-            if key in _AUDITABLE_USER_FIELDS
-        }
-
-        data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        result = supabase.table("users").update(data).eq("id", user_id).execute()
-        if not result.data:
-            raise HTTPException(status_code=404, detail="User not found")
-        return result.data[0], before_snapshot
-
-    updated, before_snapshot = await asyncio.to_thread(update_row)
-    # Evict the edited user's cached profile so role / account_type changes
-    # apply on their next request instead of waiting up to 5 minutes.
-    evict_cached_profile(user_id)
-    after_snapshot = {key: updated.get(key) for key in before_snapshot}
-    await asyncio.to_thread(
-        _log_admin_action,
-        actor=current_user,
-        action="admin.user.update",
-        target_type="user",
-        target_id=user_id,
-        before=before_snapshot,
-        after=after_snapshot,
-        request=request,
-    )
-    return updated
 
 
 @router.get("/admin/settings")
@@ -992,69 +887,10 @@ async def list_admin_audit(
     return await asyncio.to_thread(load)
 
 
-@router.get("/admin/users/guests")
-async def list_guest_users(current_user: dict = Depends(get_current_user)):
-    """List guest accounts and attached workstreams for admin review."""
-    require_admin(current_user)
-
-    def load() -> list[dict]:
-        guests = (
-            supabase.table("users")
-            .select("id, email, display_name, account_type, created_at, updated_at")
-            .eq("account_type", "guest")
-            .order("created_at", desc=True)
-            .execute()
-        )
-        rows = guests.data or []
-        user_ids = [row["id"] for row in rows]
-        memberships_by_user: dict[str, list[dict]] = {user_id: [] for user_id in user_ids}
-        if user_ids:
-            memberships = (
-                supabase.table("workstream_members")
-                .select("user_id, role, workstream_id, workstreams(name)")
-                .in_("user_id", user_ids)
-                .execute()
-            )
-            for membership in memberships.data or []:
-                memberships_by_user.setdefault(membership["user_id"], []).append(membership)
-        for row in rows:
-            row["workstreams"] = memberships_by_user.get(row["id"], [])
-        return rows
-
-    return await asyncio.to_thread(load)
-
-
-@router.post("/admin/users/{user_id}/account_type")
-async def update_user_account_type(
-    user_id: str,
-    update: AccountTypeUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    """Upgrade or downgrade a user between paid and guest."""
-    require_admin(current_user)
-
-    def update_row() -> dict:
-        result = (
-            supabase.table("users")
-            .update(
-                {
-                    "account_type": update.account_type,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            .eq("id", user_id)
-            .execute()
-        )
-        if not result.data:
-            raise HTTPException(status_code=404, detail="User not found")
-        return result.data[0]
-
-    return await asyncio.to_thread(update_row)
-
-
 # NOTE: top-domains endpoint lives in analytics.py to avoid route duplication.
 # Card quality / SQI endpoints live in admin_quality.py.
 # Domain reputation CRUD lives in admin_domain_reputation.py.
 # Velocity calculation lives in admin_velocity.py.
 # Lens classification backfill lives in admin_lens_backfill.py.
 # Embedding backfill (trigger + status) lives in admin_embedding_backfill.py.
+# Admin user management (list, patch, guests, account_type) lives in admin_users.py.
