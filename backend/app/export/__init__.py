@@ -8,6 +8,7 @@ Submodules:
 - csv_export: Pandas CSV generators for single/multi/empty card exports.
 - cards: Single-card PDF + PPTX generators.
 - workstreams: Workstream-level PDF + PPTX generators.
+- briefs: Executive-brief and chat-response PDF + PPTX generators.
 - data_access: Supabase fetch helpers for cards and workstream-card joins.
 - utils: Filename/MIME/score-formatting and temp-file cleanup helpers.
 """
