@@ -148,14 +148,12 @@ def _bypass_admin(monkeypatch):
 
 def _patch_supabase(monkeypatch, mock_sb):
     from app import audit_service
-    from app.routers import admin as admin_router
     from app.routers import admin_discovery_schedules
 
-    # Schedule CRUD endpoints live in their own sub-router; the parent
-    # ``admin_discovery`` aggregator is now a pure include-router shell
-    # that no longer imports ``supabase`` directly.
+    # Schedule CRUD endpoints live in their own sub-router; ``admin.py``
+    # is a pure aggregator with no ``supabase`` binding, so we patch only
+    # the sub-router that owns the binding plus audit_service.
     monkeypatch.setattr(admin_discovery_schedules, "supabase", mock_sb)
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
     # audit_service owns its own top-level ``supabase`` binding; patch it
     # too so audit-row inserts hit the same mock as the primary mutation.
     monkeypatch.setattr(audit_service, "supabase", mock_sb)

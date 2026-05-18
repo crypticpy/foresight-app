@@ -167,18 +167,20 @@ def _bypass_admin_check(monkeypatch):
 def _patch_supabase(monkeypatch, mock_sb) -> None:
     """Patch the supabase singleton everywhere the admin paths reach for it.
 
-    ``app.routers.admin`` holds the reference used by setting mutations,
-    ``app.routers.admin_users`` holds the reference used by user mutations
-    (extracted in PR-A5), and ``app.audit_service`` holds a separate
-    top-level reference used by the audit insert. Tests must replace all
-    three so a single mock captures the full mutation + audit write.
+    ``admin.py`` is now a pure aggregator with no ``supabase`` binding,
+    so we patch each sub-router that owns one:
+      - ``admin_users`` for user-mutation tests (PR-A5),
+      - ``admin_settings`` for setting-mutation tests (PR-A6),
+      - ``audit_service`` for the audit insert (it holds its own
+        top-level binding).
+    All three must be replaced so a single mock captures the full
+    mutation + audit write.
     """
     from app import audit_service
-    from app.routers import admin as admin_router
-    from app.routers import admin_users
+    from app.routers import admin_settings, admin_users
 
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
     monkeypatch.setattr(admin_users, "supabase", mock_sb)
+    monkeypatch.setattr(admin_settings, "supabase", mock_sb)
     monkeypatch.setattr(audit_service, "supabase", mock_sb)
 
 
