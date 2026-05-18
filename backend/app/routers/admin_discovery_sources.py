@@ -275,7 +275,9 @@ async def _validate_rss_url(url: str) -> None:
             timeout=RSS_VALIDATION_TIMEOUT_S, follow_redirects=False
         ) as client:
             for _ in range(_MAX_VALIDATION_REDIRECTS + 1):
-                _assert_public_host(current_url)
+                # _assert_public_host calls socket.getaddrinfo, which blocks on
+                # slow nameservers; keep DNS resolution off the event loop.
+                await asyncio.to_thread(_assert_public_host, current_url)
                 try:
                     response = await client.head(current_url)
                     if response.status_code == 405:
@@ -347,6 +349,7 @@ async def list_admin_sources(
             supabase.table("discovered_sources")
             .select("url,triage_is_relevant,created_at")
             .gte("created_at", seven_days_ago)
+            .order("created_at", desc=True)
             .limit(5000)
             .execute()
             .data
