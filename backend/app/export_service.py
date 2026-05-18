@@ -85,10 +85,8 @@ logger = logging.getLogger(__name__)
 
 from .export.branding import (  # noqa: E402
     COA_BRAND_COLORS,
-    COA_LOGO_PATH,
     FORESIGHT_COLORS,
     PDF_COLORS,
-    SCORE_COLORS,
     hex_to_rl_color,
 )
 from .export.pdf import (  # noqa: E402
@@ -100,8 +98,10 @@ from .export.pdf import (  # noqa: E402
     get_professional_pdf_styles,
 )
 from .export import charts as _charts  # noqa: E402
+from .export import csv_export as _csv_export  # noqa: E402
 from .export import data_access as _data_access  # noqa: E402
 from .export import utils as _utils  # noqa: E402
+from .export import pptx as _pptx_components  # noqa: E402
 
 
 # ============================================================================
@@ -114,16 +114,14 @@ from .export.charts import (  # noqa: E402
     CHART_DPI,
 )
 
-# PowerPoint settings
-PPTX_SLIDE_WIDTH = Inches(13.333)  # 16:9 widescreen
-PPTX_SLIDE_HEIGHT = Inches(7.5)
-PPTX_TITLE_FONT_SIZE = Pt(44)
-PPTX_SUBTITLE_FONT_SIZE = Pt(24)
-PPTX_BODY_FONT_SIZE = Pt(18)
-PPTX_SMALL_FONT_SIZE = Pt(14)
-PPTX_MARGIN = Inches(0.5)
-PPTX_CHART_WIDTH = Inches(5)
-PPTX_CHART_HEIGHT = Inches(4)
+# PowerPoint settings — defined in app.export.pptx.components; re-exported here
+# for callers that still import from this module.
+from .export.pptx import (  # noqa: E402
+    PPTX_MARGIN,
+    PPTX_SLIDE_HEIGHT,
+    PPTX_SLIDE_WIDTH,
+    PPTX_SUBTITLE_FONT_SIZE,
+)
 
 # PDF settings
 PDF_PAGE_SIZE = letter
@@ -1273,391 +1271,34 @@ class ExportService:
         self,
         card_data: CardExportData,
     ) -> str:
-        """
-        Generate CSV export for a single intelligence card.
-
-        Exports card data in a tabular format suitable for analysis
-        in Excel or other spreadsheet applications. All card fields
-        and scores are included as columns.
-
-        Args:
-            card_data: Card data to export
-
-        Returns:
-            CSV string content (not file path)
-
-        Raises:
-            ValueError: If card_data is invalid
-        """
-        import pandas as pd
-
-        try:
-            # Define the CSV columns in the specified order
-            csv_columns = [
-                "id",
-                "name",
-                "summary",
-                "description",
-                "pillar_id",
-                "goal_id",
-                "stage_id",
-                "horizon",
-                "novelty_score",
-                "maturity_score",
-                "impact_score",
-                "relevance_score",
-                "velocity_score",
-                "risk_score",
-                "opportunity_score",
-            ]
-
-            # Build the row data from card_data
-            row_data = {
-                "id": card_data.id,
-                "name": card_data.name,
-                "summary": card_data.summary or "",
-                "description": card_data.description or "",
-                "pillar_id": card_data.pillar_id or "",
-                "goal_id": card_data.goal_id or "",
-                "stage_id": card_data.stage_id or "",
-                "horizon": card_data.horizon or "",
-                "novelty_score": card_data.novelty_score,
-                "maturity_score": card_data.maturity_score,
-                "impact_score": card_data.impact_score,
-                "relevance_score": card_data.relevance_score,
-                "velocity_score": card_data.velocity_score,
-                "risk_score": card_data.risk_score,
-                "opportunity_score": card_data.opportunity_score,
-            }
-
-            # Create DataFrame with single row
-            df = pd.DataFrame([row_data], columns=csv_columns)
-
-            # Convert to CSV string without index column
-            csv_content = df.to_csv(index=False)
-
-            logger.info(
-                f"Generated CSV export for card {card_data.id}: {card_data.name}"
-            )
-
-            return csv_content
-
-        except Exception as e:
-            logger.error(f"Error generating CSV for card {card_data.id}: {e}")
-            raise ValueError(f"Failed to generate CSV export: {e}") from e
+        return await _csv_export.generate_csv(card_data)
 
     async def generate_csv_multi(
         self,
         cards: List[CardExportData],
     ) -> str:
-        """
-        Generate CSV export for multiple intelligence cards.
-
-        Exports multiple cards as rows in a single CSV file,
-        suitable for bulk data analysis in Excel or other tools.
-
-        Args:
-            cards: List of card data to export
-
-        Returns:
-            CSV string content with multiple rows
-
-        Raises:
-            ValueError: If cards list is empty or invalid
-        """
-        import pandas as pd
-
-        if not cards:
-            logger.warning("No cards provided for CSV export")
-            return self._generate_empty_csv()
-
-        try:
-            # Define the CSV columns in the specified order
-            csv_columns = [
-                "id",
-                "name",
-                "summary",
-                "description",
-                "pillar_id",
-                "goal_id",
-                "stage_id",
-                "horizon",
-                "novelty_score",
-                "maturity_score",
-                "impact_score",
-                "relevance_score",
-                "velocity_score",
-                "risk_score",
-                "opportunity_score",
-            ]
-
-            # Build row data for all cards
-            rows = []
-            for card_data in cards:
-                row = {
-                    "id": card_data.id,
-                    "name": card_data.name,
-                    "summary": card_data.summary or "",
-                    "description": card_data.description or "",
-                    "pillar_id": card_data.pillar_id or "",
-                    "goal_id": card_data.goal_id or "",
-                    "stage_id": card_data.stage_id or "",
-                    "horizon": card_data.horizon or "",
-                    "novelty_score": card_data.novelty_score,
-                    "maturity_score": card_data.maturity_score,
-                    "impact_score": card_data.impact_score,
-                    "relevance_score": card_data.relevance_score,
-                    "velocity_score": card_data.velocity_score,
-                    "risk_score": card_data.risk_score,
-                    "opportunity_score": card_data.opportunity_score,
-                }
-                rows.append(row)
-
-            # Create DataFrame with all rows
-            df = pd.DataFrame(rows, columns=csv_columns)
-
-            # Convert to CSV string without index column
-            csv_content = df.to_csv(index=False)
-
-            logger.info(f"Generated CSV export for {len(cards)} cards")
-
-            return csv_content
-
-        except Exception as e:
-            logger.error(f"Error generating multi-card CSV: {e}")
-            raise ValueError(f"Failed to generate CSV export: {e}") from e
+        return await _csv_export.generate_csv_multi(cards)
 
     def _generate_empty_csv(self) -> str:
-        """
-        Generate an empty CSV with just headers.
-
-        Returns:
-            CSV string with headers only
-        """
-        import pandas as pd
-
-        csv_columns = [
-            "id",
-            "name",
-            "summary",
-            "description",
-            "pillar_id",
-            "goal_id",
-            "stage_id",
-            "horizon",
-            "novelty_score",
-            "maturity_score",
-            "impact_score",
-            "relevance_score",
-            "velocity_score",
-            "risk_score",
-            "opportunity_score",
-        ]
-
-        df = pd.DataFrame(columns=csv_columns)
-        return df.to_csv(index=False)
+        return _csv_export.generate_empty_csv()
 
     # ========================================================================
     # PowerPoint Export Methods
     # ========================================================================
 
     def _hex_to_rgb(self, hex_color: str) -> RGBColor:
-        """
-        Convert hex color string to RGBColor for PowerPoint.
-
-        Args:
-            hex_color: Hex color string (e.g., '#1E3A5F')
-
-        Returns:
-            RGBColor object for use with python-pptx
-        """
-        hex_color = hex_color.lstrip("#")
-        r = int(hex_color[:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-        return RGBColor(r, g, b)
+        return _pptx_components.hex_to_rgb(hex_color)
 
     def _add_pptx_header(self, slide, include_logo: bool = True) -> None:
-        """
-        Add professional header to a PowerPoint slide.
-
-        White background with City of Austin logo and Foresight branding,
-        matching the website daylight mode and PDF exports.
-
-        Args:
-            slide: PowerPoint slide object
-            include_logo: Whether to include the City of Austin logo
-        """
-        # White header background
-        header_bg = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), PPTX_SLIDE_WIDTH, Inches(1.1)
-        )
-        header_bg.fill.solid()
-        header_bg.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        header_bg.line.fill.background()
-
-        # Blue accent line below header
-        accent_line = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE, Inches(0), Inches(1.08), PPTX_SLIDE_WIDTH, Inches(0.03)
-        )
-        accent_line.fill.solid()
-        accent_line.fill.fore_color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-        accent_line.line.fill.background()
-
-        # City of Austin logo (if available)
-        logo_right_edge = PPTX_MARGIN
-        if include_logo and COA_LOGO_PATH and Path(COA_LOGO_PATH).exists():
-            try:
-                logo = slide.shapes.add_picture(
-                    COA_LOGO_PATH, PPTX_MARGIN, Inches(0.25), height=Inches(0.6)
-                )
-                logo_right_edge = logo.left + logo.width + Inches(0.2)
-            except Exception as e:
-                logger.warning(f"Failed to add logo to PPTX slide: {e}")
-
-        # FORESIGHT branding text - primary blue
-        brand_box = slide.shapes.add_textbox(
-            logo_right_edge, Inches(0.2), Inches(3), Inches(0.5)
-        )
-        brand_frame = brand_box.text_frame
-        brand_para = brand_frame.paragraphs[0]
-        brand_para.text = "FORESIGHT"
-        brand_para.font.size = Pt(18)
-        brand_para.font.bold = True
-        brand_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Subtitle - gray
-        subtitle_box = slide.shapes.add_textbox(
-            logo_right_edge, Inches(0.55), Inches(3), Inches(0.4)
-        )
-        subtitle_frame = subtitle_box.text_frame
-        subtitle_para = subtitle_frame.paragraphs[0]
-        subtitle_para.text = "Strategic Intelligence Platform"
-        subtitle_para.font.size = Pt(10)
-        subtitle_para.font.color.rgb = RGBColor(128, 128, 128)
-
-        # Date on right side - black
-        date_box = slide.shapes.add_textbox(
-            PPTX_SLIDE_WIDTH - Inches(2.5), Inches(0.4), Inches(2), Inches(0.4)
-        )
-        date_frame = date_box.text_frame
-        date_para = date_frame.paragraphs[0]
-        date_para.text = datetime.now(timezone.utc).strftime("%B %d, %Y")
-        date_para.font.size = Pt(11)
-        date_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-        date_para.alignment = PP_ALIGN.RIGHT
+        _pptx_components.add_pptx_header(slide, include_logo)
 
     def _add_pptx_footer(self, slide, include_ai_disclosure: bool = True) -> None:
-        """
-        Add professional footer to a PowerPoint slide.
-
-        Args:
-            slide: PowerPoint slide object
-            include_ai_disclosure: Whether to include AI technology disclosure
-        """
-        # Footer background
-        footer_bg = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(0),
-            PPTX_SLIDE_HEIGHT - Inches(0.6),
-            PPTX_SLIDE_WIDTH,
-            Inches(0.6),
-        )
-        footer_bg.fill.solid()
-        footer_bg.fill.fore_color.rgb = RGBColor(248, 249, 250)  # Light gray
-        footer_bg.line.fill.background()
-
-        # AI disclosure text
-        if include_ai_disclosure:
-            disclosure_box = slide.shapes.add_textbox(
-                PPTX_MARGIN,
-                PPTX_SLIDE_HEIGHT - Inches(0.5),
-                PPTX_SLIDE_WIDTH - Inches(2),
-                Inches(0.4),
-            )
-            disclosure_frame = disclosure_box.text_frame
-            disclosure_para = disclosure_frame.paragraphs[0]
-            disclosure_para.text = f"AI Technologies: OpenAI {get_chat_deployment()}, GPT Researcher, SearXNG, Serper"
-            disclosure_para.font.size = Pt(8)
-            disclosure_para.font.color.rgb = RGBColor(100, 100, 100)
-
-        # City of Austin notice
-        notice_box = slide.shapes.add_textbox(
-            PPTX_SLIDE_WIDTH - Inches(3),
-            PPTX_SLIDE_HEIGHT - Inches(0.5),
-            Inches(2.5),
-            Inches(0.4),
-        )
-        notice_frame = notice_box.text_frame
-        notice_para = notice_frame.paragraphs[0]
-        notice_para.text = "City of Austin Internal Document"
-        notice_para.font.size = Pt(8)
-        notice_para.font.italic = True
-        notice_para.font.color.rgb = RGBColor(128, 128, 128)
-        notice_para.alignment = PP_ALIGN.RIGHT
+        _pptx_components.add_pptx_footer(slide, include_ai_disclosure)
 
     def _add_title_slide(
         self, prs: Presentation, title: str, subtitle: Optional[str] = None
     ) -> None:
-        """
-        Add a professional title slide to the presentation.
-
-        Features white header with logo, clean typography, and AI disclosure footer.
-
-        Args:
-            prs: Presentation object
-            title: Main title text
-            subtitle: Optional subtitle text
-        """
-        slide_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(slide_layout)
-
-        # White background
-        background = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(0),
-            Inches(0),
-            PPTX_SLIDE_WIDTH,
-            PPTX_SLIDE_HEIGHT,
-        )
-        background.fill.solid()
-        background.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        background.line.fill.background()
-
-        # Add professional header
-        self._add_pptx_header(slide)
-
-        # Main title - centered, primary blue
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(2.8), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(1.5)
-        )
-        title_frame = title_box.text_frame
-        title_frame.word_wrap = True
-        title_para = title_frame.paragraphs[0]
-        title_para.text = title[:80]
-        title_para.font.size = PPTX_TITLE_FONT_SIZE
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-        title_para.alignment = PP_ALIGN.CENTER
-
-        # Subtitle if provided - gray
-        if subtitle:
-            subtitle_box = slide.shapes.add_textbox(
-                PPTX_MARGIN,
-                Inches(4.3),
-                PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN),
-                Inches(1),
-            )
-            subtitle_frame = subtitle_box.text_frame
-            subtitle_frame.word_wrap = True
-            subtitle_para = subtitle_frame.paragraphs[0]
-            subtitle_para.text = subtitle[:150]
-            subtitle_para.font.size = PPTX_SUBTITLE_FONT_SIZE
-            subtitle_para.font.color.rgb = RGBColor(100, 100, 100)
-            subtitle_para.alignment = PP_ALIGN.CENTER
-
-        # Add professional footer with AI disclosure
-        self._add_pptx_footer(slide)
+        _pptx_components.add_title_slide(prs, title, subtitle)
 
     def _add_content_slide(
         self,
@@ -1666,86 +1307,7 @@ class ExportService:
         content_items: List[Tuple[str, str]],
         chart_path: Optional[str] = None,
     ) -> None:
-        """
-        Add a content slide with text and optional chart.
-
-        Uses professional white header with logo and footer with AI disclosure.
-
-        Args:
-            prs: Presentation object
-            title: Slide title
-            content_items: List of (label, value) tuples
-            chart_path: Optional path to chart image to include
-        """
-        slide_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(slide_layout)
-
-        # Add professional header and footer
-        self._add_pptx_header(slide)
-        self._add_pptx_footer(slide)
-
-        # Slide title - below header, primary blue
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.25), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(0.6)
-        )
-        title_frame = title_box.text_frame
-        title_para = title_frame.paragraphs[0]
-        title_para.text = title[:60]
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Determine layout based on whether chart is included
-        if chart_path:
-            content_width = Inches(6.5)
-            chart_left = Inches(7.5)
-        else:
-            content_width = PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN)
-            chart_left = None
-
-        # Add content items - adjusted for header/footer
-        content_top = Inches(1.95)
-        content_box = slide.shapes.add_textbox(
-            PPTX_MARGIN,
-            content_top,
-            content_width,
-            Inches(4.5),  # Reduced height to account for footer
-        )
-        content_frame = content_box.text_frame
-        content_frame.word_wrap = True
-
-        for i, (label, value) in enumerate(content_items):
-            para = (
-                content_frame.paragraphs[0] if i == 0 else content_frame.add_paragraph()
-            )
-            para.space_before = Pt(8)
-            para.space_after = Pt(4)
-
-            # Add label in bold
-            run_label = para.add_run()
-            run_label.text = f"{label}: "
-            run_label.font.size = PPTX_BODY_FONT_SIZE
-            run_label.font.bold = True
-            run_label.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-
-            # Add value
-            run_value = para.add_run()
-            run_value.text = str(value) if value else "N/A"
-            run_value.font.size = PPTX_BODY_FONT_SIZE
-            run_value.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-
-        # Add chart if provided - adjusted for header/footer
-        if chart_path and Path(chart_path).exists():
-            try:
-                slide.shapes.add_picture(
-                    chart_path,
-                    chart_left,
-                    Inches(2.0),
-                    width=PPTX_CHART_WIDTH,
-                    height=Inches(4.0),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to add chart to slide: {e}")
+        _pptx_components.add_content_slide(prs, title, content_items, chart_path)
 
     def _add_scores_slide(
         self,
@@ -1753,127 +1315,12 @@ class ExportService:
         card_data: CardExportData,
         chart_path: Optional[str] = None,
     ) -> None:
-        """
-        Add a slide showing all scores with optional chart.
-
-        Uses professional white header and footer.
-
-        Args:
-            prs: Presentation object
-            card_data: Card data with scores
-            chart_path: Optional path to score chart image
-        """
-        slide_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(slide_layout)
-
-        # Add professional header and footer
-        self._add_pptx_header(slide)
-        self._add_pptx_footer(slide)
-
-        # Slide title - below header
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.25), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(0.6)
-        )
-        title_frame = title_box.text_frame
-        title_para = title_frame.paragraphs[0]
-        title_para.text = "Score Analysis"
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Add chart if available - adjusted for header/footer
-        if chart_path and Path(chart_path).exists():
-            try:
-                slide.shapes.add_picture(
-                    chart_path,
-                    Inches(0.5),
-                    Inches(2.0),
-                    width=Inches(5.5),
-                    height=Inches(4.0),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to add score chart: {e}")
-
-        # Add score details on the right side - adjusted positions
-        scores = card_data.get_all_scores()
-        scores_box = slide.shapes.add_textbox(
-            Inches(6.5), Inches(2.0), Inches(5.5), Inches(4.0)
-        )
-        scores_frame = scores_box.text_frame
-        scores_frame.word_wrap = True
-
-        for i, (score_name, score_value) in enumerate(scores.items()):
-            para = (
-                scores_frame.paragraphs[0] if i == 0 else scores_frame.add_paragraph()
-            )
-            para.space_before = Pt(12)
-            para.space_after = Pt(4)
-
-            # Score name
-            run_name = para.add_run()
-            run_name.text = f"{score_name}: "
-            run_name.font.size = Pt(20)
-            run_name.font.bold = True
-            run_name.font.color.rgb = self._hex_to_rgb(
-                SCORE_COLORS.get(score_name, FORESIGHT_COLORS["dark"])
-            )
-
-            # Score value
-            run_value = para.add_run()
-            run_value.text = str(score_value) if score_value is not None else "N/A"
-            run_value.font.size = Pt(20)
-            run_value.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
+        _pptx_components.add_scores_slide(prs, card_data, chart_path)
 
     def _add_description_slide(
         self, prs: Presentation, title: str, description: Optional[str]
     ) -> None:
-        """
-        Add a slide for long-form description text.
-
-        Uses professional white header and footer.
-
-        Args:
-            prs: Presentation object
-            title: Slide title
-            description: Description text (will be truncated if too long)
-        """
-        if not description:
-            return
-
-        slide_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(slide_layout)
-
-        # Add professional header and footer
-        self._add_pptx_header(slide)
-        self._add_pptx_footer(slide)
-
-        # Slide title - below header
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.25), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(0.6)
-        )
-        title_frame = title_box.text_frame
-        title_para = title_frame.paragraphs[0]
-        title_para.text = title
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Add description text - truncate if too long for slide
-        max_chars = 1800  # Adjusted for header/footer space
-        display_text = description[:max_chars]
-        if len(description) > max_chars:
-            display_text += "..."
-
-        desc_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.95), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(4.5)
-        )
-        desc_frame = desc_box.text_frame
-        desc_frame.word_wrap = True
-        desc_para = desc_frame.paragraphs[0]
-        desc_para.text = display_text
-        desc_para.font.size = PPTX_BODY_FONT_SIZE
-        desc_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-        desc_para.line_spacing = 1.3
+        _pptx_components.add_description_slide(prs, title, description)
 
     async def generate_pptx(
         self,
