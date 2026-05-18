@@ -44,6 +44,11 @@ export function CardsView({
     </div>
   ) : null;
 
+  // `DiscoverCard`'s `ArtifactFolderTab` is absolutely positioned at `-top-4`
+  // (16px above the card), so the first row's tab gets clipped by the
+  // virtualizer's `overflow-auto` scroll container. Adding `pt-5` (20px) to
+  // the scroll container reserves vertical room for the tab without affecting
+  // virtualizer scroll math.
   if (viewMode === "list") {
     return (
       <>
@@ -55,7 +60,7 @@ export function CardsView({
           estimatedSize={180}
           gap={16}
           overscan={3}
-          scrollContainerClassName="h-[calc(100vh-280px)]"
+          scrollContainerClassName="h-[calc(100vh-280px)] pt-5"
           ariaLabel="Intelligence signals list"
           onEndReached={onEndReached}
         />
@@ -75,6 +80,7 @@ export function CardsView({
           gap={24}
           columns={{ sm: 1, md: 2, lg: 3 }}
           overscan={3}
+          className="pt-5"
           renderItem={(card, index) => (
             <div className="h-full">{renderItem(card, index)}</div>
           )}
