@@ -26,6 +26,7 @@ def generate_portfolio_comparison_chart(
     briefs: List, dpi: int = CHART_DPI  # List of PortfolioBrief
 ) -> Optional[str]:
     """Generate a grouped bar chart comparing impact/relevance/velocity scores."""
+    fig = None
     try:
         valid_briefs = [
             b
@@ -93,18 +94,22 @@ def generate_portfolio_comparison_chart(
 
         plt.tight_layout()
 
-        temp_file = tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             suffix=".png", delete=False, prefix="foresight_portfolio_comparison_"
-        )
-        plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
+        ) as temp_file:
+            temp_path = temp_file.name
+        fig.savefig(temp_path, dpi=dpi, bbox_inches="tight", facecolor="white")
 
-        return temp_file.name
+        return temp_path
 
     except Exception as e:
         logger.error(f"Error generating portfolio comparison chart: {e}")
         return None
     finally:
-        plt.close("all")
+        # Close only this figure, not all figures, so concurrent chart
+        # generation on other threads/coroutines isn't disturbed.
+        if fig is not None:
+            plt.close(fig)
 
 
 def generate_priority_matrix_chart(
@@ -113,6 +118,7 @@ def generate_priority_matrix_chart(
     dpi: int = CHART_DPI,
 ) -> Optional[str]:
     """Generate a visual 2x2 priority matrix chart placing cards by quadrant."""
+    fig = None
     try:
         matrix = synthesis.priority_matrix or {}
         urgent = set(matrix.get("high_impact_urgent") or [])
@@ -245,15 +251,19 @@ def generate_priority_matrix_chart(
 
         plt.tight_layout()
 
-        temp_file = tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             suffix=".png", delete=False, prefix="foresight_priority_matrix_"
-        )
-        plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
+        ) as temp_file:
+            temp_path = temp_file.name
+        fig.savefig(temp_path, dpi=dpi, bbox_inches="tight", facecolor="white")
 
-        return temp_file.name
+        return temp_path
 
     except Exception as e:
         logger.error(f"Error generating priority matrix chart: {e}")
         return None
     finally:
-        plt.close("all")
+        # Close only this figure, not all figures, so concurrent chart
+        # generation on other threads/coroutines isn't disturbed.
+        if fig is not None:
+            plt.close(fig)

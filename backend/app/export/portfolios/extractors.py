@@ -20,16 +20,19 @@ def extract_key_takeaways(brief_markdown: str) -> List[str]:
 
     takeaways: List[str] = []
 
+    # Accept both bullet markers (`-`, `•`, `*`) and numbered markers (`1.`,
+    # `2.`, etc.) so the docstring's "bullet points, or numbered lists" claim
+    # is actually honored.
     key_section_patterns = [
-        r"(?:##?\s*)?(?:Key\s+)?(?:Takeaways?|Findings?|Implications?|Insights?)[\s:]*\n((?:[-•*]\s*.+\n?)+)",
-        r"(?:##?\s*)?What\s+This\s+Means[^:]*:?\s*\n((?:[-•*]\s*.+\n?)+)",
-        r"(?:##?\s*)?Strategic\s+(?:Implications?|Considerations?)[\s:]*\n((?:[-•*]\s*.+\n?)+)",
+        r"(?:##?\s*)?(?:Key\s+)?(?:Takeaways?|Findings?|Implications?|Insights?)[\s:]*\n((?:(?:[-•*]|\d+\.)\s*.+\n?)+)",
+        r"(?:##?\s*)?What\s+This\s+Means[^:]*:?\s*\n((?:(?:[-•*]|\d+\.)\s*.+\n?)+)",
+        r"(?:##?\s*)?Strategic\s+(?:Implications?|Considerations?)[\s:]*\n((?:(?:[-•*]|\d+\.)\s*.+\n?)+)",
     ]
 
     for pattern in key_section_patterns:
         matches = re.findall(pattern, brief_markdown, re.IGNORECASE | re.MULTILINE)
         for match in matches:
-            bullets = re.findall(r"[-•*]\s*(.+?)(?:\n|$)", match)
+            bullets = re.findall(r"(?:[-•*]|\d+\.)\s*(.+?)(?:\n|$)", match)
             takeaways.extend([b.strip() for b in bullets if len(b.strip()) > 20])
 
     if not takeaways:
