@@ -179,7 +179,7 @@ def _patch_supabase(monkeypatch, mock_sb):
     """Patch supabase in every module that touches the registry / audit log."""
     from app import audit_service
     from app.routers import admin as admin_router
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
@@ -191,7 +191,7 @@ def _patch_supabase(monkeypatch, mock_sb):
 
 def _stub_rss_validator(monkeypatch):
     """Skip the live HEAD probe — we test validation separately."""
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     async def _ok(_url: str) -> None:
         return None
@@ -205,7 +205,7 @@ def _stub_rss_validator(monkeypatch):
 
 
 def test_list_sources_joins_health_stats(monkeypatch):
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     source_id = str(uuid.uuid4())
     rss_url = "https://example.com/feed"
@@ -266,7 +266,7 @@ def test_list_sources_joins_health_stats(monkeypatch):
 
 
 def test_create_rss_source_writes_audit_row(monkeypatch):
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     actor_id = str(uuid.uuid4())
     actor = {"id": actor_id, "email": "admin@example.com", "role": "admin"}
@@ -310,7 +310,7 @@ def test_create_rss_source_writes_audit_row(monkeypatch):
 def test_create_source_rejects_missing_url(monkeypatch):
     from fastapi import HTTPException
 
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
     mock_sb = _MockSupabase({"discovery_sources_registry": []})
@@ -333,7 +333,7 @@ def test_create_source_rejects_missing_url(monkeypatch):
 
 def test_create_web_search_allows_null_url(monkeypatch):
     """``web_search`` rows store their query in ``config``; URL is optional."""
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
     mock_sb = _MockSupabase(
@@ -361,7 +361,7 @@ def test_create_web_search_allows_null_url(monkeypatch):
 def test_create_duplicate_returns_409(monkeypatch):
     from fastapi import HTTPException
 
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
     mock_sb = _MockSupabase(
@@ -397,7 +397,7 @@ def test_create_duplicate_returns_409(monkeypatch):
 
 
 def test_update_source_audits_before_after(monkeypatch):
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     source_id = str(uuid.uuid4())
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
@@ -444,7 +444,7 @@ def test_update_source_audits_before_after(monkeypatch):
 def test_update_missing_source_returns_404(monkeypatch):
     from fastapi import HTTPException
 
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
     mock_sb = _MockSupabase({"discovery_sources_registry": []})
@@ -466,7 +466,7 @@ def test_update_missing_source_returns_404(monkeypatch):
 
 
 def test_delete_source_removes_row_and_audits(monkeypatch):
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_sources as admin_discovery
 
     source_id = str(uuid.uuid4())
     actor = {"id": str(uuid.uuid4()), "email": "a@example.com", "role": "admin"}
