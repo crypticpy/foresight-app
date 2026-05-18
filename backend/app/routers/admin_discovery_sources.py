@@ -123,7 +123,8 @@ def _aggregate_health_stats(
         if not url:
             continue
         try:
-            host = urlparse(url).netloc.lower()
+            parsed = urlparse(url if "://" in url else f"https://{url}")
+            host = (parsed.hostname or "").lower()
         except ValueError:
             host = ""
         key = url
@@ -185,7 +186,8 @@ def _attach_health(
             )
         elif url:
             try:
-                host = urlparse(url).netloc.lower()
+                parsed = urlparse(url if "://" in url else f"https://{url}")
+                host = (parsed.hostname or "").lower()
             except ValueError:
                 host = ""
             if host and host in host_buckets:
@@ -285,7 +287,10 @@ async def _validate_rss_url(url: str) -> None:
                 if 300 <= response.status_code < 400:
                     location = response.headers.get("location")
                     if not location:
-                        break
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Source URL returned a redirect without a Location header.",
+                        )
                     current_url = str(httpx.URL(current_url).join(location))
                     continue
                 break
