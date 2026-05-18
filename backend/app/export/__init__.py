@@ -9,6 +9,7 @@ Submodules:
 - cards: Single-card PDF + PPTX generators.
 - workstreams: Workstream-level PDF + PPTX generators.
 - briefs: Executive-brief and chat-response PDF + PPTX generators.
+- portfolios: Multi-card portfolio PDF + PPTX generators (with synthesis charts).
 - data_access: Supabase fetch helpers for cards and workstream-card joins.
 - utils: Filename/MIME/score-formatting and temp-file cleanup helpers.
 """
