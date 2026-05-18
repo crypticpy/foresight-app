@@ -36,16 +36,29 @@ from app.models import (
 
 from . import admin_discovery_coverage, admin_discovery_sources
 
-# Re-exports for back-compat with tests that still reach into this module by
-# attribute (e.g. ``admin_discovery.get_pillar_coverage``). Production code
-# should import from the sub-router directly.
-from .admin_discovery_coverage import (  # noqa: F401
-    _aggregate_workstream_freshness,
-    admin_refresh_goal_queries,
-    get_coverage_gaps,
-    get_pillar_coverage,
-    get_workstream_coverage,
+# Re-exports for back-compat with tests (and any external caller) that still
+# reach into this module by attribute (e.g. ``admin_discovery.get_pillar_coverage``).
+# Production code should import from the sub-router directly. We expose both
+# the moved callables AND the moved constants/types so attribute lookups for
+# anything that used to live here keep resolving. Explicit attribute
+# assignments (rather than re-imports flagged unused-import) so the intent
+# is obvious and the linter has nothing to suppress.
+get_pillar_coverage = admin_discovery_coverage.get_pillar_coverage
+get_coverage_gaps = admin_discovery_coverage.get_coverage_gaps
+get_workstream_coverage = admin_discovery_coverage.get_workstream_coverage
+admin_refresh_goal_queries = admin_discovery_coverage.admin_refresh_goal_queries
+_aggregate_workstream_freshness = (
+    admin_discovery_coverage._aggregate_workstream_freshness
 )
+_gap_priority = admin_discovery_coverage._gap_priority
+PILLAR_DEFINITIONS = admin_discovery_coverage.PILLAR_DEFINITIONS
+ALLOWED_COVERAGE_DAYS = admin_discovery_coverage.ALLOWED_COVERAGE_DAYS
+ALLOWED_COVERAGE_MODES = admin_discovery_coverage.ALLOWED_COVERAGE_MODES
+CoverageMode = admin_discovery_coverage.CoverageMode
+TargetDistribution = admin_discovery_coverage.TargetDistribution
+ALLOWED_GAP_TARGETS = admin_discovery_coverage.ALLOWED_GAP_TARGETS
+GAP_PRIORITY_HIGH_THRESHOLD = admin_discovery_coverage.GAP_PRIORITY_HIGH_THRESHOLD
+GAP_PRIORITY_MEDIUM_THRESHOLD = admin_discovery_coverage.GAP_PRIORITY_MEDIUM_THRESHOLD
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin-discovery"])
