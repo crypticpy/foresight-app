@@ -2,8 +2,7 @@
  * Lens API Client
  *
  * Reads the CSP taxonomy + strategic anchors and writes the per-card
- * `user_metadata` overlay. Backend lives at `app/routers/lens.py`; the
- * full design is in `docs/18_FEATURE_Lens_Architecture.md`.
+ * `user_metadata` overlay. Backend lives at `app/routers/lens.py`.
  *
  * The classifier cascade never overwrites `user_metadata`, so anything
  * written here is durable across re-classification.

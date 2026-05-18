@@ -25,7 +25,7 @@ What else we looked at and why we did not choose it.
 
 ## Index
 
-ADRs slated for authoring as part of the climate overlay feature (see `../13_FEATURE_Climate_Overlay.md` §12). To be authored during Sprint 4 (S4 spike).
+ADRs slated for authoring as part of the climate overlay feature. To be authored during Sprint 4 (S4 spike).
 
 | #   | Title                                                                | Status  |
 | --- | -------------------------------------------------------------------- | ------- |

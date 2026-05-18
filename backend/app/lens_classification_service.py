@@ -1,8 +1,7 @@
 """Lens classification cascade.
 
-Multi-prompt classifier that produces the per-card metadata introduced by
-``docs/18_FEATURE_Lens_Architecture.md`` and persisted by the schema migration
-``20260507000006_lens_architecture_schema.sql``.
+Multi-prompt classifier that produces the per-card lens metadata persisted
+by the schema migration ``20260507000006_lens_architecture_schema.sql``.
 
 Pipeline (stages run concurrently — they are independent decisions about the
 same card text):
