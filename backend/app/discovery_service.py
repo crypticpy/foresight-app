@@ -158,6 +158,18 @@ from .discovery_cards_helpers import (
     cluster_similar_concepts,
 )
 
+# Per-card persistence helpers extracted to
+# ``discovery_cards_persistence`` in PR-D11b. Stateless — they take the
+# Supabase client (and, for ``store_source_to_card``, the ``AIService``
+# instance) as explicit arguments. ``_create_card_from_source`` and the
+# orchestrator still live here and will be extracted once the lens
+# cascade has its own module.
+from .discovery_cards_persistence import (
+    auto_approve_card,
+    create_timeline_event,
+    store_source_to_card,
+)
+
 __all__ = [
     "APITokenUsage",
     "CardAction",
@@ -1452,7 +1464,9 @@ class DiscoveryService:
         # STEP 1: Process enrichment candidates first (no limit - always enrich)
         for source, card_id, similarity in dedup_result.enrichment_candidates:
             try:
-                source_id = await self._store_source_to_card(source, card_id)
+                source_id = await store_source_to_card(
+                    self.supabase, self.ai_service, source, card_id
+                )
                 if source_id:
                     sources_added += 1
                     all_stored_source_ids.append(source_id)
@@ -1542,7 +1556,9 @@ class DiscoveryService:
                 )
 
                 # Store primary source to new card
-                source_id = await self._store_source_to_card(primary_source, card_id)
+                source_id = await store_source_to_card(
+                    self.supabase, self.ai_service, primary_source, card_id
+                )
                 if source_id:
                     sources_added += 1
                     all_stored_source_ids.append(source_id)
@@ -1559,8 +1575,11 @@ class DiscoveryService:
                 # Add remaining cluster sources to the same card (enrichment)
                 for additional_source in cluster[1:]:
                     try:
-                        add_source_id = await self._store_source_to_card(
-                            additional_source, card_id
+                        add_source_id = await store_source_to_card(
+                            self.supabase,
+                            self.ai_service,
+                            additional_source,
+                            card_id,
                         )
                         if add_source_id:
                             sources_added += 1
@@ -1580,7 +1599,7 @@ class DiscoveryService:
 
                 # Auto-approve if confidence exceeds threshold
                 if confidence >= config.auto_approve_threshold:
-                    await self._auto_approve_card(card_id)
+                    await auto_approve_card(self.supabase, card_id)
                     auto_approved += 1
                 else:
                     pending_review += 1
@@ -1736,7 +1755,8 @@ class DiscoveryService:
                     logger.warning(f"Failed to store embedding on card {card_id}: {e}")
 
                 # Create timeline event
-                await self._create_timeline_event(
+                await create_timeline_event(
+                    self.supabase,
                     card_id=card_id,
                     event_type="discovered",
                     description="Card discovered via automated scan",
@@ -1772,186 +1792,6 @@ class DiscoveryService:
             logger.error(f"Failed to create card: {e}")
 
         return None
-
-    async def _store_source_to_card(
-        self, source: ProcessedSource, card_id: str
-    ) -> Optional[str]:
-        """
-        Store a processed source to a card.
-
-        Runs embedding-based deduplication before inserting.  If the source
-        is a duplicate (>0.95 similarity), it is skipped.  If related
-        (0.85-0.95), it is stored with ``duplicate_of`` set.
-
-        Args:
-            source: Processed source
-            card_id: Target card ID
-
-        Returns:
-            Source ID or None if failed
-        """
-        try:
-            # --- Deduplication check (URL + embedding) ---
-            from app.deduplication import check_duplicate
-
-            dedup_result = await check_duplicate(
-                supabase=self.supabase,
-                card_id=card_id,
-                content=source.raw.content or "",
-                url=source.raw.url or "",
-                embedding=source.embedding if hasattr(source, "embedding") else None,
-                ai_service=self.ai_service,
-            )
-
-            if dedup_result.action == "skip":
-                logger.debug(
-                    f"Dedup: skipping duplicate source (sim={dedup_result.similarity:.4f}): "
-                    f"{source.raw.url[:50]}..."
-                )
-                return None
-
-            # Look up domain reputation ID for this source (Task 2.7)
-            _domain_reputation_id = None
-            try:
-                if _rep := domain_reputation_service.get_reputation(
-                    self.supabase, source.raw.url or ""
-                ):
-                    _domain_reputation_id = _rep.get("id")
-            except Exception as exc:
-                # Non-fatal — source row still gets stored without rep linkage.
-                logger.debug(
-                    "discovery: get_reputation failed for %s: %s",
-                    source.raw.url,
-                    exc,
-                )
-
-            from app.source_quality import extract_domain
-
-            source_record = {
-                "card_id": card_id,
-                "url": source.raw.url,
-                "title": (source.raw.title or "Untitled")[:500],
-                "publication": (
-                    (source.raw.source_name or "")[:200]
-                    if source.raw.source_name
-                    else None
-                ),
-                "full_text": (
-                    source.raw.content[:10000] if source.raw.content else None
-                ),
-                "ai_summary": (source.analysis.summary if source.analysis else None),
-                "key_excerpts": (
-                    source.analysis.key_excerpts[:5]
-                    if source.analysis and source.analysis.key_excerpts
-                    else []
-                ),
-                "relevance_to_card": (
-                    source.analysis.relevance if source.analysis else 0.5
-                ),
-                # Pre-print / peer-review status (Task 2.6)
-                "is_peer_reviewed": (
-                    False
-                    if getattr(source.raw, "is_preprint", False)
-                    else (
-                        True
-                        if getattr(source.raw, "source_type", None) == "academic"
-                        else None
-                    )
-                ),
-                "api_source": "discovery_scan",
-                "domain": extract_domain(source.raw.url or ""),
-                "ingested_at": datetime.now(timezone.utc).isoformat(),
-            }
-
-            # If related (0.85-0.95 similarity), mark duplicate_of
-            if (
-                dedup_result.action == "store_as_related"
-                and dedup_result.duplicate_of_id
-            ):
-                source_record["duplicate_of"] = dedup_result.duplicate_of_id
-
-            # Add domain_reputation_id if available (Task 2.7)
-            if _domain_reputation_id:
-                source_record["domain_reputation_id"] = _domain_reputation_id
-
-            result = self.supabase.table("sources").insert(source_record).execute()
-
-            if result.data:
-                source_id = result.data[0]["id"]
-
-                # Compute and store source quality score (non-blocking)
-                try:
-                    from app.source_quality import compute_and_store_quality_score
-
-                    compute_and_store_quality_score(
-                        self.supabase,
-                        source_id,
-                        analysis=(
-                            source.analysis if hasattr(source, "analysis") else None
-                        ),
-                        triage=source.triage if hasattr(source, "triage") else None,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to compute quality score for source {source_id}: {e}"
-                    )
-
-                return source_id
-
-        except Exception as e:
-            logger.error(f"Failed to store source: {e}")
-
-        return None
-
-    async def _auto_approve_card(self, card_id: str) -> None:
-        """
-        Auto-approve a card that meets confidence threshold.
-
-        Args:
-            card_id: Card to approve
-        """
-        try:
-            self.supabase.table("cards").update(
-                {
-                    "status": "active",
-                    "review_status": "active",
-                    "auto_approved_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", card_id).execute()
-
-            await self._create_timeline_event(
-                card_id=card_id,
-                event_type="auto_approved",
-                description="Card auto-approved based on high confidence score",
-            )
-
-        except Exception as e:
-            logger.warning(f"Failed to auto-approve card {card_id}: {e}")
-
-    async def _create_timeline_event(
-        self,
-        card_id: str,
-        event_type: str,
-        description: str,
-        source_id: Optional[str] = None,
-        metadata: Optional[Dict] = None,
-    ) -> None:
-        """Create a timeline event for a card."""
-        try:
-            self.supabase.table("card_timeline").insert(
-                {
-                    "card_id": card_id,
-                    "event_type": event_type,
-                    "title": event_type.replace("_", " ").title(),
-                    "description": description,
-                    "triggered_by_source_id": source_id,
-                    "metadata": metadata or {},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).execute()
-        except Exception as e:
-            logger.warning(f"Failed to create timeline event: {e}")
 
 # ============================================================================
 # Convenience Functions
