@@ -1,195 +1,58 @@
-# Foresight Design Documents
+# Foresight — Project Docs
 
-## Overview
+You (future you, or another agent) just landed on the repo. This folder is the
+short list of things that are still true. Older `NN_*.md` files in this
+directory are development artifacts (plans, PRDs, post-mortems) and will be
+pruned — trust the files below, not the artifacts.
 
-Foresight is a strategic horizon scanning system for the City of Austin. These documents define the architecture, data model, and implementation specifications.
+If something here disagrees with the code, the code wins. Fix the doc.
 
-**Target Stack:**
+## What Foresight is
 
-- Frontend: React + TypeScript + Vite + TailwindCSS
-- Backend: FastAPI (Python 3.11+)
-- Database: Supabase (PostgreSQL + pgvector)
-- AI: Azure OpenAI / OpenAI
-- Hosting: HuggingFace Spaces + Vercel/Netlify
+AI-powered strategic horizon scanning for the City of Austin CMO. It pulls
+content from RSS feeds, news APIs, government sources, and a self-hosted
+SearXNG aggregator, turns each promising item into a "card" with strategic
+metadata (pillar, stage, scores, lens classifications), and surfaces it
+through a kanban + chat interface aligned to Austin's strategic framework.
 
----
+Single-tenant pilot. No production users yet. Conventions are optimized for a
+maintainer + AI agents, not external contributors.
 
-## Document Index
+## Where to look
 
-| #   | Document                                        | Description                                             | Read When               |
-| --- | ----------------------------------------------- | ------------------------------------------------------- | ----------------------- |
-| 01  | [PROJECT_OVERVIEW.md](./01_PROJECT_OVERVIEW.md) | What Foresight is, the problem it solves, core concepts | Start here              |
-| 02  | [ARCHITECTURE.md](./02_ARCHITECTURE.md)         | System components, data flows, hosting                  | Planning infrastructure |
-| 03  | [TECH_STACK.md](./03_TECH_STACK.md)             | Dependencies, project structure, Docker config          | Setting up projects     |
-| 04  | [DATA_MODEL.md](./04_DATA_MODEL.md)             | Database schema, tables, indexes, RLS                   | Building database       |
-| 05  | [API_SPEC.md](./05_API_SPEC.md)                 | REST API endpoints, request/response formats            | Building backend        |
-| 06  | [FRONTEND_SPEC.md](./06_FRONTEND_SPEC.md)       | Pages, components, wireframes, state management         | Building frontend       |
-| 07  | [AI_PIPELINE.md](./07_AI_PIPELINE.md)           | Nightly scan, processing, prompts, costs                | Building AI features    |
-| 08  | [MVP_SCOPE.md](./08_MVP_SCOPE.md)               | What's in v1 vs deferred, timeline, success criteria    | Prioritizing work       |
-| 09  | [TAXONOMY.md](./09_TAXONOMY.md)                 | Complete reference for pillars, goals, stages, etc.     | Quick reference         |
+| Question                              | File                                                   |
+| ------------------------------------- | ------------------------------------------------------ |
+| Languages, libraries, versions        | [01-stack.md](./01-stack.md)                           |
+| Services, request flow, worker        | [02-architecture.md](./02-architecture.md)             |
+| Model tiers, RAG, agent, embeddings   | [03-ai-pipeline.md](./03-ai-pipeline.md)               |
+| Cards, workstreams, portfolios, lens  | [04-data-model.md](./04-data-model.md)                 |
+| `/api/v1/*`, auth, pagination, errors | [05-api-conventions.md](./05-api-conventions.md)       |
+| React structure, hooks, design tokens | [06-frontend-patterns.md](./06-frontend-patterns.md)   |
+| Vercel + Railway, env vars, health    | [07-deployment.md](./07-deployment.md)                 |
+| PR ethos, `/babysit-pr`, conventions  | [08-style-and-workflow.md](./08-style-and-workflow.md) |
 
-### FY26 Reactivation Planning (Ana DeFrates brief, May 2026)
+Plus, at repo root:
 
-| #   | Document                                                                                  | Description                                                                | Read When                    |
-| --- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------- |
-| 10  | [FY26_FORESIGHT_ROADMAP.md](./10_FY26_FORESIGHT_ROADMAP.md)                               | Master roadmap mapping stakeholder asks to sprints S1–S9                   | Start here for FY26 planning |
-| 11  | [PRD_Scoped_Workstreams_and_Frameworks.md](./11_PRD_Scoped_Workstreams_and_Frameworks.md) | People · Place · Partnerships + CSP workstreams; drivers; cost guardrails  | S1–S3 work                   |
-| 12  | [PRD_Budget_Book_Export.md](./12_PRD_Budget_Book_Export.md)                               | "Looking Ahead" workstream × focus × signals matrix export                 | S2 work                      |
-| 13  | [FEATURE_Climate_Overlay.md](./13_FEATURE_Climate_Overlay.md)                             | Multi-sprint climate/GIS overlay; open-source-now, ESRI-forward            | S4–S9 work                   |
-| 14  | [UX_INTEGRATION_PLAN.md](./14_UX_INTEGRATION_PLAN.md)                                     | UI/UX integration across all FY26 features; surface map, components        | UI work for any phase        |
-| 15  | [AGENTIC_IMPLEMENTATION_PLAN.md](./15_AGENTIC_IMPLEMENTATION_PLAN.md)                     | Phase order, branches, exit criteria, git hygiene for agent-driven rollout | Before starting any phase    |
+- [CLAUDE.md](../CLAUDE.md) — operational rules for an agent working in this
+  repo. Read first. Has the canonical model-tier table and the things you can
+  break if you ignore them (e.g. `cost_usd` vs `estimated_cost_usd`).
+- [AGENTS.md](../AGENTS.md) — same idea, for non-Claude agents.
+- [SECURITY.md](./SECURITY.md) — auth model, RLS posture, rate limits.
 
-Architecture Decision Records authored under this initiative live in [`adr/`](./adr/).
+## How these docs are written
 
----
+Terse. File paths over prose. Current state, not history. If a doc has
+explanations that aren't load-bearing for a future fresh-context reader,
+they're wrong. Delete them.
 
-## Quick Start for Development
+Each doc is intended to be readable in under five minutes by an agent that
+has never opened the repo.
 
-### 1. Set Up Supabase
+## Updating
 
-1. Create new Supabase project
-2. Run schema from `04_DATA_MODEL.md`
-3. Enable pgvector extension
-4. Set up auth (email/password)
-5. Note URL and keys
+When a PR drifts the design (renames a router, swaps a model tier, changes
+the deploy topology), update the relevant doc here in the same PR. These
+files are short on purpose so this is cheap.
 
-### 2. Set Up Backend
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Create .env file
-cp .env.example .env
-# Fill in Supabase and OpenAI keys
-
-# Run locally
-uvicorn app.main:app --reload
-```
-
-### 3. Set Up Frontend
-
-```bash
-cd frontend
-npm install
-
-# Create .env file
-cp .env.example .env
-# Fill in Supabase and API URLs
-
-# Run locally
-npm run dev
-```
-
-### 4. Test Pipeline
-
-```bash
-# Trigger manual scan
-curl -X POST http://localhost:8000/api/v1/admin/scan
-```
-
----
-
-## Development Order (Suggested)
-
-### Phase 1: Foundation (Week 1)
-
-1. Set up Supabase with schema
-2. Scaffold FastAPI project
-3. Implement auth endpoints
-4. Scaffold React project
-5. Implement login flow
-
-### Phase 2: Core Data (Week 2)
-
-1. Card CRUD endpoints
-2. Source endpoints
-3. Timeline endpoints
-4. Search endpoint (vector)
-
-### Phase 3: User Features (Week 3)
-
-1. Follow/unfollow endpoints
-2. Workstream endpoints
-3. Notes endpoints
-4. User profile endpoints
-
-### Phase 4: Frontend (Week 3-4)
-
-1. Layout components
-2. Discovery page
-3. Card detail page
-4. Dashboard
-5. Workstreams page
-
-### Phase 5: Pipeline (Week 4-5)
-
-1. Fetchers (NewsAPI, RSS)
-2. Triage processor
-3. Full processor
-4. Card matcher
-5. Scheduler
-
-### Phase 6: Deploy & Test (Week 5-6)
-
-1. Deploy backend to HF Spaces
-2. Deploy frontend to Vercel
-3. End-to-end testing
-4. Bug fixes
-5. Pilot user onboarding
-
----
-
-## Key Decisions Made
-
-| Decision           | Choice              | Rationale                               |
-| ------------------ | ------------------- | --------------------------------------- |
-| Backend language   | Python              | Best AI/ML ecosystem                    |
-| Frontend framework | React (not Next.js) | Simpler, SPA sufficient                 |
-| Database           | Supabase            | Managed, pgvector, auth included        |
-| Vector DB          | pgvector            | Built into Supabase, no extra service   |
-| Graph DB           | Deferred            | Use relational for MVP, add Neo4j later |
-| Hosting            | HF Spaces           | Free tier, Docker support               |
-| Auth               | Supabase Auth       | Integrated, JWT-based                   |
-
----
-
-## Environment Variables Needed
-
-### Backend
-
-```
-SUPABASE_URL=
-SUPABASE_KEY=
-SUPABASE_SERVICE_KEY=
-OPENAI_API_KEY=
-NEWSAPI_KEY=
-```
-
-### Frontend
-
-```
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-VITE_API_URL=
-```
-
----
-
-## Questions for Implementation
-
-Before starting, confirm:
-
-1. **OpenAI vs Azure OpenAI**: Using OpenAI direct for pilot, or need Azure from start?
-2. **User provisioning**: Manual creation, or self-signup with @austintexas.gov domain?
-3. **Initial sources**: Which RSS feeds specifically to include?
-4. **Pilot users**: Who are the 5-10 initial users?
-5. **Success metrics**: What defines "working" for pilot?
-
----
-
-## Contact
-
-Project Lead: Chris (AI Technology Lead, Austin Public Health)
+Do not regenerate or reformat the whole doc to fix one line. Surgical edits
+only — same rule that applies to the code.

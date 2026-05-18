@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Foresight is an AI-powered strategic horizon scanning system for the City of Austin. It automates discovery, analysis, and tracking of emerging trends, technologies, and issues that could impact municipal operations, aligned with Austin's strategic framework and the CMO's Top 25 Priorities.
 
+> **Longer-form project docs live in [`docs/`](./docs/README.md).** Start there if you need stack details ([01-stack](./docs/01-stack.md)), service topology ([02-architecture](./docs/02-architecture.md)), the AI pipeline ([03-ai-pipeline](./docs/03-ai-pipeline.md)), data model ([04-data-model](./docs/04-data-model.md)), API conventions ([05-api-conventions](./docs/05-api-conventions.md)), frontend patterns ([06-frontend-patterns](./docs/06-frontend-patterns.md)), deployment ([07-deployment](./docs/07-deployment.md)), or workflow ([08-style-and-workflow](./docs/08-style-and-workflow.md)). This file is the operational rules; those docs are the design surface. If they disagree, the code wins — fix the doc.
+
 ## Tech Stack
 
 - **Frontend**: React 18 + TypeScript + Vite + TailwindCSS + Radix UI
@@ -15,7 +17,7 @@ Foresight is an AI-powered strategic horizon scanning system for the City of Aus
   - `model_chat` / `model_chat_agent` — `gpt-5.4` (user-facing chat, briefs; signal agent + agentic tool use)
   - `model_chat_mini` — `gpt-5.4-mini` (cascade dimensions, query expansion, RAG reranking)
   - `model_chat_nano` — falls back to mini; only override after sampling
-  - `model_embedding` — `text-embedding-ada-002` (kept on ada-002 for pgvector compatibility with existing 1536-dim card embeddings)
+  - `model_embedding` — `text-embedding-3-small` (1536-dim, pgvector-compatible with the existing ada-002 card embeddings — same dimensionality, so no re-embed required to coexist)
   - gpt-researcher for deep research, routed through the agent + mini tiers
   - **GPT-5.5 is retired** — do not route to it. GPT-4.1 references in older comments/docstrings are stale.
 - **Web search providers**: SearXNG (self-hosted aggregator) + Serper (Google API) only. **Tavily and Firecrawl are decommissioned** — their API keys are off and no code path may call them. gpt-researcher and chat `web_search` both go through the Serper/SearXNG providers.
