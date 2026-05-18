@@ -145,6 +145,11 @@ from .discovery_search import (
 # current run id as explicit arguments.
 from .discovery_triage import triage_sources_with_metrics
 
+# Deduplication stage extracted to ``discovery_dedup`` in PR-D10.
+# Stateless — takes the Supabase client and the ``AIService``
+# instance as explicit arguments.
+from .discovery_dedup import deduplicate_sources_with_metrics
+
 __all__ = [
     "APITokenUsage",
     "CardAction",
@@ -770,10 +775,11 @@ class DiscoveryService:
                         "sources_relevant": len(triaged_sources),
                     },
                 )
-                dedup_result, dedup_tokens = (
-                    await self._deduplicate_sources_with_metrics(
-                        filtered_sources, config
-                    )
+                dedup_result, dedup_tokens = await deduplicate_sources_with_metrics(
+                    self.supabase,
+                    self.ai_service,
+                    filtered_sources,
+                    config,
                 )
                 api_token_usage.add_tokens("card_match", dedup_tokens)
                 logger.info(
@@ -1399,119 +1405,6 @@ class DiscoveryService:
             duplicate_count=duplicate_count,
             enrichment_candidates=enrichment_candidates,
             new_concept_candidates=new_concept_candidates,
-        )
-
-    async def _deduplicate_sources_with_metrics(
-        self, sources: List[ProcessedSource], config: DiscoveryConfig
-    ) -> Tuple[DeduplicationResult, int]:
-        """
-        Deduplicate sources against existing cards with token usage tracking.
-
-        Args:
-            sources: Processed sources to deduplicate
-            config: Run configuration
-
-        Returns:
-            Tuple of (DeduplicationResult, estimated token count)
-        """
-        unique_sources = []
-        duplicate_count = 0
-        enrichment_candidates = []
-        new_concept_candidates = []
-        total_tokens = 0
-
-        for source in sources:
-            try:
-                # Check for existing URL first
-                url_check = (
-                    self.supabase.table("sources")
-                    .select("id")
-                    .eq("url", source.raw.url)
-                    .execute()
-                )
-
-                if url_check.data:
-                    duplicate_count += 1
-                    continue
-
-                # Vector similarity search against existing cards
-                try:
-                    match_result = self.supabase.rpc(
-                        "find_similar_cards",
-                        {
-                            "query_embedding": source.embedding,
-                            "match_threshold": config.weak_match_threshold,
-                            "match_count": 3,
-                        },
-                    ).execute()
-
-                    if match_result.data:
-                        top_match = match_result.data[0]
-                        similarity = top_match.get("similarity", 0)
-
-                        if similarity >= config.similarity_threshold:
-                            # Strong match - enrich existing card
-                            enrichment_candidates.append(
-                                (source, top_match["id"], similarity)
-                            )
-                        elif similarity >= config.weak_match_threshold:
-                            # Weak match - use LLM to decide
-                            card = (
-                                self.supabase.table("cards")
-                                .select("name, summary")
-                                .eq("id", top_match["id"])
-                                .single()
-                                .execute()
-                            )
-
-                            if card.data:
-                                decision = await self.ai_service.check_card_match(
-                                    source_summary=source.analysis.summary,
-                                    source_card_name=source.analysis.suggested_card_name,
-                                    existing_card_name=card.data["name"],
-                                    existing_card_summary=card.data.get("summary", ""),
-                                )
-                                # Estimate tokens for card match check
-                                input_text = f"{source.analysis.summary} {source.analysis.suggested_card_name} {card.data['name']} {card.data.get('summary', '')}"
-                                total_tokens += (
-                                    len(input_text) // 4 + 100
-                                )  # input + output estimate
-
-                                if (
-                                    decision.get("is_match")
-                                    and decision.get("confidence", 0) > 0.7
-                                ):
-                                    enrichment_candidates.append(
-                                        (source, top_match["id"], similarity)
-                                    )
-                                else:
-                                    new_concept_candidates.append(source)
-                            else:
-                                new_concept_candidates.append(source)
-                        else:
-                            new_concept_candidates.append(source)
-                    else:
-                        new_concept_candidates.append(source)
-
-                except Exception as e:
-                    # Vector search failed - treat as new concept
-                    logger.warning(f"Vector search failed (treating as new): {e}")
-                    new_concept_candidates.append(source)
-
-                unique_sources.append(source)
-
-            except Exception as e:
-                logger.warning(f"Deduplication failed for {source.raw.url}: {e}")
-                continue
-
-        return (
-            DeduplicationResult(
-                unique_sources=unique_sources,
-                duplicate_count=duplicate_count,
-                enrichment_candidates=enrichment_candidates,
-                new_concept_candidates=new_concept_candidates,
-            ),
-            total_tokens,
         )
 
     # ========================================================================
