@@ -1,4 +1,4 @@
-"""Admin, taxonomy, source rating, quality, and domain reputation router.
+"""Admin aggregator + remaining inline endpoints.
 
 This file owns the shared ``/api/v1`` prefix and ``admin`` tag, mounts
 focused sub-routers for endpoint clusters that have been extracted, and
@@ -13,6 +13,10 @@ Sub-routers mounted here
 * ``admin_source_rating.py`` — ``POST /sources/{id}/rate``,
   ``GET /sources/{id}/ratings``, ``DELETE /sources/{id}/rate`` (upsert
   / aggregate / remove user ratings, with parent-card SQI recalc).
+* ``admin_quality.py`` — card-level SQI breakdown / recalculation and
+  the standalone signal_quality score endpoints.
+* ``admin_domain_reputation.py`` — list / get / create / update / delete
+  / recalculate for the domain reputation system.
 
 When extracting another endpoint cluster, add the import + an
 ``include_router`` line below. Do NOT change the parent prefix — keep
@@ -28,7 +32,13 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from . import admin_scan, admin_source_rating, admin_taxonomy
+from . import (
+    admin_domain_reputation,
+    admin_quality,
+    admin_scan,
+    admin_source_rating,
+    admin_taxonomy,
+)
 from app.authz import require_admin
 from app.deps import (
     supabase,
@@ -50,11 +60,6 @@ from app.openai_provider import (
     DEFAULT_REASONING_EFFORT,
     reload_config as reload_openai_config,
 )
-from app.models.domain_reputation import (
-    DomainReputationCreate,
-    DomainReputationUpdate,
-)
-from app import quality_service, domain_reputation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin"])
@@ -63,6 +68,8 @@ router = APIRouter(prefix="/api/v1", tags=["admin"])
 router.include_router(admin_taxonomy.router)
 router.include_router(admin_scan.router)
 router.include_router(admin_source_rating.router)
+router.include_router(admin_quality.router)
+router.include_router(admin_domain_reputation.router)
 
 # Back-compat re-exports for tests / legacy callers that reach handlers
 # by attribute on this module. Production code should import from the
@@ -72,6 +79,19 @@ trigger_manual_scan = admin_scan.trigger_manual_scan
 rate_source = admin_source_rating.rate_source
 get_source_ratings = admin_source_rating.get_source_ratings
 delete_source_rating = admin_source_rating.delete_source_rating
+get_card_quality = admin_quality.get_card_quality
+recalculate_card_quality = admin_quality.recalculate_card_quality
+recalculate_all_quality = admin_quality.recalculate_all_quality
+get_signal_quality_score = admin_quality.get_signal_quality_score
+refresh_signal_quality_score = admin_quality.refresh_signal_quality_score
+list_domain_reputations = admin_domain_reputation.list_domain_reputations
+get_domain_reputation = admin_domain_reputation.get_domain_reputation
+create_domain_reputation = admin_domain_reputation.create_domain_reputation
+update_domain_reputation = admin_domain_reputation.update_domain_reputation
+delete_domain_reputation = admin_domain_reputation.delete_domain_reputation
+recalculate_domain_reputations = (
+    admin_domain_reputation.recalculate_domain_reputations
+)
 
 # Strong refs for fire-and-forget background tasks (currently the lens
 # backfill). Without this, asyncio.create_task results can be GC'd before
@@ -1017,238 +1037,9 @@ async def update_user_account_type(
     return await asyncio.to_thread(update_row)
 
 
-# ============================================================================
-# Quality / SQI endpoints
-# ============================================================================
-
-
-@router.get("/cards/{card_id}/quality")
-async def get_card_quality(card_id: str, user=Depends(get_current_user)):
-    """Get full SQI breakdown for a card."""
-    try:
-        breakdown = quality_service.get_breakdown(
-            supabase, card_id
-        ) or quality_service.calculate_sqi(supabase, card_id)
-        return breakdown
-    except Exception as e:
-        logger.error(f"Failed to get quality for card {card_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("card quality retrieval", e),
-        ) from e
-
-
-@router.post("/cards/{card_id}/quality/recalculate")
-@limiter.limit("20/minute")
-async def recalculate_card_quality(
-    request: Request, card_id: str, user=Depends(get_current_user)
-):
-    """Force SQI recalculation for a card."""
-    require_admin(user)
-
-    try:
-        return quality_service.calculate_sqi(supabase, card_id)
-    except Exception as e:
-        logger.error(f"Failed to recalculate quality for card {card_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("card quality recalculation", e),
-        ) from e
-
-
-@router.post("/admin/quality/recalculate-all")
-async def recalculate_all_quality(user=Depends(get_current_user)):
-    """Batch recalculate SQI for all cards. Admin only."""
-    require_admin(user)
-
-    try:
-        return quality_service.recalculate_all_cards(supabase)
-    except Exception as e:
-        logger.error(f"Failed to batch recalculate quality: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("batch quality recalculation", e),
-        ) from e
-
-
-@router.get("/cards/{card_id}/quality-score")
-async def get_signal_quality_score(card_id: str, user=Depends(get_current_user)):
-    """Get computed signal quality score for a card."""
-    from app.signal_quality import compute_signal_quality_score
-
-    return compute_signal_quality_score(supabase, card_id)
-
-
-@router.post("/cards/{card_id}/quality-score/refresh")
-async def refresh_signal_quality_score(card_id: str, user=Depends(get_current_user)):
-    """Recompute and store the signal quality score."""
-    require_admin(user)
-
-    from app.signal_quality import update_signal_quality_score
-
-    score = update_signal_quality_score(supabase, card_id)
-    return {"card_id": card_id, "signal_quality_score": score}
-
-
-# ============================================================================
-# Domain Reputation endpoints
-# ============================================================================
-
-
-@router.get("/domain-reputation")
-async def list_domain_reputations(
-    page: int = 1,
-    page_size: int = 50,
-    tier: Optional[int] = None,
-    category: Optional[str] = None,
-    user=Depends(get_current_user),
-):
-    """List all domains with reputation data, paginated and filterable."""
-    try:
-        query = supabase.table("domain_reputation").select("*", count="exact")
-        if tier:
-            query = query.eq("curated_tier", tier)
-        if category:
-            query = query.eq("category", category)
-        query = query.order("composite_score", desc=True)
-        query = query.range((page - 1) * page_size, page * page_size - 1)
-        result = query.execute()
-        return {
-            "items": result.data,
-            "total": result.count,
-            "page": page,
-            "page_size": page_size,
-        }
-    except Exception as e:
-        logger.error(f"Failed to list domain reputations: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("domain reputations listing", e),
-        ) from e
-
-
-@router.get("/domain-reputation/{domain_id}")
-async def get_domain_reputation(domain_id: str, user=Depends(get_current_user)):
-    """Get single domain reputation detail."""
-    try:
-        result = (
-            supabase.table("domain_reputation")
-            .select("*")
-            .eq("id", domain_id)
-            .single()
-            .execute()
-        )
-        return result.data
-    except Exception as e:
-        logger.error(f"Failed to get domain reputation {domain_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_safe_error("domain reputation lookup", e),
-        ) from e
-
-
-@router.post("/admin/domain-reputation")
-async def create_domain_reputation(
-    body: DomainReputationCreate, user=Depends(get_current_user)
-):
-    """Add a new domain to the reputation system. Admin only."""
-    require_admin(user)
-
-    try:
-        data = body.model_dump()
-        # Calculate initial composite score based on tier
-        tier_scores = {1: 85, 2: 60, 3: 35}
-        tier_score = tier_scores.get(data.get("curated_tier"), 20)
-        data["composite_score"] = tier_score * 0.50 + data.get(
-            "texas_relevance_bonus", 0
-        )
-        result = supabase.table("domain_reputation").insert(data).execute()
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to create domain reputation",
-            )
-        return result.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to create domain reputation: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("domain reputation creation", e),
-        ) from e
-
-
-@router.patch("/admin/domain-reputation/{domain_id}")
-async def update_domain_reputation(
-    domain_id: str,
-    body: DomainReputationUpdate,
-    user=Depends(get_current_user),
-):
-    """Update a domain's tier, category, or other fields. Admin only."""
-    require_admin(user)
-
-    try:
-        data = body.model_dump(exclude_none=True)
-        if not data:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No fields provided for update",
-            )
-        result = (
-            supabase.table("domain_reputation")
-            .update(data)
-            .eq("id", domain_id)
-            .execute()
-        )
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Domain reputation not found",
-            )
-        return result.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to update domain reputation {domain_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("domain reputation update", e),
-        ) from e
-
-
-@router.delete("/admin/domain-reputation/{domain_id}")
-async def delete_domain_reputation(domain_id: str, user=Depends(get_current_user)):
-    """Remove a domain from the reputation system. Admin only."""
-    require_admin(user)
-
-    try:
-        supabase.table("domain_reputation").delete().eq("id", domain_id).execute()
-        return {"status": "deleted"}
-    except Exception as e:
-        logger.error(f"Failed to delete domain reputation {domain_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("domain reputation deletion", e),
-        ) from e
-
-
-@router.post("/admin/domain-reputation/recalculate")
-async def recalculate_domain_reputations(user=Depends(get_current_user)):
-    """Recalculate all composite scores from user ratings + pipeline stats."""
-    require_admin(user)
-
-    try:
-        return domain_reputation_service.recalculate_all(supabase)
-    except Exception as e:
-        logger.error(f"Failed to recalculate domain reputations: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("domain reputations recalculation", e),
-        ) from e
-
-
 # NOTE: top-domains endpoint lives in analytics.py to avoid route duplication.
+# Card quality / SQI endpoints live in admin_quality.py.
+# Domain reputation CRUD lives in admin_domain_reputation.py.
 
 
 # ============================================================================
