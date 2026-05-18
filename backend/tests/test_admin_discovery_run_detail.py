@@ -139,9 +139,13 @@ def _bypass_admin(monkeypatch):
 
 
 def _patch_supabase(monkeypatch, mock_sb):
-    from app.routers import admin_discovery
+    from app.routers import admin_discovery_runs
 
-    monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
+    # The run-detail endpoint lives in its own sub-router; the parent
+    # ``admin_discovery`` aggregator is now a pure include-router shell
+    # that no longer imports ``supabase`` directly. Patch the sub-router
+    # binding the handler actually reads.
+    monkeypatch.setattr(admin_discovery_runs, "supabase", mock_sb)
 
 
 def _admin_actor() -> Dict[str, Any]:
