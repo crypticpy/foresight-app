@@ -37,7 +37,6 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-import uuid
 
 from supabase import Client
 import openai
@@ -124,6 +123,14 @@ from .discovery_progress import (
 # Blocked-topic filtering extracted to ``discovery_blocked_topics`` in
 # PR-D6. Stateless — takes the Supabase client and processed sources.
 from .discovery_blocked_topics import check_blocked_topics
+
+# Run lifecycle helpers extracted to ``discovery_run_lifecycle`` in
+# PR-D7. Stateless — they take the Supabase client plus the
+# pending-lens-tasks set as explicit arguments.
+from .discovery_run_lifecycle import (
+    create_run_record,
+    finalize_run,
+)
 
 __all__ = [
     "APITokenUsage",
@@ -352,7 +359,7 @@ class DiscoveryService:
             run_id = existing_run_id
             logger.info(f"Using existing discovery run {run_id}")
         else:
-            run_id = await self._create_run_record(config)
+            run_id = await create_run_record(self.supabase, config)
 
         errors: List[str] = []
         sources_by_category: Dict[str, int] = {}
@@ -490,7 +497,9 @@ class DiscoveryService:
                 processing_time.total_seconds = (
                     datetime.now(timezone.utc) - start_time
                 ).total_seconds()
-                return await self._finalize_run(
+                return await finalize_run(
+                    self.supabase,
+                    pending_lens_tasks=self._pending_lens_tasks,
                     run_id=run_id,
                     start_time=start_time,
                     queries_generated=0,
@@ -515,7 +524,9 @@ class DiscoveryService:
                 processing_time.total_seconds = (
                     datetime.now(timezone.utc) - start_time
                 ).total_seconds()
-                return await self._finalize_run(
+                return await finalize_run(
+                    self.supabase,
+                    pending_lens_tasks=self._pending_lens_tasks,
                     run_id=run_id,
                     start_time=start_time,
                     queries_generated=len(queries),
@@ -835,7 +846,9 @@ class DiscoveryService:
             processing_time.log_metrics(logger)
             api_token_usage.log_metrics(logger)
 
-            return await self._finalize_run(
+            return await finalize_run(
+                self.supabase,
+                pending_lens_tasks=self._pending_lens_tasks,
                 run_id=run_id,
                 start_time=start_time,
                 queries_generated=len(queries),
@@ -862,7 +875,9 @@ class DiscoveryService:
                 datetime.now(timezone.utc) - start_time
             ).total_seconds()
 
-            return await self._finalize_run(
+            return await finalize_run(
+                self.supabase,
+                pending_lens_tasks=self._pending_lens_tasks,
                 run_id=run_id,
                 start_time=start_time,
                 queries_generated=0,
@@ -1003,49 +1018,6 @@ class DiscoveryService:
             if source.discovered_source_id:
                 await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
             return "new"
-
-    # ========================================================================
-    # Step 1: Create Run Record
-    # ========================================================================
-
-    async def _create_run_record(self, config: DiscoveryConfig) -> str:
-        """
-        Create a discovery run record in the database.
-
-        Args:
-            config: Run configuration
-
-        Returns:
-            Run ID
-        """
-        run_id = str(uuid.uuid4())
-
-        try:
-            self.supabase.table("discovery_runs").insert(
-                {
-                    "id": run_id,
-                    "status": DiscoveryStatus.RUNNING.value,
-                    "triggered_by": "manual",
-                    "pillars_scanned": config.pillars_filter or [],
-                    "priorities_scanned": config.horizons_filter or [],
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "summary_report": {
-                        "config": {
-                            "max_queries_per_run": config.max_queries_per_run,
-                            "max_sources_per_query": config.max_sources_per_query,
-                            "max_sources_total": config.max_sources_total,
-                            "auto_approve_threshold": config.auto_approve_threshold,
-                            "similarity_threshold": config.similarity_threshold,
-                            "dry_run": config.dry_run,
-                        }
-                    },
-                }
-            ).execute()
-        except Exception as e:
-            # Log but don't fail - table might not exist yet
-            logger.warning(f"Could not create run record (table may not exist): {e}")
-
-        return run_id
 
     # ========================================================================
     # Step 2: Generate Queries
@@ -2569,328 +2541,6 @@ class DiscoveryService:
             ).execute()
         except Exception as e:
             logger.warning(f"Failed to create timeline event: {e}")
-
-    # ========================================================================
-    # Step 8: Update Run Record
-    # ========================================================================
-
-    async def _update_run_record(self, run_id: str, result: DiscoveryResult) -> None:
-        """
-        Update the discovery run record with results.
-
-        Args:
-            run_id: Run ID
-            result: Discovery result
-        """
-        try:
-            # Preserve any existing fields (e.g., initial config + live progress)
-            # that may have been written into `summary_report` earlier in the run.
-            existing_report: Dict[str, Any] = {}
-            try:
-                existing = (
-                    self.supabase.table("discovery_runs")
-                    .select("summary_report")
-                    .eq("id", run_id)
-                    .single()
-                    .execute()
-                )
-                raw_report = (
-                    existing.data.get("summary_report") if existing.data else None
-                )
-                if isinstance(raw_report, dict):
-                    existing_report = raw_report
-            except Exception:
-                existing_report = {}
-
-            final_report = {
-                "stage": result.status.value,
-                "markdown": result.summary_report,
-                "queries_executed": result.queries_executed,
-                "sources_blocked": result.sources_blocked,
-                "sources_added": result.sources_added,
-                "auto_approved": result.auto_approved,
-                "pending_review": result.pending_review,
-                "execution_time_seconds": result.execution_time_seconds,
-                "cards_created_ids": result.cards_created,
-                "cards_enriched_ids": result.cards_enriched,
-            }
-
-            updated_report = existing_report | final_report
-
-            terminal_payload = {
-                "status": result.status.value,
-                "completed_at": (
-                    result.completed_at.isoformat()
-                    if result.completed_at
-                    else None
-                ),
-                "queries_generated": result.queries_generated,
-                "sources_found": result.sources_discovered,
-                "sources_relevant": result.sources_triaged,
-                "cards_created": (
-                    len(result.cards_created)
-                    if isinstance(result.cards_created, list)
-                    else result.cards_created
-                ),
-                "cards_enriched": (
-                    len(result.cards_enriched)
-                    if isinstance(result.cards_enriched, list)
-                    else result.cards_enriched
-                ),
-                "cards_deduplicated": result.sources_duplicate,
-                "estimated_cost": result.estimated_cost,
-                "error_message": result.errors[0] if result.errors else None,
-                "error_details": (
-                    {"errors": result.errors} if result.errors else None
-                ),
-                "summary_report": updated_report,
-            }
-            terminal_update = await asyncio.to_thread(
-                lambda: self.supabase.table("discovery_runs")
-                .update(terminal_payload)
-                .eq("id", run_id)
-                .eq("status", "running")
-                .execute()
-            )
-            if not (terminal_update.data or []):
-                logger.warning(
-                    "Discovery run %s already in a terminal state; "
-                    "skipped writing %s",
-                    run_id,
-                    result.status.value,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to update run record: {e}")
-
-    # ========================================================================
-    # Step 9: Finalize Run
-    # ========================================================================
-
-    async def _finalize_run(
-        self,
-        run_id: str,
-        start_time: datetime,
-        queries_generated: int,
-        queries_executed: int,
-        sources_discovered: int,
-        sources_triaged: int,
-        sources_blocked: int,
-        sources_duplicate: int,
-        card_result: CardActionResult,
-        cost: float,
-        errors: List[str],
-        status: DiscoveryStatus,
-        sources_by_category: Optional[Dict[str, int]] = None,
-        categories_fetched: int = 0,
-        diversity_metrics: Optional[SourceDiversityMetrics] = None,
-        processing_time_metrics: Optional[ProcessingTimeMetrics] = None,
-        api_token_usage_metrics: Optional[APITokenUsage] = None,
-    ) -> DiscoveryResult:
-        """
-        Finalize the discovery run and generate summary report.
-
-        Args:
-            run_id: Run ID
-            start_time: When run started
-            ... (various statistics)
-            status: Final status
-            sources_by_category: Count of sources per category (5 categories)
-            categories_fetched: Number of source categories that contributed
-            diversity_metrics: Computed source diversity metrics
-            processing_time_metrics: Granular timing metrics for each phase
-            api_token_usage_metrics: Token usage metrics for API cost tracking
-
-        Returns:
-            Complete DiscoveryResult
-        """
-        end_time = datetime.now(timezone.utc)
-        execution_time = (end_time - start_time).total_seconds()
-
-        # Default sources_by_category if not provided
-        if sources_by_category is None:
-            sources_by_category = {}
-
-        # Compute diversity metrics if not provided but we have category data
-        if diversity_metrics is None and sources_by_category:
-            diversity_metrics = SourceDiversityMetrics.compute(sources_by_category)
-
-        # Generate summary report
-        summary = self._generate_summary_report(
-            queries_generated=queries_generated,
-            queries_executed=queries_executed,
-            sources_discovered=sources_discovered,
-            sources_triaged=sources_triaged,
-            sources_blocked=sources_blocked,
-            sources_duplicate=sources_duplicate,
-            sources_by_category=sources_by_category,
-            categories_fetched=categories_fetched,
-            card_result=card_result,
-            cost=cost,
-            execution_time=execution_time,
-            errors=errors,
-            diversity_metrics=diversity_metrics,
-            processing_time_metrics=processing_time_metrics,
-            api_token_usage_metrics=api_token_usage_metrics,
-        )
-
-        result = DiscoveryResult(
-            run_id=run_id,
-            status=status,
-            started_at=start_time,
-            completed_at=end_time,
-            queries_generated=queries_generated,
-            queries_executed=queries_executed,
-            sources_discovered=sources_discovered,
-            sources_triaged=sources_triaged,
-            sources_blocked=sources_blocked,
-            sources_duplicate=sources_duplicate,
-            sources_by_category=sources_by_category,
-            categories_fetched=categories_fetched,
-            diversity_metrics=(
-                diversity_metrics.to_dict() if diversity_metrics else None
-            ),
-            cards_created=card_result.cards_created,
-            cards_enriched=card_result.cards_enriched,
-            sources_added=card_result.sources_added,
-            auto_approved=card_result.auto_approved,
-            pending_review=card_result.pending_review,
-            estimated_cost=cost,
-            execution_time_seconds=execution_time,
-            processing_time=(
-                processing_time_metrics.to_dict() if processing_time_metrics else None
-            ),
-            api_token_usage=(
-                api_token_usage_metrics.to_dict() if api_token_usage_metrics else None
-            ),
-            summary_report=summary,
-            errors=errors,
-        )
-
-        # Update database record
-        await self._update_run_record(run_id, result)
-
-        # Drain pending lens-cascade tasks before returning so newly created
-        # cards actually get budget/climate/issue tags written. Without this
-        # the asyncio loop tears down on return and cancels them in flight.
-        if self._pending_lens_tasks:
-            pending = list(self._pending_lens_tasks)
-            logger.info(
-                f"Awaiting {len(pending)} pending lens-cascade task(s) before run exit"
-            )
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*pending, return_exceptions=True),
-                    timeout=120,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Lens cascade drain timed out after 120s; cards may need backfill"
-                )
-
-        logger.info(f"Discovery run {run_id} completed: {summary[:200]}...")
-
-        return result
-
-    def _generate_summary_report(
-        self,
-        queries_generated: int,
-        queries_executed: int,
-        sources_discovered: int,
-        sources_triaged: int,
-        sources_blocked: int,
-        sources_duplicate: int,
-        card_result: CardActionResult,
-        cost: float,
-        execution_time: float,
-        errors: List[str],
-        sources_by_category: Optional[Dict[str, int]] = None,
-        categories_fetched: int = 0,
-        diversity_metrics: Optional[SourceDiversityMetrics] = None,
-        processing_time_metrics: Optional[ProcessingTimeMetrics] = None,
-        api_token_usage_metrics: Optional[APITokenUsage] = None,
-    ) -> str:
-        """Generate a human-readable summary report."""
-        report = f"""# Discovery Run Summary
-
-## Overview
-- **Queries Generated**: {queries_generated}
-- **Queries Executed**: {queries_executed}
-- **Execution Time**: {execution_time:.1f} seconds
-- **Estimated Cost**: ${cost:.4f}
-
-## Sources
-- **Discovered**: {sources_discovered}
-- **Passed Triage**: {sources_triaged}
-- **Blocked**: {sources_blocked}
-- **Duplicates**: {sources_duplicate}
-"""
-
-        # Add source category breakdown if available
-        if sources_by_category:
-            report += f"""
-## Source Categories ({categories_fetched}/5 categories)
-"""
-            for category, count in sources_by_category.items():
-                if count > 0:
-                    report += f"- **{category}**: {count} sources\n"
-
-        # Add diversity metrics if available
-        if diversity_metrics:
-            report += f"""
-## Source Diversity Metrics
-- **Category Coverage**: {diversity_metrics.category_coverage:.1%}
-- **Balance Score**: {diversity_metrics.balance_score:.2f}
-- **Shannon Entropy**: {diversity_metrics.shannon_entropy:.2f}
-"""
-            if diversity_metrics.dominant_category:
-                report += (
-                    f"- **Dominant Category**: {diversity_metrics.dominant_category}\n"
-                )
-            if diversity_metrics.underrepresented_categories:
-                report += f"- **Underrepresented**: {', '.join(diversity_metrics.underrepresented_categories)}\n"
-
-        # Add processing time breakdown if available
-        if processing_time_metrics:
-            report += f"""
-## Processing Time Breakdown
-- **Query Generation**: {processing_time_metrics.query_generation_seconds:.2f}s
-- **Multi-Source Fetch**: {processing_time_metrics.multi_source_fetch_seconds:.2f}s
-- **Query Search**: {processing_time_metrics.query_search_seconds:.2f}s
-- **Triage**: {processing_time_metrics.triage_seconds:.2f}s
-- **Block Check**: {processing_time_metrics.blocked_topic_check_seconds:.2f}s
-- **Deduplication**: {processing_time_metrics.deduplication_seconds:.2f}s
-- **Card Creation**: {processing_time_metrics.card_creation_seconds:.2f}s
-- **Total**: {processing_time_metrics.total_seconds:.2f}s
-"""
-
-        # Add API token usage if available
-        if api_token_usage_metrics:
-            report += f"""
-## API Token Usage
-- **Triage Tokens**: {api_token_usage_metrics.triage_tokens:,}
-- **Analysis Tokens**: {api_token_usage_metrics.analysis_tokens:,}
-- **Embedding Tokens**: {api_token_usage_metrics.embedding_tokens:,}
-- **Card Match Tokens**: {api_token_usage_metrics.card_match_tokens:,}
-- **Total Tokens**: {api_token_usage_metrics.total_tokens:,}
-- **Estimated Cost**: ${api_token_usage_metrics.estimated_cost_usd:.4f}
-"""
-
-        report += f"""
-## Cards
-- **Created**: {len(card_result.cards_created)}
-- **Enriched**: {len(card_result.cards_enriched)}
-- **Sources Added**: {card_result.sources_added}
-- **Auto-Approved**: {card_result.auto_approved}
-- **Pending Review**: {card_result.pending_review}
-"""
-
-        if errors:
-            report += "\n## Errors\n"
-            for error in errors:
-                report += f"- {error}\n"
-
-        return report
-
 
 # ============================================================================
 # Convenience Functions
