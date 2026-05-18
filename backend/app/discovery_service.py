@@ -78,6 +78,15 @@ from .discovery_config import (
     load_discovery_admin_overrides,
 )
 
+# Similarity helpers (``calculate_name_similarity`` / ``cosine_similarity``)
+# were extracted into ``discovery_text_utils`` in PR-D2. Re-imported here
+# and re-exported via ``__all__`` below so existing callers
+# (e.g. ``app.rss_service.cosine_similarity``) keep resolving.
+from .discovery_text_utils import (
+    calculate_name_similarity,
+    cosine_similarity,
+)
+
 __all__ = [
     "DEFAULT_RSS_FEEDS",
     "DEFAULT_SEARCH_TOPICS",
@@ -89,6 +98,8 @@ __all__ = [
     "_coerce_custom_query",
     "apply_source_preferences",
     "build_discovery_config",
+    "calculate_name_similarity",
+    "cosine_similarity",
     "get_discovery_defaults",
     "load_active_source_urls",
     "load_discovery_admin_overrides",
@@ -202,76 +213,6 @@ def convert_goal_id(ai_goal: str) -> str:
         return ai_goal
 
 
-def calculate_name_similarity(name1: str, name2: str) -> float:
-    """
-    Calculate similarity between two card/concept names.
-    Uses normalized Levenshtein-like comparison for fuzzy matching.
-
-    Returns a score between 0.0 and 1.0.
-    """
-    if not name1 or not name2:
-        return 0.0
-
-    # Normalize: lowercase, remove punctuation, strip whitespace
-    import re
-
-    def normalize(s):
-        s = s.lower().strip()
-        s = re.sub(r"[^\w\s]", "", s)
-        return " ".join(s.split())
-
-    n1 = normalize(name1)
-    n2 = normalize(name2)
-
-    if n1 == n2:
-        return 1.0
-
-    # Check if one contains the other (high similarity)
-    if n1 in n2 or n2 in n1:
-        shorter = min(len(n1), len(n2))
-        longer = max(len(n1), len(n2))
-        return shorter / longer if longer > 0 else 0.0
-
-    # Word overlap calculation
-    words1 = set(n1.split())
-    words2 = set(n2.split())
-
-    if not words1 or not words2:
-        return 0.0
-
-    intersection = words1 & words2
-    union = words1 | words2
-
-    # Jaccard similarity
-    return len(intersection) / len(union) if union else 0.0
-
-
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """
-    Calculate cosine similarity between two vectors in Python.
-
-    This is a fallback when the database RPC function fails due to
-    vector extension schema issues.
-
-    Args:
-        vec1: First embedding vector
-        vec2: Second embedding vector
-
-    Returns:
-        Cosine similarity score between 0.0 and 1.0
-    """
-    if not vec1 or not vec2 or len(vec1) != len(vec2):
-        return 0.0
-
-    # Calculate dot product and magnitudes
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
-    magnitude1 = sum(a * a for a in vec1) ** 0.5
-    magnitude2 = sum(b * b for b in vec2) ** 0.5
-
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0.0
-
-    return dot_product / (magnitude1 * magnitude2)
 
 
 # ============================================================================
