@@ -53,8 +53,35 @@ logger = logging.getLogger(__name__)
 # PDF chart dimensions used in this module
 PDF_CHART_WIDTH = 5.5 * inch
 PDF_CHART_HEIGHT = 4 * inch
+PDF_HORIZON_CHART_WIDTH = 4.5 * inch
+PDF_HORIZON_CHART_HEIGHT = 3 * inch
 PDF_BODY_FONT_SIZE = 11
 PDF_SMALL_FONT_SIZE = 9
+
+
+def _compute_pillar_horizon_counts(
+    cards: List[CardExportData],
+    horizon_unknown_label: str | None = None,
+) -> tuple[Dict[str, int], Dict[str, int]]:
+    """Aggregate pillar and horizon counts from a list of cards.
+
+    Pillar uses ``card.pillar_name`` then ``card.pillar_id`` then ``"Unknown"``.
+    Horizon defaults to ``card.horizon``; when missing, falls back to
+    ``horizon_unknown_label`` if provided, otherwise the card is skipped from
+    the horizon bucket. This preserves the PDF (skip empty) vs PPTX (bucket as
+    "Unknown") behaviors with a single shared helper.
+    """
+    pillar_counts: Dict[str, int] = {}
+    horizon_counts: Dict[str, int] = {}
+    for card in cards:
+        pillar = card.pillar_name or card.pillar_id or "Unknown"
+        pillar_counts[pillar] = pillar_counts.get(pillar, 0) + 1
+
+        horizon = card.horizon or horizon_unknown_label
+        if horizon:
+            horizon_counts[horizon] = horizon_counts.get(horizon, 0) + 1
+
+    return pillar_counts, horizon_counts
 
 
 async def generate_workstream_pdf(
@@ -132,16 +159,9 @@ async def generate_workstream_pdf(
 
             # Distribution charts
             if include_charts and cards:
-                pillar_counts = {}
-                horizon_counts = {}
-                for card in cards:
-                    pillar = card.pillar_name or card.pillar_id or "Unknown"
-                    pillar_counts[pillar] = pillar_counts.get(pillar, 0) + 1
-
-                    if card.horizon:
-                        horizon_counts[card.horizon] = (
-                            horizon_counts.get(card.horizon, 0) + 1
-                        )
+                pillar_counts, horizon_counts = _compute_pillar_horizon_counts(
+                    cards
+                )
 
                 if pillar_chart_path := _charts.generate_pillar_distribution_chart(
                     pillar_counts
@@ -164,7 +184,9 @@ async def generate_workstream_pdf(
                     temp_files.append(horizon_chart_path)
                     try:
                         img = RLImage(
-                            horizon_chart_path, width=4.5 * inch, height=3 * inch
+                            horizon_chart_path,
+                            width=PDF_HORIZON_CHART_WIDTH,
+                            height=PDF_HORIZON_CHART_HEIGHT,
                         )
                         elements.append(img)
                         elements.append(Spacer(1, 12))
@@ -343,14 +365,9 @@ async def generate_workstream_pptx(
             ("Description", workstream.get("description", "N/A")),
         ]
 
-        pillar_counts: Dict[str, int] = {}
-        horizon_counts: Dict[str, int] = {}
-        for card in cards:
-            pillar = card.pillar_name or card.pillar_id or "Unknown"
-            pillar_counts[pillar] = pillar_counts.get(pillar, 0) + 1
-
-            horizon = card.horizon or "Unknown"
-            horizon_counts[horizon] = horizon_counts.get(horizon, 0) + 1
+        pillar_counts, horizon_counts = _compute_pillar_horizon_counts(
+            cards, horizon_unknown_label="Unknown"
+        )
 
         if pillar_counts:
             pillar_summary = ", ".join(
