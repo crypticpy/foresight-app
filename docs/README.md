@@ -1,9 +1,7 @@
 # Foresight — Project Docs
 
 You (future you, or another agent) just landed on the repo. This folder is the
-short list of things that are still true. Older `NN_*.md` files in this
-directory are development artifacts (plans, PRDs, post-mortems) and will be
-pruned — trust the files below, not the artifacts.
+short list of things that are still true.
 
 If something here disagrees with the code, the code wins. Fix the doc.
 

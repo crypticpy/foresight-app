@@ -112,45 +112,49 @@ pnpm dev
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|------------|
+| Layer    | Technology                                        |
+| -------- | ------------------------------------------------- |
 | Frontend | React 18, TypeScript, Vite, TailwindCSS, Radix UI |
-| Backend | FastAPI, Python 3.11+, Pydantic |
-| Database | Supabase (PostgreSQL + pgvector) |
-| AI/ML | OpenAI GPT-4, Embeddings, gpt-researcher |
-| Auth | Supabase Auth (JWT) |
+| Backend  | FastAPI, Python 3.11+, Pydantic                   |
+| Database | Supabase (PostgreSQL + pgvector)                  |
+| AI/ML    | OpenAI GPT-4, Embeddings, gpt-researcher          |
+| Auth     | Supabase Auth (JWT)                               |
 
 ---
 
 ## API Reference
 
 ### Authentication
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/me` | GET | Get current user profile |
-| `/api/v1/me` | PATCH | Update user profile |
+
+| Endpoint     | Method | Description              |
+| ------------ | ------ | ------------------------ |
+| `/api/v1/me` | GET    | Get current user profile |
+| `/api/v1/me` | PATCH  | Update user profile      |
 
 ### Cards
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/cards` | GET | List cards with filtering |
-| `/api/v1/cards/{id}` | GET | Get card details |
-| `/api/v1/cards` | POST | Create new card |
-| `/api/v1/cards/search` | POST | Advanced search |
+
+| Endpoint               | Method | Description               |
+| ---------------------- | ------ | ------------------------- |
+| `/api/v1/cards`        | GET    | List cards with filtering |
+| `/api/v1/cards/{id}`   | GET    | Get card details          |
+| `/api/v1/cards`        | POST   | Create new card           |
+| `/api/v1/cards/search` | POST   | Advanced search           |
 
 ### Discovery
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/discovery/trigger` | POST | Trigger discovery run |
-| `/api/v1/discovery/runs` | GET | List discovery runs |
-| `/api/v1/me/discovery/queue` | GET | Get personalized queue |
+
+| Endpoint                     | Method | Description            |
+| ---------------------------- | ------ | ---------------------- |
+| `/api/v1/discovery/trigger`  | POST   | Trigger discovery run  |
+| `/api/v1/discovery/runs`     | GET    | List discovery runs    |
+| `/api/v1/me/discovery/queue` | GET    | Get personalized queue |
 
 ### Workstreams
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/me/workstreams` | GET | List user workstreams |
-| `/api/v1/me/workstreams` | POST | Create workstream |
-| `/api/v1/me/workstreams/{id}/feed` | GET | Get workstream feed |
+
+| Endpoint                           | Method | Description           |
+| ---------------------------------- | ------ | --------------------- |
+| `/api/v1/me/workstreams`           | GET    | List user workstreams |
+| `/api/v1/me/workstreams`           | POST   | Create workstream     |
+| `/api/v1/me/workstreams/{id}/feed` | GET    | Get workstream feed   |
 
 ---
 
@@ -166,14 +170,14 @@ pnpm dev
 
 ### Scoring Metrics
 
-| Metric | Description | Range |
-|--------|-------------|-------|
-| Impact | Potential municipal impact | 0-100 |
-| Relevance | Austin-specific relevance | 0-100 |
-| Velocity | Trending speed | 0-100 |
-| Novelty | Innovation level | 0-100 |
-| Opportunity | Positive potential | 0-100 |
-| Risk | Potential challenges | 0-100 |
+| Metric      | Description                | Range |
+| ----------- | -------------------------- | ----- |
+| Impact      | Potential municipal impact | 0-100 |
+| Relevance   | Austin-specific relevance  | 0-100 |
+| Velocity    | Trending speed             | 0-100 |
+| Novelty     | Innovation level           | 0-100 |
+| Opportunity | Positive potential         | 0-100 |
+| Risk        | Potential challenges       | 0-100 |
 
 ---
 
@@ -181,14 +185,14 @@ pnpm dev
 
 ### Strategic Pillars
 
-| Code | Pillar |
-|------|--------|
-| CH | Community Health |
-| MC | Mobility & Connectivity |
-| HS | Housing & Economic Stability |
-| EC | Economic Development |
-| ES | Environmental Sustainability |
-| CE | Cultural & Entertainment |
+| Code | Pillar                       |
+| ---- | ---------------------------- |
+| CH   | Community Health             |
+| MC   | Mobility & Connectivity      |
+| HS   | Housing & Economic Stability |
+| EC   | Economic Development         |
+| ES   | Environmental Sustainability |
+| CE   | Cultural & Entertainment     |
 
 ### Maturity Stages
 
@@ -198,18 +202,17 @@ pnpm dev
 
 ## Documentation
 
-Detailed documentation is available in the `/docs` folder:
+Project documentation lives in [`docs/`](docs/README.md):
 
-- [Project Overview](docs/01_PROJECT_OVERVIEW.md)
-- [Architecture](docs/02_ARCHITECTURE.md)
-- [Tech Stack](docs/03_TECH_STACK.md)
-- [Data Model](docs/04_DATA_MODEL.md)
-- [API Specification](docs/05_API_SPEC.md)
-- [Frontend Specification](docs/06_FRONTEND_SPEC.md)
-- [AI Pipeline](docs/07_AI_PIPELINE.md)
-- [MVP Scope](docs/08_MVP_SCOPE.md)
-- [Taxonomy](docs/09_TAXONOMY.md)
-- [Railway Worker Setup](docs/RAILWAY_WORKER_SETUP.md)
+- [01-stack](docs/01-stack.md) — languages, libraries, versions
+- [02-architecture](docs/02-architecture.md) — services, request flow, worker
+- [03-ai-pipeline](docs/03-ai-pipeline.md) — model tiers, RAG, agent, embeddings
+- [04-data-model](docs/04-data-model.md) — cards, workstreams, portfolios, lens
+- [05-api-conventions](docs/05-api-conventions.md) — `/api/v1`, auth, errors
+- [06-frontend-patterns](docs/06-frontend-patterns.md) — React structure, hooks
+- [07-deployment](docs/07-deployment.md) — Vercel + Railway, env vars, health
+- [08-style-and-workflow](docs/08-style-and-workflow.md) — PR ethos, conventions
+- [SECURITY](docs/SECURITY.md) — auth model, RLS posture, rate limits
 
 ---
 
