@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Set
+from typing import Callable, List, Set
 
 from supabase import Client
 
@@ -53,7 +53,7 @@ async def create_or_enrich_cards(
     *,
     triggered_by_user_id: str | None,
     pending_lens_tasks: Set[asyncio.Task],
-    lens_service: LensClassificationService,
+    lens_service_getter: Callable[[], LensClassificationService],
 ) -> CardActionResult:
     """
     Create new cards or enrich existing ones based on deduplication results.
@@ -77,11 +77,15 @@ async def create_or_enrich_cards(
         pending_lens_tasks: Mutable set the card creator pushes its
             fire-and-forget lens-cascade tasks into; awaited later in
             ``finalize_run``.
-        lens_service: Shared ``LensClassificationService`` for the run.
+        lens_service_getter: Zero-arg callable that returns the shared
+            ``LensClassificationService`` for the run. Called lazily —
+            only on the new-card path, and only once — so
+            enrichment-only runs never pay the CSP-taxonomy load.
 
     Returns:
         ``CardActionResult`` with the per-stage counts.
     """
+    lens_service: LensClassificationService | None = None
     cards_created: List[str] = []
     cards_enriched: List[str] = []
     sources_added = 0
@@ -169,6 +173,12 @@ async def create_or_enrich_cards(
         try:
             # Calculate confidence score for auto-approval
             confidence = calculate_discovery_confidence(primary_source)
+
+            # Resolve the lens service lazily — only on the first card we
+            # actually create. Enrichment-only runs (the common case for
+            # incremental scans) never pay the CSP-taxonomy load.
+            if lens_service is None:
+                lens_service = lens_service_getter()
 
             # Create new card from primary source
             card_id = await create_card_from_source(

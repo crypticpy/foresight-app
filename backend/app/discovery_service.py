@@ -1413,9 +1413,14 @@ class DiscoveryService:
         """Create or enrich cards; thin wrapper around ``create_or_enrich_cards``.
 
         Forwards the per-run lens context (triggering user id, the
-        ``_pending_lens_tasks`` set, and the lazy lens service) so the
-        extracted module-level orchestrator (PR-D11e) can do the work
-        without a reference back to ``DiscoveryService``.
+        ``_pending_lens_tasks`` set, and the lazy lens-service accessor)
+        so the extracted module-level orchestrator (PR-D11e) can do the
+        work without a reference back to ``DiscoveryService``.
+
+        Passes ``self._get_lens_service`` as a callable rather than
+        calling it eagerly so enrichment-only runs never trigger the
+        CSP-taxonomy load — the orchestrator resolves it only on the
+        new-card path.
         """
         return await create_or_enrich_cards(
             self.supabase,
@@ -1425,7 +1430,7 @@ class DiscoveryService:
             config,
             triggered_by_user_id=self.triggered_by_user_id,
             pending_lens_tasks=self._pending_lens_tasks,
-            lens_service=self._get_lens_service(),
+            lens_service_getter=self._get_lens_service,
         )
 
     async def _create_card_from_source(
