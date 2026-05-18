@@ -59,9 +59,10 @@ from .safety.injection import (
 # was extracted to ``discovery_config`` in PR-D1. Re-imported here so
 # ``app.discovery_service.DiscoveryConfig`` / ``SourceCategory`` /
 # ``build_discovery_config`` etc. still resolve for existing callers and
-# tests that reach for them by attribute on this module. New code should
-# import from ``app.discovery_config`` directly.
-from .discovery_config import (  # noqa: F401
+# tests that reach for them by attribute on this module. ``__all__``
+# marks them as explicit public re-exports so Ruff doesn't flag them
+# as unused. New code should import from ``app.discovery_config`` directly.
+from .discovery_config import (
     DEFAULT_RSS_FEEDS,
     DEFAULT_SEARCH_TOPICS,
     DISCOVERY_SETTING_MAP,
@@ -76,6 +77,22 @@ from .discovery_config import (  # noqa: F401
     load_active_source_urls,
     load_discovery_admin_overrides,
 )
+
+__all__ = [
+    "DEFAULT_RSS_FEEDS",
+    "DEFAULT_SEARCH_TOPICS",
+    "DISCOVERY_SETTING_MAP",
+    "DiscoveryConfig",
+    "SourceCategory",
+    "SourceCategoryConfig",
+    "_apply_schedule_scope",
+    "_coerce_custom_query",
+    "apply_source_preferences",
+    "build_discovery_config",
+    "get_discovery_defaults",
+    "load_active_source_urls",
+    "load_discovery_admin_overrides",
+]
 
 # Import multi-source content fetchers (5 categories)
 from .source_fetchers import (
