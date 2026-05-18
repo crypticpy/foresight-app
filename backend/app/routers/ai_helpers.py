@@ -151,7 +151,9 @@ async def create_manual_card(
                 exclude_none=True
             )
 
-        result = supabase.table("cards").insert(card_data).execute()
+        result = await asyncio.to_thread(
+            lambda: supabase.table("cards").insert(card_data).execute()
+        )
 
         if not result.data:
             raise HTTPException(
@@ -169,14 +171,20 @@ async def create_manual_card(
                         "title": url,  # Placeholder title; enrichment happens later
                         "source_type": "user_submitted",
                     }
-                    src_result = supabase.table("sources").insert(source_data).execute()
+                    src_result = await asyncio.to_thread(
+                        lambda: supabase.table("sources").insert(source_data).execute()
+                    )
                     if src_result.data:
-                        supabase.table("card_sources").insert(
-                            {
-                                "card_id": card_id,
-                                "source_id": src_result.data[0]["id"],
-                            }
-                        ).execute()
+                        await asyncio.to_thread(
+                            lambda: supabase.table("card_sources")
+                            .insert(
+                                {
+                                    "card_id": card_id,
+                                    "source_id": src_result.data[0]["id"],
+                                }
+                            )
+                            .execute()
+                        )
                 except Exception as url_err:
                     logger.warning(
                         f"Card {card_id}: failed to add seed URL {url}: {url_err}"

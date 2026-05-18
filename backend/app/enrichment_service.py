@@ -418,9 +418,11 @@ async def enrich_signal_profiles(
             card_id = card["id"]
 
             # Fetch linked sources
-            sources_resp = (
-                supabase.table("sources")
-                .select("title, url, ai_summary, key_excerpts, full_text")
+            # `id` is required so the extract_content backfill loop below can
+            # locate the row to UPDATE — PostgREST returns only what we select.
+            sources_resp = await asyncio.to_thread(
+                lambda: supabase.table("sources")
+                .select("id, title, url, ai_summary, key_excerpts, full_text")
                 .eq("card_id", card_id)
                 .order("created_at", desc=True)
                 .limit(10)
@@ -442,9 +444,12 @@ async def enrich_signal_profiles(
                                 src["full_text"] = text[:10000]
                                 # Update in DB too
                                 if src.get("id"):
-                                    supabase.table("sources").update(
-                                        {"full_text": text[:10000]}
-                                    ).eq("id", src["id"]).execute()
+                                    await asyncio.to_thread(
+                                        lambda: supabase.table("sources")
+                                        .update({"full_text": text[:10000]})
+                                        .eq("id", src["id"])
+                                        .execute()
+                                    )
                         except Exception as exc:
                             # Content backfill is best-effort; URL fetches fail
                             # often (404, timeout, paywall). Keep behavior, just
@@ -479,28 +484,37 @@ async def enrich_signal_profiles(
 
             if profile and len(profile) > 100:
                 # Update card description
-                supabase.table("cards").update(
-                    {
-                        "description": profile,
-                        "updated_at": now,
-                    }
-                ).eq("id", card_id).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("cards")
+                    .update(
+                        {
+                            "description": profile,
+                            "updated_at": now,
+                        }
+                    )
+                    .eq("id", card_id)
+                    .execute()
+                )
 
                 # Create timeline event
-                supabase.table("card_timeline").insert(
-                    {
-                        "card_id": card_id,
-                        "event_type": "profile_generated",
-                        "title": "Signal profile auto-generated",
-                        "description": f"Rich profile generated from {len(sources)} source(s)",
-                        "metadata": {
-                            "sources_used": len(source_analyses),
-                            "profile_length": len(profile),
-                            "triggered_by": triggered_by_user_id,
-                        },
-                        "created_at": now,
-                    }
-                ).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("card_timeline")
+                    .insert(
+                        {
+                            "card_id": card_id,
+                            "event_type": "profile_generated",
+                            "title": "Signal profile auto-generated",
+                            "description": f"Rich profile generated from {len(sources)} source(s)",
+                            "metadata": {
+                                "sources_used": len(source_analyses),
+                                "profile_length": len(profile),
+                                "triggered_by": triggered_by_user_id,
+                            },
+                            "created_at": now,
+                        }
+                    )
+                    .execute()
+                )
 
                 enriched += 1
                 logger.info(

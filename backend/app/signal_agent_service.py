@@ -1798,7 +1798,7 @@ class SignalAgentService:
                 )
 
                 # Update discovered_sources audit trail
-                self._update_discovered_source(source, card_id, "card_created")
+                await self._update_discovered_source(source, card_id, "card_created")
 
         # Create timeline event
         await self._create_timeline_event(
@@ -1990,7 +1990,7 @@ class SignalAgentService:
                     junction_created += 1
 
                 # Update discovered_sources audit trail
-                self._update_discovered_source(source, card_id, "card_enriched")
+                await self._update_discovered_source(source, card_id, "card_enriched")
 
         if sources_stored > 0:
             # Create timeline event for enrichment
@@ -2218,7 +2218,7 @@ class SignalAgentService:
         except Exception as e:
             logger.warning(f"Signal agent: Failed to create timeline event: {e}")
 
-    def _update_discovered_source(
+    async def _update_discovered_source(
         self,
         source: ProcessedSource,
         card_id: str,
@@ -2229,12 +2229,17 @@ class SignalAgentService:
         if not ds_id:
             return
         try:
-            self.supabase.table("discovered_sources").update(
-                {
-                    "processing_status": status,
-                    "resulting_card_id": card_id,
-                }
-            ).eq("id", ds_id).execute()
+            await asyncio.to_thread(
+                lambda: self.supabase.table("discovered_sources")
+                .update(
+                    {
+                        "processing_status": status,
+                        "resulting_card_id": card_id,
+                    }
+                )
+                .eq("id", ds_id)
+                .execute()
+            )
         except Exception as e:
             logger.warning(
                 f"Signal agent: Failed to update discovered_source {ds_id}: {e}"
