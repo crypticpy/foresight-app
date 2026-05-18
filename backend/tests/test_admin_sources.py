@@ -600,13 +600,17 @@ def test_build_discovery_config_overlays_registry_rss(monkeypatch):
     whatever the registry says is enabled — that's the whole point of the
     catalog. Without this, toggling a feed off in the UI would have no
     effect on the next run."""
-    from app import discovery_service
+    # Patch on ``discovery_config`` — PR-D1 moved
+    # ``load_discovery_admin_overrides`` / ``load_active_source_urls`` there,
+    # and that's where ``build_discovery_config`` looks them up. Patching
+    # the back-compat alias on ``discovery_service`` wouldn't intercept.
+    from app import discovery_config, discovery_service
 
     monkeypatch.setattr(
-        discovery_service, "load_discovery_admin_overrides", lambda: {}
+        discovery_config, "load_discovery_admin_overrides", lambda: {}
     )
     monkeypatch.setattr(
-        discovery_service,
+        discovery_config,
         "load_active_source_urls",
         lambda category: ["https://only-this.example.com/feed"]
         if category == "rss"
