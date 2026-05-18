@@ -54,9 +54,7 @@ from reportlab.platypus import (
     Image as RLImage,
     PageBreak,
     HRFlowable,
-    KeepTogether,
 )
-from reportlab.lib.enums import TA_CENTER
 
 from supabase import Client
 
@@ -67,60 +65,39 @@ from .models.export import (
 
 # Import classification definitions from gamma_service for backup slides
 from .gamma_service import (
-    PILLAR_NAMES,
     PILLAR_DEFINITIONS,
-    HORIZON_NAMES,
     HORIZON_DEFINITIONS,
-    STAGE_NAMES,
     STAGE_DEFINITIONS,
+)
+
+# Re-exported helpers (definitions live in app.export package). Imported here so
+# legacy callers can continue to reach them via app.export_service.
+from .export.branding import (
+    COA_BRAND_COLORS,
+    FORESIGHT_COLORS,
+    PDF_COLORS,
+)
+from .export import briefs as _briefs
+from .export import cards as _cards
+from .export import charts as _charts
+from .export import csv_export as _csv_export
+from .export import data_access as _data_access
+from .export import utils as _utils
+from .export import pptx as _pptx_components
+from .export import workstreams as _workstreams
+from .export.charts import CHART_DPI
+from .export.pptx import (
+    PPTX_MARGIN,
+    PPTX_SLIDE_HEIGHT,
+    PPTX_SLIDE_WIDTH,
 )
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Re-exported helpers (definitions live in app.export package)
-# ============================================================================
-
-from .export.branding import (  # noqa: E402
-    COA_BRAND_COLORS,
-    FORESIGHT_COLORS,
-    PDF_COLORS,
-    hex_to_rl_color,
-)
-from .export.pdf import (  # noqa: E402
-    MarkdownToPDFParser,
-    ProfessionalPDFBuilder,
-    create_classification_appendix,
-    create_classification_badges,
-    get_professional_pdf_styles,
-)
-from .export import cards as _cards  # noqa: E402
-from .export import charts as _charts  # noqa: E402
-from .export import csv_export as _csv_export  # noqa: E402
-from .export import data_access as _data_access  # noqa: E402
-from .export import utils as _utils  # noqa: E402
-from .export import pptx as _pptx_components  # noqa: E402
-from .export import workstreams as _workstreams  # noqa: E402
-
-
-# ============================================================================
 # Dimensional constants used by ExportService methods
 # ============================================================================
-
-# Chart settings — defined in app.export.charts; re-exported here for callers
-# that still import from this module.
-from .export.charts import (  # noqa: E402
-    CHART_DPI,
-)
-
-# PowerPoint settings — defined in app.export.pptx.components; re-exported here
-# for callers that still import from this module.
-from .export.pptx import (  # noqa: E402
-    PPTX_MARGIN,
-    PPTX_SLIDE_HEIGHT,
-    PPTX_SLIDE_WIDTH,
-)
 
 # PDF settings
 PDF_PAGE_SIZE = letter
@@ -194,69 +171,6 @@ class ExportService:
     # ========================================================================
     # PDF Generation Methods
     # ========================================================================
-
-    def _get_pdf_styles(self) -> Dict[str, ParagraphStyle]:
-        """
-        Create custom paragraph styles for PDF generation.
-
-        Returns:
-            Dictionary of ParagraphStyle objects
-        """
-        styles = getSampleStyleSheet()
-
-        return {
-            "Title": ParagraphStyle(
-                "CustomTitle",
-                parent=styles["Heading1"],
-                fontSize=PDF_TITLE_FONT_SIZE,
-                textColor=PDF_COLORS["primary"],
-                spaceAfter=12,
-                alignment=TA_CENTER,
-                fontName="Helvetica-Bold",
-            ),
-            "Heading1": ParagraphStyle(
-                "CustomHeading1",
-                parent=styles["Heading1"],
-                fontSize=PDF_HEADING_FONT_SIZE,
-                textColor=PDF_COLORS["primary"],
-                spaceBefore=18,
-                spaceAfter=8,
-                fontName="Helvetica-Bold",
-            ),
-            "Heading2": ParagraphStyle(
-                "CustomHeading2",
-                parent=styles["Heading2"],
-                fontSize=PDF_BODY_FONT_SIZE + 1,
-                textColor=PDF_COLORS["secondary"],
-                spaceBefore=12,
-                spaceAfter=6,
-                fontName="Helvetica-Bold",
-            ),
-            "Body": ParagraphStyle(
-                "CustomBody",
-                parent=styles["Normal"],
-                fontSize=PDF_BODY_FONT_SIZE,
-                textColor=PDF_COLORS["dark"],
-                spaceBefore=4,
-                spaceAfter=4,
-                leading=14,
-            ),
-            "Small": ParagraphStyle(
-                "CustomSmall",
-                parent=styles["Normal"],
-                fontSize=PDF_SMALL_FONT_SIZE,
-                textColor=rl_colors.gray,
-                spaceBefore=2,
-                spaceAfter=2,
-            ),
-            "Badge": ParagraphStyle(
-                "Badge",
-                parent=styles["Normal"],
-                fontSize=PDF_SMALL_FONT_SIZE,
-                textColor=rl_colors.white,
-                alignment=TA_CENTER,
-            ),
-        }
 
     def _create_pdf_header(
         self, card_data: CardExportData, styles: Dict[str, ParagraphStyle]
@@ -749,180 +663,15 @@ class ExportService:
         generated_at: Optional[datetime] = None,
         version: Optional[int] = None,
     ) -> str:
-        """
-        Generate a PDF export for an executive brief.
-
-        Args:
-            brief_title: Title for the brief (usually card name)
-            card_name: Name of the card this brief is for
-            executive_summary: Executive summary text
-            content_markdown: Full brief content in markdown format
-            generated_at: When the brief was generated
-            version: Version number of the brief
-
-        Returns:
-            Path to the generated PDF file
-
-        Raises:
-            Exception: If PDF generation fails
-        """
-        try:
-            # Create temp file for PDF
-            pdf_file = tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False, prefix="foresight_brief_"
-            )
-            pdf_path = pdf_file.name
-            pdf_file.close()
-
-            # Create PDF document
-            doc = SimpleDocTemplate(
-                pdf_path,
-                pagesize=PDF_PAGE_SIZE,
-                rightMargin=PDF_MARGIN,
-                leftMargin=PDF_MARGIN,
-                topMargin=PDF_MARGIN,
-                bottomMargin=PDF_MARGIN,
-            )
-
-            # Get styles
-            styles = self._get_pdf_styles()
-
-            # Build document elements
-            elements = []
-
-            # Title
-            title_text = f"Executive Brief: {brief_title}"
-            if version and version > 1:
-                title_text += f" (v{version})"
-            elements.extend(
-                (
-                    Paragraph(title_text, styles["Title"]),
-                    Spacer(1, 6),
-                    HRFlowable(
-                        width="100%",
-                        thickness=2,
-                        color=PDF_COLORS["primary"],
-                        spaceBefore=6,
-                        spaceAfter=12,
-                    ),
-                )
-            )
-            # Metadata
-            meta_parts = [f"Card: {card_name}"]
-            if generated_at:
-                meta_parts.append(
-                    f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}"
-                )
-            if version:
-                meta_parts.append(f"Version: {version}")
-            elements.extend(
-                (
-                    Paragraph(" | ".join(meta_parts), styles["Small"]),
-                    Spacer(1, 12),
-                    Paragraph("Executive Summary", styles["Heading1"]),
-                    Paragraph(
-                        executive_summary or "No summary available.",
-                        styles["Body"],
-                    ),
-                    Spacer(1, 18),
-                    Paragraph("Full Brief", styles["Heading1"]),
-                    Spacer(1, 6),
-                )
-            )
-            # Parse markdown content into paragraphs
-            # Simple markdown parsing - split by double newlines for paragraphs
-            if content_markdown:
-                paragraphs = content_markdown.split("\n\n")
-                for para_text in paragraphs:
-                    para_text = para_text.strip()
-                    if not para_text:
-                        continue
-
-                    # Handle headers
-                    if para_text.startswith("# "):
-                        elements.append(Paragraph(para_text[2:], styles["Heading1"]))
-                    elif para_text.startswith("## "):
-                        elements.append(Paragraph(para_text[3:], styles["Heading2"]))
-                    elif para_text.startswith("### "):
-                        # Create a heading3 style on the fly
-                        heading3_style = ParagraphStyle(
-                            "Heading3",
-                            parent=styles["Body"],
-                            fontSize=PDF_BODY_FONT_SIZE,
-                            fontName="Helvetica-Bold",
-                            spaceBefore=10,
-                            spaceAfter=4,
-                        )
-                        elements.append(Paragraph(para_text[4:], heading3_style))
-                    elif para_text.startswith("- ") or para_text.startswith("* "):
-                        # Bullet list items
-                        bullet_style = ParagraphStyle(
-                            "Bullet",
-                            parent=styles["Body"],
-                            leftIndent=20,
-                            firstLineIndent=-10,
-                            spaceBefore=2,
-                            spaceAfter=2,
-                        )
-                        # Handle multi-line bullets
-                        lines = para_text.split("\n")
-                        for line in lines:
-                            line = line.strip()
-                            if line.startswith("- ") or line.startswith("* "):
-                                elements.append(
-                                    Paragraph(f"• {line[2:]}", bullet_style)
-                                )
-                            elif line:
-                                elements.append(Paragraph(line, styles["Body"]))
-                    else:
-                        # Regular paragraph - handle inline markdown
-                        # Convert **bold** to <b>bold</b>
-                        import re
-
-                        formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", para_text)
-                        # Convert *italic* to <i>italic</i>
-                        formatted = re.sub(r"\*(.+?)\*", r"<i>\1</i>", formatted)
-                        # Handle line breaks within paragraph
-                        formatted = formatted.replace("\n", "<br/>")
-                        elements.append(Paragraph(formatted, styles["Body"]))
-
-                    elements.append(Spacer(1, 4))
-            else:
-                elements.append(Paragraph("No content available.", styles["Body"]))
-
-            elements.extend(
-                (
-                    Spacer(1, 24),
-                    HRFlowable(
-                        width="100%",
-                        thickness=1,
-                        color=PDF_COLORS["light"],
-                        spaceBefore=6,
-                        spaceAfter=6,
-                    ),
-                )
-            )
-            footer_text = (
-                f"Export Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
-            )
-            elements.extend(
-                (
-                    Paragraph(footer_text, styles["Small"]),
-                    Paragraph(
-                        "Generated by Foresight Intelligence Platform",
-                        styles["Small"],
-                    ),
-                )
-            )
-            # Build PDF
-            doc.build(elements)
-
-            logger.info(f"Generated brief PDF export: {brief_title}")
-            return pdf_path
-
-        except Exception as e:
-            logger.error(f"Error generating brief PDF: {e}")
-            raise
+        """Generate a basic PDF export for an executive brief."""
+        return await _briefs.generate_brief_pdf(
+            brief_title=brief_title,
+            card_name=card_name,
+            executive_summary=executive_summary,
+            content_markdown=content_markdown,
+            generated_at=generated_at,
+            version=version,
+        )
 
     async def generate_professional_brief_pdf(
         self,
@@ -934,142 +683,16 @@ class ExportService:
         version: Optional[int] = None,
         classification: Optional[Dict[str, str]] = None,
     ) -> str:
-        """
-        Generate a professional PDF export for an executive brief.
-
-        This version includes:
-        - City of Austin logo in header
-        - Foresight Strategic Intelligence Platform branding
-        - Professional header/footer on every page
-        - Full AI technology disclosure
-        - Colored classification badges with appendix reference
-        - Robust markdown parsing for AI-generated content
-
-        Designed for senior city leadership distribution.
-
-        Args:
-            brief_title: Title for the brief
-            card_name: Name of the card this brief is for
-            executive_summary: Executive summary text
-            content_markdown: Full brief content in markdown format
-            generated_at: When the brief was generated
-            version: Version number of the brief
-            classification: Optional dict with pillar, horizon, stage info
-
-        Returns:
-            Path to the generated PDF file
-
-        Raises:
-            Exception: If PDF generation fails
-        """
-        try:
-            # Create temp file for PDF
-            pdf_file = tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False, prefix="foresight_executive_brief_"
-            )
-            pdf_path = pdf_file.name
-            pdf_file.close()
-
-            # Get professional styles
-            styles = get_professional_pdf_styles()
-
-            # Initialize markdown parser
-            md_parser = MarkdownToPDFParser(styles)
-
-            # Build document elements
-            elements = [Paragraph(brief_title, styles["DocTitle"])]
-
-            # Classification badges (colored, with appendix reference)
-            if classification:
-                badge_elements = create_classification_badges(classification, styles)
-                elements.extend(badge_elements)
-
-            elements.append(Spacer(1, 8))
-
-            # Decorative line
-            elements.append(
-                HRFlowable(
-                    width="100%",
-                    thickness=2,
-                    color=PDF_COLORS["secondary"],
-                    spaceBefore=4,
-                    spaceAfter=16,
-                )
-            )
-
-            # Executive Summary Section
-            elements.append(Paragraph("Executive Summary", styles["SectionHeading"]))
-
-            if executive_summary:
-                # Parse executive summary through the robust parser too
-                summary_clean = md_parser.clean_text(executive_summary)
-                summary_formatted = md_parser.convert_inline_formatting(summary_clean)
-                # Replace newlines with line breaks for the summary
-                summary_formatted = summary_formatted.replace("\n", "<br/>")
-                elements.append(
-                    Paragraph(summary_formatted, styles["ExecutiveSummary"])
-                )
-            else:
-                elements.append(Paragraph("No summary available.", styles["BodyText"]))
-
-            elements.append(Spacer(1, 16))
-
-            # Main Content Section
-            elements.append(
-                Paragraph("Strategic Intelligence Report", styles["SectionHeading"])
-            )
-            elements.append(Spacer(1, 8))
-
-            # Parse and render markdown content using robust parser
-            if content_markdown:
-                content_elements = md_parser.parse_to_elements(content_markdown)
-                elements.extend(content_elements)
-            else:
-                elements.append(Paragraph("No content available.", styles["BodyText"]))
-
-            # Add metadata section at end
-            elements.append(Spacer(1, 20))
-            elements.append(
-                HRFlowable(
-                    width="100%",
-                    thickness=1,
-                    color=PDF_COLORS["light"],
-                    spaceBefore=8,
-                    spaceAfter=8,
-                )
-            )
-
-            # Document metadata
-            meta_items = []
-            if generated_at:
-                meta_items.append(
-                    f"Generated: {generated_at.strftime('%B %d, %Y at %I:%M %p UTC')}"
-                )
-            if version:
-                meta_items.append(f"Version: {version}")
-            meta_items.append(f"Card: {card_name}")
-
-            elements.extend(Paragraph(item, styles["SmallText"]) for item in meta_items)
-            # Add classification appendix if we have classification data
-            if classification:
-                appendix_elements = create_classification_appendix(styles)
-                elements.extend(appendix_elements)
-
-            # Build PDF using professional builder with header/footer
-            builder = ProfessionalPDFBuilder(
-                filename=pdf_path,
-                title=brief_title,
-                include_logo=True,
-                include_ai_disclosure=True,
-            )
-            builder.build(elements)
-
-            logger.info(f"Generated professional brief PDF: {brief_title}")
-            return pdf_path
-
-        except Exception as e:
-            logger.error(f"Error generating professional brief PDF: {e}")
-            raise
+        """Generate a branded, mayor-ready PDF for an executive brief."""
+        return await _briefs.generate_professional_brief_pdf(
+            brief_title=brief_title,
+            card_name=card_name,
+            executive_summary=executive_summary,
+            content_markdown=content_markdown,
+            generated_at=generated_at,
+            version=version,
+            classification=classification,
+        )
 
     async def generate_chat_response_pdf(
         self,
@@ -1081,211 +704,16 @@ class ExportService:
         scope: Optional[str] = None,
         scope_context: Optional[str] = None,
     ) -> str:
-        """
-        Generate a professional PDF export for a chat response.
-
-        Produces a mayor-ready document matching the executive brief style,
-        using the existing ProfessionalPDFBuilder for header/footer and
-        MarkdownToPDFParser for the response content.
-
-        Args:
-            title: Document title (conversation title or fallback)
-            question: The user's question
-            response_content: The assistant's markdown response
-            citations: Optional list of citation dicts with title, url, excerpt
-            metadata: Optional metadata dict (source_count, etc.)
-            scope: Optional scope type ("signal", "workstream", or "global")
-            scope_context: Optional name of the signal/workstream if scoped
-
-        Returns:
-            Path to the generated PDF file
-
-        Raises:
-            Exception: If PDF generation fails
-        """
-        try:
-            # Create temp file for PDF
-            pdf_file = tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False, prefix="foresight_chat_"
-            )
-            pdf_path = pdf_file.name
-            pdf_file.close()
-
-            # Get professional styles
-            styles = get_professional_pdf_styles()
-
-            # Initialize markdown parser
-            md_parser = MarkdownToPDFParser(styles)
-
-            # Build document elements
-            elements = []
-
-            # --- Title area (top of first page, no separate title page) ---
-            elements.append(Paragraph(title, styles["DocTitle"]))
-            elements.append(Paragraph("Intelligence Response", styles["DocSubtitle"]))
-
-            # Current date
-            date_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
-            elements.append(Paragraph(date_str, styles["MetadataText"]))
-
-            # Scope context if scoped
-            if scope and scope_context:
-                scope_label = (
-                    "Signal"
-                    if scope == "signal"
-                    else ("Workstream" if scope == "workstream" else "Scope")
-                )
-                elements.append(
-                    Paragraph(
-                        f"<b>{scope_label}:</b> {md_parser.escape_xml(scope_context)}",
-                        styles["MetadataText"],
-                    )
-                )
-
-            elements.append(Spacer(1, 8))
-
-            # --- Horizontal rule separator ---
-            elements.append(
-                HRFlowable(
-                    width="100%",
-                    thickness=2,
-                    color=PDF_COLORS["secondary"],
-                    spaceBefore=4,
-                    spaceAfter=16,
-                )
-            )
-
-            # --- Question box (light blue callout) ---
-            light_blue_bg = hex_to_rl_color(COA_BRAND_COLORS["light_blue"])
-            question_box_style = ParagraphStyle(
-                "QuestionBody",
-                parent=styles["BodyText"],
-                backColor=light_blue_bg,
-                borderPadding=(10, 10, 10, 10),
-                spaceBefore=4,
-                spaceAfter=4,
-            )
-            question_label_style = ParagraphStyle(
-                "QuestionLabel",
-                parent=styles["BodyText"],
-                fontSize=12,
-                fontName="Helvetica-Bold",
-                textColor=PDF_COLORS["primary"],
-                backColor=light_blue_bg,
-                borderPadding=(10, 10, 2, 10),
-                spaceBefore=0,
-                spaceAfter=0,
-            )
-
-            question_escaped = (
-                md_parser.escape_xml(question) if question else "No question recorded."
-            )
-            elements.append(
-                KeepTogether(
-                    [
-                        Paragraph("Question", question_label_style),
-                        Paragraph(question_escaped, question_box_style),
-                    ]
-                )
-            )
-
-            elements.append(Spacer(1, 16))
-
-            # --- Response / Analysis section ---
-            elements.append(Paragraph("Analysis", styles["SectionHeading"]))
-            elements.append(Spacer(1, 8))
-
-            if response_content:
-                content_elements = md_parser.parse_to_elements(response_content)
-                elements.extend(content_elements)
-            else:
-                elements.append(
-                    Paragraph("No response content available.", styles["BodyText"])
-                )
-
-            # --- Sources / Citations section ---
-            if citations:
-                elements.append(Spacer(1, 16))
-                elements.append(
-                    Paragraph("Sources &amp; References", styles["SectionHeading"])
-                )
-                elements.append(Spacer(1, 6))
-
-                for idx, cite in enumerate(citations, 1):
-                    cite_title = md_parser.escape_xml(
-                        cite.get("title", "Untitled Source")
-                    )
-                    cite_url = md_parser.escape_xml(cite.get("url", ""))
-                    cite_excerpt = md_parser.escape_xml(cite.get("excerpt", ""))
-
-                    # Numbered citation entry
-                    citation_parts = [f"<b>{idx}.</b> <b>{cite_title}</b>"]
-                    if cite_url:
-                        citation_parts.append(
-                            f'<font size="9" color="gray">{cite_url}</font>'
-                        )
-                    elements.append(
-                        Paragraph("<br/>".join(citation_parts), styles["NumberedItem"])
-                    )
-
-                    if cite_excerpt:
-                        excerpt_style = ParagraphStyle(
-                            f"Excerpt_{idx}",
-                            parent=styles["SmallText"],
-                            leftIndent=25,
-                            spaceBefore=1,
-                            spaceAfter=6,
-                            textColor=PDF_COLORS["dark"],
-                            fontSize=9,
-                            leading=12,
-                        )
-                        # Truncate long excerpts
-                        if len(cite_excerpt) > 300:
-                            cite_excerpt = cite_excerpt[:297] + "..."
-                        elements.append(
-                            Paragraph(f"<i>{cite_excerpt}</i>", excerpt_style)
-                        )
-
-            # --- Metadata footer ---
-            if metadata:
-                elements.append(Spacer(1, 20))
-                elements.append(
-                    HRFlowable(
-                        width="100%",
-                        thickness=1,
-                        color=PDF_COLORS["light"],
-                        spaceBefore=8,
-                        spaceAfter=8,
-                    )
-                )
-
-                meta_parts = []
-                if metadata.get("source_count"):
-                    meta_parts.append(f"{metadata['source_count']} sources")
-                if metadata.get("signal_count"):
-                    meta_parts.append(f"{metadata['signal_count']} signals")
-                if metadata.get("model"):
-                    meta_parts.append(f"Model: {metadata['model']}")
-
-                if meta_parts:
-                    meta_text = "Based on " + " across ".join(meta_parts)
-                    elements.append(Paragraph(meta_text, styles["SmallText"]))
-
-            # Build PDF using professional builder (header/footer/logo/disclosure)
-            builder = ProfessionalPDFBuilder(
-                filename=pdf_path,
-                title=title,
-                include_logo=True,
-                include_ai_disclosure=True,
-            )
-            builder.build(elements)
-
-            logger.info(f"Generated chat response PDF: {title}")
-            return pdf_path
-
-        except Exception as e:
-            logger.error(f"Error generating chat response PDF: {e}")
-            raise
+        """Generate a professional PDF export for a chat response."""
+        return await _briefs.generate_chat_response_pdf(
+            title=title,
+            question=question,
+            response_content=response_content,
+            citations=citations,
+            metadata=metadata,
+            scope=scope,
+            scope_context=scope_context,
+        )
 
     async def generate_brief_pptx(
         self,
@@ -1298,90 +726,8 @@ class ExportService:
         classification: Optional[Dict[str, str]] = None,
         use_gamma: bool = True,
     ) -> str:
-        """
-        Generate a PowerPoint presentation for an executive brief.
-
-        Attempts to use Gamma.app for AI-powered presentation generation.
-        Falls back to local python-pptx generation if Gamma is unavailable.
-
-        Args:
-            brief_title: Title for the brief (usually card name)
-            card_name: Name of the card this brief is for
-            executive_summary: Executive summary text
-            content_markdown: Full brief content in markdown format
-            generated_at: When the brief was generated
-            version: Version number of the brief
-            classification: Optional dict with pillar, horizon, stage info
-            use_gamma: Whether to attempt Gamma API (default True)
-
-        Returns:
-            Path to the generated PowerPoint file
-
-        Raises:
-            Exception: If PowerPoint generation fails
-        """
-        # Try Gamma.app first if enabled
-        if use_gamma:
-            try:
-                from .gamma_service import GammaService
-
-                gamma = GammaService()
-                if gamma.is_available():
-                    logger.info(
-                        f"Attempting Gamma.app presentation generation for: {brief_title}"
-                    )
-
-                    result = await gamma.generate_presentation(
-                        title=brief_title,
-                        executive_summary=executive_summary,
-                        content_markdown=content_markdown,
-                        classification=classification,
-                        num_slides=8,
-                        include_images=True,
-                        export_format="pptx",
-                    )
-
-                    if result.success and result.pptx_url:
-                        # Download the PPTX file
-                        pptx_bytes = await gamma.download_export(result.pptx_url)
-
-                        if pptx_bytes:
-                            # Save to temp file
-                            temp_file = tempfile.NamedTemporaryFile(
-                                suffix=".pptx",
-                                delete=False,
-                                prefix="foresight_gamma_brief_",
-                            )
-                            temp_file.write(pptx_bytes)
-                            temp_file.close()
-
-                            logger.info(
-                                f"Gamma presentation generated successfully: {temp_file.name}"
-                            )
-                            if result.credits_used:
-                                logger.info(
-                                    f"Gamma credits used: {result.credits_used}, remaining: {result.credits_remaining}"
-                                )
-
-                            return temp_file.name
-
-                    # Log why Gamma failed
-                    if result.error_message:
-                        logger.warning(
-                            f"Gamma generation failed: {result.error_message}"
-                        )
-                    else:
-                        logger.warning(
-                            "Gamma generation completed but no PPTX URL returned"
-                        )
-
-            except ImportError:
-                logger.warning("Gamma service not available, using fallback")
-            except Exception as e:
-                logger.warning(f"Gamma generation error, falling back to local: {e}")
-
-        # Fallback to local generation with improved markdown handling
-        return await self._generate_brief_pptx_local(
+        """Generate a PowerPoint presentation for an executive brief."""
+        return await _briefs.generate_brief_pptx(
             brief_title=brief_title,
             card_name=card_name,
             executive_summary=executive_summary,
@@ -1389,428 +735,24 @@ class ExportService:
             generated_at=generated_at,
             version=version,
             classification=classification,
+            use_gamma=use_gamma,
         )
-
-    async def _generate_brief_pptx_local(
-        self,
-        brief_title: str,
-        card_name: str,
-        executive_summary: str,
-        content_markdown: str,
-        generated_at: Optional[datetime] = None,
-        version: Optional[int] = None,
-        classification: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """
-        Local PowerPoint generation with improved markdown handling.
-
-        Used as fallback when Gamma.app is unavailable.
-        Includes:
-        - Title slide with visual classification tag badges
-        - Content slides
-        - AI disclosure slide
-        - Backup/appendix slides explaining each classification tag
-        """
-
-        try:
-            logger.info(f"Generating local brief PowerPoint: {brief_title}")
-
-            # Create presentation
-            prs = Presentation()
-            prs.slide_width = PPTX_SLIDE_WIDTH
-            prs.slide_height = PPTX_SLIDE_HEIGHT
-
-            # Track which tags are used for backup slides
-            used_pillar = None
-            used_horizon = None
-            used_stage = None
-
-            # 1. Title slide with classification tags (with icons)
-            subtitle = "Strategic Intelligence Brief"
-            if classification:
-                tag_parts = []
-                if classification.get("pillar"):
-                    pillar = classification["pillar"].upper()
-                    pillar_def = PILLAR_DEFINITIONS.get(pillar, {})
-                    pillar_name = pillar_def.get(
-                        "name", PILLAR_NAMES.get(pillar, pillar)
-                    )
-                    pillar_icon = pillar_def.get("icon", "")
-                    tag_parts.append(f"{pillar_icon} {pillar_name}")
-                    used_pillar = pillar
-                if classification.get("horizon"):
-                    horizon = classification["horizon"].upper()
-                    horizon_def = HORIZON_DEFINITIONS.get(horizon, {})
-                    horizon_name = horizon_def.get(
-                        "name", HORIZON_NAMES.get(horizon, horizon)
-                    )
-                    horizon_icon = horizon_def.get("icon", "")
-                    tag_parts.append(f"{horizon_icon} {horizon_name}")
-                    used_horizon = horizon
-                if classification.get("stage"):
-                    stage_raw = classification["stage"]
-                    if stage_match := re.search(r"(\d+)", str(stage_raw)):
-                        stage_num = int(stage_match.group(1))
-                        stage_def = STAGE_DEFINITIONS.get(stage_num, {})
-                        stage_name = stage_def.get(
-                            "name", STAGE_NAMES.get(stage_num, f"Stage {stage_num}")
-                        )
-                        stage_icon = stage_def.get("icon", "")
-                        tag_parts.append(
-                            f"{stage_icon} Stage {stage_num}: {stage_name}"
-                        )
-                        used_stage = stage_num
-                if tag_parts:
-                    subtitle = "  |  ".join(tag_parts)
-
-            if generated_at:
-                subtitle += f"\n{generated_at.strftime('%B %d, %Y')}"
-
-            self._add_title_slide(prs, title=brief_title, subtitle=subtitle)
-
-            # 2. Executive Summary slide
-            if executive_summary:
-                clean_summary = self._clean_markdown_for_pptx(executive_summary)
-                self._add_smart_content_slide(
-                    prs,
-                    title="Executive Summary",
-                    content=clean_summary,
-                    max_chars=1200,
-                )
-
-            # 3. Content slides - parse with improved markdown handling
-            if content_markdown:
-                sections = self._parse_markdown_sections_improved(content_markdown)
-
-                for section_title, section_content in sections[
-                    :8
-                ]:  # Max 8 content slides
-                    clean_content = self._clean_markdown_for_pptx(section_content)
-                    self._add_smart_content_slide(
-                        prs, title=section_title, content=clean_content, max_chars=1000
-                    )
-
-            # 4. AI Disclosure slide
-            self._add_ai_disclosure_slide(prs)
-
-            # 5. Backup/Appendix slides - explain each classification tag
-            # Appendix header
-            appendix_content = """The following slides provide context for the strategic classification tags used in this brief.
-
-These definitions help ensure consistent understanding across City departments and leadership."""
-            self._add_smart_content_slide(
-                prs,
-                title="Appendix: Classification Reference",
-                content=appendix_content,
-                max_chars=1000,
-            )
-
-            # Pillar backup slide
-            if used_pillar and used_pillar in PILLAR_DEFINITIONS:
-                pillar_def = PILLAR_DEFINITIONS[used_pillar]
-                pillar_content = f"""Definition: {pillar_def['description']}
-
-Focus Areas:
-"""
-                for area in pillar_def.get("focus_areas", []):
-                    pillar_content += f"- {area}\n"
-                pillar_content += """
-This pillar is one of six strategic focus areas guiding City of Austin planning and investment decisions."""
-
-                self._add_smart_content_slide(
-                    prs,
-                    title=f"{pillar_def.get('icon', '')} Strategic Pillar: {pillar_def['name']}",
-                    content=pillar_content,
-                    max_chars=1500,
-                )
-
-            # Horizon backup slide
-            if used_horizon and used_horizon in HORIZON_DEFINITIONS:
-                horizon_def = HORIZON_DEFINITIONS[used_horizon]
-                horizon_content = f"""Timeframe: {horizon_def['timeframe']}
-
-Definition: {horizon_def['description']}
-
-Characteristics:
-"""
-                for char in horizon_def.get("characteristics", []):
-                    horizon_content += f"- {char}\n"
-                horizon_content += """
-The planning horizon indicates when this trend is expected to require significant City attention or action."""
-
-                self._add_smart_content_slide(
-                    prs,
-                    title=f"{horizon_def.get('icon', '')} Planning Horizon: {horizon_def['name']}",
-                    content=horizon_content,
-                    max_chars=1500,
-                )
-
-            # Stage backup slide
-            if used_stage and used_stage in STAGE_DEFINITIONS:
-                stage_def = STAGE_DEFINITIONS[used_stage]
-                stage_content = f"""Definition: {stage_def['description']}
-
-Key Indicators:
-"""
-                for indicator in stage_def.get("indicators", []):
-                    stage_content += f"- {indicator}\n"
-                stage_content += """
-The maturity stage reflects the current development status of this trend and helps inform appropriate City response strategies."""
-
-                self._add_smart_content_slide(
-                    prs,
-                    title=f"{stage_def.get('icon', '')} Maturity Stage {used_stage}: {stage_def['name']}",
-                    content=stage_content,
-                    max_chars=1500,
-                )
-
-            # Save presentation
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".pptx", delete=False, prefix="foresight_brief_"
-            )
-            prs.save(temp_file.name)
-
-            logger.info(f"Local brief PowerPoint generated: {temp_file.name}")
-            return temp_file.name
-
-        except Exception as e:
-            logger.error(f"Error generating local brief PowerPoint: {e}")
-            raise
-
-    def _clean_markdown_for_pptx(self, text: str) -> str:
-        """
-        Clean markdown text for PowerPoint display.
-
-        Removes markdown artifacts that don't render well in PPTX.
-        """
-
-        if not text:
-            return ""
-
-        # Remove code blocks
-        text = re.sub(r"```[\s\S]*?```", "", text)
-        text = re.sub(r"`([^`]+)`", r"\1", text)
-
-        # Convert bold/italic to plain text (PPTX doesn't support inline markdown)
-        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-        text = re.sub(r"__(.+?)__", r"\1", text)
-        text = re.sub(r"\*(.+?)\*", r"\1", text)
-        text = re.sub(r"_(.+?)_", r"\1", text)
-
-        # Remove links, keep text
-        text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
-
-        # Standardize bullet points
-        text = re.sub(r"^[\-\*•]\s+", "• ", text, flags=re.MULTILINE)
-
-        # Remove horizontal rules
-        text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
-
-        # Remove headers markers (keep text)
-        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-
-        # Clean up excessive whitespace
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = re.sub(r"  +", " ", text)
-
-        return text.strip()
-
-    def _parse_markdown_sections_improved(
-        self, content_markdown: str, max_sections: int = 10
-    ) -> List[Tuple[str, str]]:
-        """
-        Improved markdown section parser.
-
-        Handles:
-        - Multiple header formats (#, ##, ###)
-        - ALL CAPS section headers
-        - Bold section headers (**Section**)
-        - Reasonable content length per section
-        """
-
-        sections = []
-        current_title = "Overview"
-        current_content = []
-
-        lines = content_markdown.split("\n")
-
-        for line in lines:
-            line_stripped = line.strip()
-
-            if header_match := re.match(r"^(#{1,3})\s+(.+)$", line_stripped):
-                if current_content:
-                    content_text = "\n".join(current_content).strip()
-                    if content_text and len(content_text) > 30:
-                        sections.append((current_title, content_text))
-                current_title = header_match.group(2).strip()
-                # Remove any trailing # or **
-                current_title = re.sub(r"\s*#+\s*$", "", current_title)
-                current_title = re.sub(r"^\*\*|\*\*$", "", current_title)
-                current_content = []
-                continue
-
-            # Check for ALL CAPS headers (common AI pattern)
-            if re.match(
-                r"^[A-Z][A-Z\s&\-]{5,}$", line_stripped
-            ) and not line_stripped.startswith("•"):
-                if current_content:
-                    content_text = "\n".join(current_content).strip()
-                    if content_text and len(content_text) > 30:
-                        sections.append((current_title, content_text))
-                current_title = line_stripped.title()
-                current_content = []
-                continue
-
-            if bold_match := re.match(r"^\*\*([^*]+)\*\*:?\s*$", line_stripped):
-                if current_content:
-                    content_text = "\n".join(current_content).strip()
-                    if content_text and len(content_text) > 30:
-                        sections.append((current_title, content_text))
-                current_title = bold_match.group(1).strip()
-                current_content = []
-                continue
-
-            current_content.append(line)
-
-        # Don't forget the last section
-        if current_content:
-            content_text = "\n".join(current_content).strip()
-            if content_text and len(content_text) > 30:
-                sections.append((current_title, content_text))
-
-        # If no sections found, create one from all content
-        if not sections and content_markdown.strip():
-            sections = [("Key Findings", content_markdown.strip())]
-
-        return sections[:max_sections]
-
-    def _add_smart_content_slide(
-        self, prs: Presentation, title: str, content: str, max_chars: int = 1000
-    ) -> None:
-        """
-        Add a content slide with smart text handling.
-
-        Handles bullet points, truncation, and proper formatting.
-        """
-        slide_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(slide_layout)
-
-        # Add professional header and footer
-        self._add_pptx_header(slide)
-        self._add_pptx_footer(slide)
-
-        # Slide title
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.25), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(0.6)
-        )
-        title_frame = title_box.text_frame
-        title_para = title_frame.paragraphs[0]
-        title_para.text = title[:60] if len(title) > 60 else title
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Truncate content if needed
-        if len(content) > max_chars:
-            content = f"{content[:max_chars - 3]}..."
-
-        # Content area
-        content_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.95), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(4.5)
-        )
-        content_frame = content_box.text_frame
-        content_frame.word_wrap = True
-
-        # Parse content into paragraphs/bullets
-        lines = content.split("\n")
-        first_para = True
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            if first_para:
-                para = content_frame.paragraphs[0]
-                first_para = False
-            else:
-                para = content_frame.add_paragraph()
-
-            if (
-                line.startswith("•")
-                or line.startswith("-")
-                or line.startswith("*")
-            ):
-                # Clean bullet marker and add proper bullet
-                line = line.lstrip("•-* ")
-                para.text = f"• {line}"
-                para.level = 0
-            else:
-                para.text = line
-
-            para.font.size = Pt(16)
-            para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-            para.space_before = Pt(6)
-            para.space_after = Pt(4)
-
-    def _add_ai_disclosure_slide(self, prs: Presentation) -> None:
-        """Add an AI technology disclosure slide."""
-        slide_layout = prs.slide_layouts[6]
-        slide = prs.slides.add_slide(slide_layout)
-
-        self._add_pptx_header(slide)
-        self._add_pptx_footer(slide)
-
-        # Title
-        title_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.25), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(0.6)
-        )
-        title_frame = title_box.text_frame
-        title_para = title_frame.paragraphs[0]
-        title_para.text = "About This Report"
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["primary"])
-
-        # Disclosure content
-        disclosure_text = f"""This strategic intelligence brief was generated using the FORESIGHT platform, powered by advanced AI technologies:
-
-• OpenAI {get_chat_deployment()} - Strategic analysis, classification, and scoring
-• GPT Researcher - Autonomous deep research orchestration
-• SearXNG and Serper - Web search aggregation
-• trafilatura - Article extraction from source URLs
-
-The City of Austin is committed to transparent and responsible use of AI technology in public service. All AI-generated content is reviewed for accuracy and relevance."""
-
-        content_box = slide.shapes.add_textbox(
-            PPTX_MARGIN, Inches(1.95), PPTX_SLIDE_WIDTH - (2 * PPTX_MARGIN), Inches(4.5)
-        )
-        content_frame = content_box.text_frame
-        content_frame.word_wrap = True
-
-        lines = disclosure_text.split("\n")
-        first_para = True
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            if first_para:
-                para = content_frame.paragraphs[0]
-                first_para = False
-            else:
-                para = content_frame.add_paragraph()
-
-            para.text = line
-            para.font.size = Pt(14)
-            para.font.color.rgb = self._hex_to_rgb(FORESIGHT_COLORS["dark"])
-            para.space_before = Pt(4)
-            para.space_after = Pt(4)
 
     # =========================================================================
     # Portfolio Export (Bulk Brief Export)
     # =========================================================================
+    # The two helpers below are still used by portfolio export methods that
+    # remain on this class. They delegate to app.export.briefs.pptx so the
+    # implementation stays in one place. They will be inlined into the
+    # portfolios module when portfolio export is extracted.
+
+    def _add_smart_content_slide(
+        self, prs: Presentation, title: str, content: str, max_chars: int = 1000
+    ) -> None:
+        _briefs.add_smart_content_slide(prs, title, content, max_chars)
+
+    def _add_ai_disclosure_slide(self, prs: Presentation) -> None:
+        _briefs.add_ai_disclosure_slide(prs)
 
     def _extract_key_takeaways(self, brief_markdown: str) -> List[str]:
         """
@@ -2888,10 +1830,9 @@ The City of Austin is committed to transparent and responsible use of AI technol
             Path to the generated PDF file
         """
         from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.colors import HexColor
         from reportlab.platypus import (
-            SimpleDocTemplate,
             Paragraph,
             Spacer,
             PageBreak,
