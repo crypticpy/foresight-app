@@ -10,7 +10,10 @@ When you need to modify export behavior, edit the relevant submodule
 (`app.export.cards`, `app.export.workstreams`, `app.export.briefs`,
 `app.export.portfolios`, `app.export.charts`, `app.export.csv_export`,
 `app.export.pptx`, `app.export.data_access`, `app.export.utils`) — not this
-file. The methods here should remain one-line delegations.
+file. For shared portfolio export flow changes, also keep
+`portfolio_export.py` aligned: it is the shared pipeline used by both
+`/bulk-brief-export` and `/portfolios/{id}/export`. The methods here should
+remain one-line delegations.
 """
 
 import logging
@@ -284,7 +287,7 @@ class ExportService:
         )
 
     # ========================================================================
-    # Portfolio (Bulk Brief Export)
+    # Portfolio
     # ========================================================================
 
     def _extract_key_takeaways(self, brief_markdown: str) -> List[str]:
