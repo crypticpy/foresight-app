@@ -1,6 +1,7 @@
 """Classification badges + framework appendix for executive PDF exports."""
 
 import re
+from html import escape as html_escape
 from typing import Any, Dict, List
 
 from reportlab.lib.styles import ParagraphStyle
@@ -35,7 +36,9 @@ def create_classification_badges(
                 f'<font color="{pillar_info["color"]}"><b>{pillar_code}</b></font> {pillar_info["name"]}'
             )
         else:
-            badge_parts.append(f"<b>Pillar:</b> {pillar_code}")
+            badge_parts.append(
+                f"<b>Pillar:</b> {html_escape(pillar_code, quote=False)}"
+            )
 
     if horizon_code := classification.get("horizon", "").upper():
         if horizon_code in HORIZON_COLORS:
@@ -44,7 +47,9 @@ def create_classification_badges(
                 f'<font color="{horizon_info["color"]}"><b>{horizon_code}</b></font> {horizon_info["name"]} ({horizon_info["timeframe"]})'
             )
         else:
-            badge_parts.append(f"<b>Horizon:</b> {horizon_code}")
+            badge_parts.append(
+                f"<b>Horizon:</b> {html_escape(horizon_code, quote=False)}"
+            )
 
     # Stage badge
     stage_raw = classification.get("stage", "")
@@ -62,7 +67,9 @@ def create_classification_badges(
             f'<font color="{stage_color}"><b>Stage {stage_num}</b></font> {stage_info["name"]}'
         )
     elif stage_raw:
-        badge_parts.append(f"<b>Stage:</b> {stage_raw}")
+        badge_parts.append(
+            f"<b>Stage:</b> {html_escape(str(stage_raw), quote=False)}"
+        )
 
     if badge_parts:
         # Create a styled classification line with link hint

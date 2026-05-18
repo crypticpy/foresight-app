@@ -67,8 +67,9 @@ class MarkdownToPDFParser:
         text = text.replace("\r\n", "\n")
         text = text.replace("\r", "\n")
 
-        # Normalize multiple spaces
-        text = self.re.sub(r"  +", " ", text)
+        # Multi-space collapse moved into convert_inline_formatting so it only
+        # runs on non-code-block segments. Doing it here corrupted fenced code
+        # block indentation.
 
         return text.strip()
 
@@ -91,6 +92,10 @@ class MarkdownToPDFParser:
 
         # First escape XML characters
         text = self.escape_xml(text)
+
+        # Collapse repeated spaces — done here (not in clean_text) so fenced
+        # code blocks keep their indentation.
+        text = self.re.sub(r"  +", " ", text)
 
         # Convert bold: **text** or __text__
         text = self.re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
