@@ -168,15 +168,14 @@ def _patch_supabase(monkeypatch, mock_sb):
     from app import audit_service
     from app.routers import admin as admin_router
     from app.routers import (
-        admin_discovery,
         admin_discovery_balance,
         admin_discovery_coverage,
     )
 
-    monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
-    # Coverage / balance endpoints live in sibling sub-routers, each with
-    # its own module-level ``supabase`` binding — patch every module so
-    # handlers under any of them see the mock.
+    # Coverage / balance endpoints live in their own sub-routers, each with
+    # its own module-level ``supabase`` binding. The parent ``admin_discovery``
+    # aggregator is now a pure include-router shell that no longer imports
+    # ``supabase`` directly, so we patch only the sub-routers + admin + audit.
     monkeypatch.setattr(admin_discovery_coverage, "supabase", mock_sb)
     monkeypatch.setattr(admin_discovery_balance, "supabase", mock_sb)
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
