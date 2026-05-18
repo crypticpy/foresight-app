@@ -47,10 +47,6 @@ from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from .story_clustering_service import cluster_sources
 from . import domain_reputation_service
-from .safety.injection import (
-    record_injection_incident,
-    scan_text as scan_for_injection,
-)
 
 # Configuration layer (dataclasses, enum, registry/override loaders, factory)
 # was extracted to ``discovery_config`` in PR-D1. Re-imported here so
@@ -143,6 +139,11 @@ from .discovery_search import (
     execute_searches,
     generate_queries,
 )
+
+# Triage stage extracted to ``discovery_triage`` in PR-D9. Stateless —
+# takes the Supabase client, the ``AIService`` instance, and the
+# current run id as explicit arguments.
+from .discovery_triage import triage_sources_with_metrics
 
 __all__ = [
     "APITokenUsage",
@@ -655,11 +656,11 @@ class DiscoveryService:
                 {"queries_generated": len(queries), "sources_found": len(raw_sources)},
             )
             step_start = datetime.now(timezone.utc)
-            self._current_run_id = (
-                run_id  # For domain reputation stats persistence (Task 2.7)
-            )
-            triaged_sources, triage_tokens = await self._triage_sources_with_metrics(
-                validated_sources
+            triaged_sources, triage_tokens = await triage_sources_with_metrics(
+                self.supabase,
+                self.ai_service,
+                validated_sources,
+                current_run_id=run_id,
             )
             processing_time.triage_seconds = (
                 datetime.now(timezone.utc) - step_start
@@ -1157,236 +1158,6 @@ class DiscoveryService:
                 continue
 
         return processed
-
-    async def _triage_sources_with_metrics(
-        self, sources: List[RawSource]
-    ) -> Tuple[List[ProcessedSource], int]:
-        """
-        Triage sources for municipal relevance with token usage tracking.
-
-        Args:
-            sources: Raw sources from search
-
-        Returns:
-            Tuple of (processed sources, estimated token count)
-        """
-        processed = []
-        triage_threshold = 0.6
-        total_tokens = 0
-
-        # Domain reputation stats tracking (Task 2.7)
-        domain_rep_stats = {
-            "domain_reputation_lookups": 0,
-            "confidence_adjustments": 0,
-            "tier1_source_count": 0,
-            "tier2_source_count": 0,
-            "tier3_source_count": 0,
-            "untiered_source_count": 0,
-        }
-
-        injection_block_count = 0
-
-        for source in sources:
-            try:
-                # Prompt-injection scan (PR 5): patterns are cheap, the LLM
-                # call we'd make next is not. On any HIGH-severity match,
-                # log incidents to safety_incidents and drop the source so
-                # its payload never reaches the triage LLM. We scan title +
-                # content (the title alone flows into the auto-pass path
-                # below, so a malicious title must still be blocked).
-                scan_target = "\n\n".join(
-                    part for part in (source.title, source.content) if part
-                )
-                if scan_target:
-                    matches = scan_for_injection(scan_target)
-                    blocking = [m for m in matches if m.is_blocking]
-                    if blocking:
-                        injection_block_count += 1
-                        logger.warning(
-                            "Discovery: blocking source %s due to injection patterns: %s",
-                            source.url or "(no url)",
-                            [m.pattern_id for m in blocking],
-                        )
-                        await asyncio.to_thread(
-                            record_injection_incident,
-                            self.supabase,
-                            matches=blocking,
-                            source="discovery",
-                            discovered_source_id=source.discovered_source_id,
-                            metadata={
-                                "url": source.url,
-                                "title": source.title,
-                                "run_id": getattr(self, "_current_run_id", None),
-                            },
-                        )
-                        if source.discovered_source_id:
-                            await update_source_outcome(self.supabase,
-                                source.discovered_source_id,
-                                "filtered_blocked",
-                                error_message="prompt_injection",
-                                error_stage="triage",
-                            )
-                        continue
-
-                # Skip sources without content for full triage
-                if not source.content:
-                    # Auto-pass URL-only sources with lower confidence
-                    triage = TriageResult(
-                        is_relevant=True,
-                        confidence=0.65,
-                        primary_pillar=getattr(source, "pillar_code", None),
-                        reason="Auto-passed (no content)",
-                    )
-                else:
-                    triage = await self.ai_service.triage_source(
-                        title=source.title, content=source.content
-                    )
-                    # Estimate tokens: ~4 chars per token for input, fixed output
-                    input_tokens = (
-                        len(source.title or "") // 4 + len(source.content or "") // 4
-                    )
-                    output_tokens = 100  # Estimated output tokens for triage
-                    total_tokens += input_tokens + output_tokens
-
-                # Pre-print relevance penalty (Task 2.6): soft penalty, not a hard block
-                if getattr(source, "is_preprint", False) and triage.confidence > 0:
-                    original_confidence = triage.confidence
-                    triage.confidence = max(0.0, triage.confidence - 0.2)
-                    logger.debug(
-                        f"Pre-print penalty applied: {source.url} "
-                        f"confidence {original_confidence:.2f} -> {triage.confidence:.2f}"
-                    )
-
-                # Domain reputation confidence adjustment (Task 2.7)
-                try:
-                    reputation = domain_reputation_service.get_reputation(
-                        self.supabase, source.url or ""
-                    )
-                    domain_rep_stats["domain_reputation_lookups"] += 1
-
-                    # Track tier distribution
-                    if reputation:
-                        tier = reputation.get("curated_tier")
-                        if tier == 1:
-                            domain_rep_stats["tier1_source_count"] += 1
-                        elif tier == 2:
-                            domain_rep_stats["tier2_source_count"] += 1
-                        elif tier == 3:
-                            domain_rep_stats["tier3_source_count"] += 1
-                        else:
-                            domain_rep_stats["untiered_source_count"] += 1
-                    else:
-                        domain_rep_stats["untiered_source_count"] += 1
-
-                    adj = domain_reputation_service.get_confidence_adjustment(
-                        reputation
-                    )
-                    if adj != 0.0:
-                        pre_adj_confidence = triage.confidence
-                        triage.confidence = max(0.0, min(1.0, triage.confidence + adj))
-                        domain_rep_stats["confidence_adjustments"] += 1
-                        logger.debug(
-                            f"Domain reputation adjustment: {source.url} "
-                            f"adj={adj:+.2f} confidence "
-                            f"{pre_adj_confidence:.2f} -> {triage.confidence:.2f}"
-                        )
-                except Exception as e:
-                    logger.debug(f"Domain reputation lookup failed (non-fatal): {e}")
-
-                # Determine triage pass/fail
-                passed_triage = (
-                    triage.is_relevant and triage.confidence >= triage_threshold
-                )
-
-                # Record triage result for domain reputation stats (Task 2.7)
-                try:
-                    from urllib.parse import urlparse as _urlparse
-
-                    if _domain := _urlparse(source.url or "").netloc:
-                        domain_reputation_service.record_triage_result(
-                            self.supabase, _domain, passed=passed_triage
-                        )
-                except Exception as e:
-                    logger.debug(f"Domain triage recording failed (non-fatal): {e}")
-
-                if passed_triage:
-                    # Full analysis
-                    analysis = await self.ai_service.analyze_source(
-                        title=source.title,
-                        content=source.content or "",
-                        source_name=source.source_name,
-                        published_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                    # Estimate tokens for analysis
-                    input_tokens = (
-                        len(source.title or "") // 4 + len(source.content or "") // 4
-                    )
-                    output_tokens = 500  # Estimated output tokens for analysis
-                    total_tokens += input_tokens + output_tokens
-
-                    # Generate embedding
-                    embed_text = f"{source.title} {analysis.summary}"
-                    embedding = await self.ai_service.generate_embedding(embed_text)
-                    # Estimate tokens for embedding
-                    total_tokens += len(embed_text) // 4
-
-                    processed.append(
-                        ProcessedSource(
-                            raw=source,
-                            triage=triage,
-                            analysis=analysis,
-                            embedding=embedding,
-                        )
-                    )
-
-            except Exception as e:
-                logger.warning(f"Triage/analysis failed for {source.url}: {e}")
-                continue
-
-        if injection_block_count:
-            logger.info(
-                "Discovery triage: blocked %d source(s) on prompt-injection patterns",
-                injection_block_count,
-            )
-
-        # Log domain reputation stats (Task 2.7)
-        if domain_rep_stats["domain_reputation_lookups"] > 0:
-            logger.info(
-                f"Domain reputation triage stats: "
-                f"{domain_rep_stats['domain_reputation_lookups']} lookups, "
-                f"{domain_rep_stats['confidence_adjustments']} adjustments, "
-                f"tier1={domain_rep_stats['tier1_source_count']}, "
-                f"tier2={domain_rep_stats['tier2_source_count']}, "
-                f"tier3={domain_rep_stats['tier3_source_count']}, "
-                f"untiered={domain_rep_stats['untiered_source_count']}"
-            )
-
-        # Persist domain reputation stats to quality_stats (Task 2.7)
-        try:
-            # We need to get run_id from the caller context; use the _current_run_id if available
-            if hasattr(self, "_current_run_id") and self._current_run_id:
-                existing = (
-                    self.supabase.table("discovery_runs")
-                    .select("summary_report")
-                    .eq("id", self._current_run_id)
-                    .single()
-                    .execute()
-                )
-                report = (
-                    existing.data.get("summary_report") if existing.data else {}
-                ) or {}
-                if not isinstance(report, dict):
-                    report = {}
-                qs = report.get("quality_stats", {})
-                qs.update(domain_rep_stats)
-                report["quality_stats"] = qs
-                self.supabase.table("discovery_runs").update(
-                    {"summary_report": report}
-                ).eq("id", self._current_run_id).execute()
-        except Exception as e:
-            logger.debug(f"Failed to persist domain reputation stats: {e}")
-
-        return processed, total_tokens
 
     async def _deduplicate_sources(
         self, sources: List[ProcessedSource], config: DiscoveryConfig
