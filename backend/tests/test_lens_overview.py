@@ -141,7 +141,7 @@ def _card(**fields) -> Dict[str, Any]:
 
 
 def _patch(monkeypatch, mock_sb):
-    from app.routers import analytics as analytics_module
+    from app.routers import analytics_lens as analytics_module
 
     monkeypatch.setattr(analytics_module, "supabase", mock_sb)
 
@@ -458,7 +458,7 @@ def test_pagination_aggregates_past_postgrest_page_cap(monkeypatch):
     Regression for the silent undercount that happened when the endpoint
     used a single `.execute()` against an unbounded query.
     """
-    from app.routers import analytics as analytics_module
+    from app.routers import analytics_lens as analytics_module
     from app.routers.analytics import get_lens_overview
 
     # Force a tiny page so the test stays cheap but the loop still has to
@@ -523,4 +523,4 @@ async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
 
 
 # Bind the real implementation once so the override above can call into it.
-from app.routers.analytics import _fetch_all_paginated as _real_fetch_all_paginated  # noqa: E402
+from app.routers.analytics_lens import _fetch_all_paginated as _real_fetch_all_paginated  # noqa: E402
