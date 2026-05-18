@@ -64,8 +64,6 @@ from supabase import Client
 from .models.export import (
     CardExportData,
     ExportFormat,
-    EXPORT_CONTENT_TYPES,
-    get_export_filename,
 )
 
 # Import classification definitions from gamma_service for backup slides
@@ -101,16 +99,20 @@ from .export.pdf import (  # noqa: E402
     create_classification_badges,
     get_professional_pdf_styles,
 )
+from .export import charts as _charts  # noqa: E402
+from .export import data_access as _data_access  # noqa: E402
+from .export import utils as _utils  # noqa: E402
 
 
 # ============================================================================
 # Dimensional constants used by ExportService methods
 # ============================================================================
 
-# Chart settings
-CHART_DPI = 300
-CHART_FIGURE_SIZE = (8, 6)
-RADAR_FIGURE_SIZE = (8, 8)
+# Chart settings — defined in app.export.charts; re-exported here for callers
+# that still import from this module.
+from .export.charts import (  # noqa: E402
+    CHART_DPI,
+)
 
 # PowerPoint settings
 PPTX_SLIDE_WIDTH = Inches(13.333)  # 16:9 widescreen
@@ -158,187 +160,23 @@ class ExportService:
         logger.info("ExportService initialized")
 
     # ========================================================================
-    # Chart Generation Methods
+    # Chart Generation Methods (facade — implementations live in export.charts)
     # ========================================================================
 
     def generate_score_chart(
         self, card_data: CardExportData, chart_type: str = "bar", dpi: int = CHART_DPI
     ) -> Optional[str]:
-        """
-        Generate a chart showing card scores.
+        return _charts.generate_score_chart(card_data, chart_type, dpi)
 
-        Args:
-            card_data: Card data containing scores
-            chart_type: Type of chart ('bar' or 'radar')
-            dpi: Resolution for the chart image
-
-        Returns:
-            Path to the generated chart image, or None if generation fails
-        """
-        try:
-            scores = card_data.get_all_scores()
-
-            # Filter out None scores
-            valid_scores = {k: v for k, v in scores.items() if v is not None}
-
-            if not valid_scores:
-                logger.warning(
-                    f"No valid scores for card {card_data.id}, skipping chart"
-                )
-                return None
-
-            if chart_type == "radar":
-                return self._generate_radar_chart(valid_scores, card_data.name, dpi)
-            else:
-                return self._generate_bar_chart(valid_scores, card_data.name, dpi)
-
-        except Exception as e:
-            logger.error(f"Error generating score chart: {e}")
-            return None
-
-    def _generate_bar_chart(self, scores: Dict[str, int], title: str, dpi: int) -> str:
-        """
-        Generate a horizontal bar chart of scores.
-
-        Args:
-            scores: Dictionary of score names to values
-            title: Chart title
-            dpi: Resolution for the image
-
-        Returns:
-            Path to the generated chart image
-        """
-        fig, ax = plt.subplots(figsize=CHART_FIGURE_SIZE)
-
-        try:
-            labels = list(scores.keys())
-            values = list(scores.values())
-            colors = [
-                SCORE_COLORS.get(label, FORESIGHT_COLORS["primary"]) for label in labels
-            ]
-
-            y_pos = np.arange(len(labels))
-
-            bars = ax.barh(y_pos, values, color=colors, edgecolor="white", height=0.6)
-
-            # Add value labels on bars
-            for bar, value in zip(bars, values):
-                width = bar.get_width()
-                ax.text(
-                    width + 2,
-                    bar.get_y() + bar.get_height() / 2,
-                    f"{value}",
-                    va="center",
-                    ha="left",
-                    fontsize=10,
-                    fontweight="bold",
-                    color=FORESIGHT_COLORS["dark"],
-                )
-
-            ax.set_yticks(y_pos)
-            ax.set_yticklabels(labels, fontsize=11)
-            ax.set_xlim(0, 110)  # Extra space for labels
-            ax.set_xlabel("Score (0-100)", fontsize=11)
-            ax.set_title(
-                f"Scores: {title[:40]}...", fontsize=12, fontweight="bold", pad=15
-            )
-
-            # Style the chart
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["bottom"].set_color(FORESIGHT_COLORS["light"])
-            ax.spines["left"].set_color(FORESIGHT_COLORS["light"])
-
-            # Add gridlines
-            ax.xaxis.grid(True, linestyle="--", alpha=0.3)
-            ax.set_axisbelow(True)
-
-            plt.tight_layout()
-
-            # Save to temp file
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="foresight_chart_"
-            )
-            plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
-
-            return temp_file.name
-
-        finally:
-            plt.close(fig)  # CRITICAL: Prevent memory leaks
+    def _generate_bar_chart(
+        self, scores: Dict[str, int], title: str, dpi: int
+    ) -> str:
+        return _charts.generate_bar_chart(scores, title, dpi)
 
     def _generate_radar_chart(
         self, scores: Dict[str, int], title: str, dpi: int
     ) -> str:
-        """
-        Generate a radar/spider chart of scores.
-
-        Args:
-            scores: Dictionary of score names to values
-            title: Chart title
-            dpi: Resolution for the image
-
-        Returns:
-            Path to the generated chart image
-        """
-        fig, ax = plt.subplots(figsize=RADAR_FIGURE_SIZE, subplot_kw=dict(polar=True))
-
-        try:
-            labels = list(scores.keys())
-            values = list(scores.values())
-
-            # Number of variables
-            num_vars = len(labels)
-
-            # Compute angle for each axis
-            angles = [n / float(num_vars) * 2 * np.pi for n in range(num_vars)]
-            angles += angles[:1]  # Complete the loop
-
-            # Complete the data loop
-            values_plot = values + values[:1]
-
-            # Plot the data
-            ax.plot(
-                angles,
-                values_plot,
-                "o-",
-                linewidth=2,
-                color=FORESIGHT_COLORS["primary"],
-            )
-            ax.fill(
-                angles, values_plot, alpha=0.25, color=FORESIGHT_COLORS["secondary"]
-            )
-
-            # Set the labels
-            ax.set_xticks(angles[:-1])
-            ax.set_xticklabels(labels, fontsize=11)
-
-            # Set y-axis limits
-            ax.set_ylim(0, 100)
-            ax.set_yticks([20, 40, 60, 80, 100])
-            ax.set_yticklabels(
-                ["20", "40", "60", "80", "100"], fontsize=9, color="gray"
-            )
-
-            # Add title
-            ax.set_title(
-                f"Score Profile: {title[:35]}...",
-                fontsize=12,
-                fontweight="bold",
-                pad=20,
-            )
-
-            plt.tight_layout()
-
-            # Save to temp file
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="foresight_radar_"
-            )
-            plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
-
-            return temp_file.name
-
-        finally:
-            plt.close(fig)  # CRITICAL: Prevent memory leaks
+        return _charts.generate_radar_chart(scores, title, dpi)
 
     def generate_pillar_distribution_chart(
         self,
@@ -346,70 +184,7 @@ class ExportService:
         title: str = "Pillar Distribution",
         dpi: int = CHART_DPI,
     ) -> Optional[str]:
-        """
-        Generate a pie/donut chart showing distribution of cards across pillars.
-
-        Args:
-            pillar_counts: Dictionary mapping pillar names to card counts
-            title: Chart title
-            dpi: Resolution for the image
-
-        Returns:
-            Path to the generated chart image, or None if no data
-        """
-        if not pillar_counts:
-            logger.warning("No pillar data for distribution chart")
-            return None
-
-        fig, ax = plt.subplots(figsize=CHART_FIGURE_SIZE)
-
-        try:
-            labels = list(pillar_counts.keys())
-            values = list(pillar_counts.values())
-
-            # Generate colors from palette
-            colors = plt.cm.Set2(np.linspace(0, 1, len(labels)))
-
-            # Create donut chart
-            wedges, texts, autotexts = ax.pie(
-                values,
-                labels=labels,
-                autopct="%1.1f%%",
-                colors=colors,
-                pctdistance=0.75,
-                wedgeprops=dict(width=0.5, edgecolor="white"),
-                textprops={"fontsize": 10},
-            )
-
-            # Style the percentage text
-            for autotext in autotexts:
-                autotext.set_fontsize(9)
-                autotext.set_fontweight("bold")
-
-            ax.set_title(title, fontsize=12, fontweight="bold", pad=15)
-
-            # Add legend
-            ax.legend(
-                wedges,
-                [f"{label} ({value})" for label, value in zip(labels, values)],
-                title="Pillars",
-                loc="center left",
-                bbox_to_anchor=(1, 0, 0.5, 1),
-                fontsize=9,
-            )
-
-            plt.tight_layout()
-
-            # Save to temp file
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="foresight_pillar_"
-            )
-            plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
-
-            return temp_file.name
-
-        finally:
-            plt.close(fig)  # CRITICAL: Prevent memory leaks
+        return _charts.generate_pillar_distribution_chart(pillar_counts, title, dpi)
 
     def generate_horizon_distribution_chart(
         self,
@@ -417,90 +192,7 @@ class ExportService:
         title: str = "Horizon Distribution",
         dpi: int = CHART_DPI,
     ) -> Optional[str]:
-        """
-        Generate a bar chart showing distribution of cards across horizons.
-
-        Args:
-            horizon_counts: Dictionary mapping horizon names to card counts
-            title: Chart title
-            dpi: Resolution for the image
-
-        Returns:
-            Path to the generated chart image, or None if no data
-        """
-        if not horizon_counts:
-            logger.warning("No horizon data for distribution chart")
-            return None
-
-        fig, ax = plt.subplots(figsize=(6, 4))
-
-        try:
-            # Order horizons properly
-            horizon_order = ["H1", "H2", "H3"]
-            labels = []
-            values = []
-
-            for h in horizon_order:
-                if h in horizon_counts:
-                    labels.append(h)
-                    values.append(horizon_counts[h])
-
-            # Add any remaining horizons
-            for h, v in horizon_counts.items():
-                if h not in horizon_order:
-                    labels.append(h)
-                    values.append(v)
-
-            # Horizon colors
-            horizon_colors = {
-                "H1": FORESIGHT_COLORS["success"],
-                "H2": FORESIGHT_COLORS["warning"],
-                "H3": FORESIGHT_COLORS["secondary"],
-            }
-            colors = [
-                horizon_colors.get(label, FORESIGHT_COLORS["primary"])
-                for label in labels
-            ]
-
-            x_pos = np.arange(len(labels))
-            bars = ax.bar(x_pos, values, color=colors, edgecolor="white", width=0.6)
-
-            # Add value labels on bars
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    height + 0.5,
-                    f"{value}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=11,
-                    fontweight="bold",
-                )
-
-            ax.set_xticks(x_pos)
-            ax.set_xticklabels(labels, fontsize=12, fontweight="bold")
-            ax.set_ylabel("Number of Cards", fontsize=11)
-            ax.set_title(title, fontsize=12, fontweight="bold", pad=15)
-
-            # Style
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.yaxis.grid(True, linestyle="--", alpha=0.3)
-            ax.set_axisbelow(True)
-
-            plt.tight_layout()
-
-            # Save to temp file
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="foresight_horizon_"
-            )
-            plt.savefig(temp_file.name, dpi=dpi, bbox_inches="tight", facecolor="white")
-
-            return temp_file.name
-
-        finally:
-            plt.close(fig)  # CRITICAL: Prevent memory leaks
+        return _charts.generate_horizon_distribution_chart(horizon_counts, title, dpi)
 
     # ========================================================================
     # PDF Generation Methods
@@ -1548,134 +1240,30 @@ class ExportService:
             self.cleanup_temp_files(temp_files)
 
     # ========================================================================
-    # Utility Methods
+    # Utility Methods (facade — implementations live in export.utils + export.data_access)
     # ========================================================================
 
     def cleanup_temp_files(self, file_paths: List[str]) -> None:
-        """
-        Clean up temporary chart files.
-
-        Args:
-            file_paths: List of file paths to delete
-        """
-        for path in file_paths:
-            try:
-                if path and Path(path).exists():
-                    Path(path).unlink()
-                    logger.debug(f"Cleaned up temp file: {path}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temp file {path}: {e}")
+        _utils.cleanup_temp_files(file_paths)
 
     async def get_card_data(self, card_id: str) -> Optional[CardExportData]:
-        """
-        Fetch card data from database and convert to CardExportData.
-
-        Args:
-            card_id: UUID of the card to fetch
-
-        Returns:
-            CardExportData object or None if not found
-        """
-        try:
-            response = (
-                self.supabase.table("cards")
-                .select("*")
-                .eq("id", card_id)
-                .single()
-                .execute()
-            )
-
-            return CardExportData(**response.data) if response.data else None
-        except Exception as e:
-            logger.error(f"Error fetching card {card_id}: {e}")
-            return None
+        return await _data_access.get_card_data(self.supabase, card_id)
 
     async def get_workstream_cards(
         self, workstream_id: str, max_cards: int = 50
     ) -> Tuple[Optional[Dict[str, Any]], List[CardExportData]]:
-        """
-        Fetch workstream metadata and associated cards.
-
-        Args:
-            workstream_id: UUID of the workstream
-            max_cards: Maximum number of cards to fetch
-
-        Returns:
-            Tuple of (workstream_data, list of CardExportData)
-        """
-        try:
-            # Fetch workstream
-            ws_response = (
-                self.supabase.table("workstreams")
-                .select("*")
-                .eq("id", workstream_id)
-                .single()
-                .execute()
-            )
-
-            if not ws_response.data:
-                return None, []
-
-            workstream = ws_response.data
-
-            # Fetch associated cards via workstream_cards junction table
-            cards_response = (
-                self.supabase.table("workstream_cards")
-                .select("card_id, cards(*)")
-                .eq("workstream_id", workstream_id)
-                .limit(max_cards)
-                .execute()
-            )
-
-            cards = []
-            if cards_response.data:
-                cards.extend(
-                    CardExportData(**item["cards"])
-                    for item in cards_response.data
-                    if item.get("cards")
-                )
-            return workstream, cards
-
-        except Exception as e:
-            logger.error(f"Error fetching workstream {workstream_id}: {e}")
-            return None, []
+        return await _data_access.get_workstream_cards(
+            self.supabase, workstream_id, max_cards
+        )
 
     def format_score_display(self, score: Optional[int]) -> str:
-        """
-        Format a score for display, handling None values.
-
-        Args:
-            score: Score value (0-100) or None
-
-        Returns:
-            Formatted string representation
-        """
-        return str(score) if score is not None else "N/A"
+        return _utils.format_score_display(score)
 
     def get_content_type(self, format: ExportFormat) -> str:
-        """
-        Get the MIME content type for an export format.
-
-        Args:
-            format: Export format
-
-        Returns:
-            MIME content type string
-        """
-        return EXPORT_CONTENT_TYPES.get(format, "application/octet-stream")
+        return _utils.get_content_type(format)
 
     def generate_filename(self, name: str, format: ExportFormat) -> str:
-        """
-        Generate a safe filename for an export.
-
-        Args:
-            name: Card or workstream name
-            format: Export format
-
-        Returns:
-            Safe filename with extension
-        """
-        return get_export_filename(name, format)
+        return _utils.generate_filename(name, format)
 
     # ========================================================================
     # CSV Export Methods
