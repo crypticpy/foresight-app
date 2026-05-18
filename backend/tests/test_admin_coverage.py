@@ -167,13 +167,18 @@ def _disable_rate_limiter(monkeypatch):
 def _patch_supabase(monkeypatch, mock_sb):
     from app import audit_service
     from app.routers import admin as admin_router
-    from app.routers import admin_discovery, admin_discovery_coverage
+    from app.routers import (
+        admin_discovery,
+        admin_discovery_balance,
+        admin_discovery_coverage,
+    )
 
     monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
-    # Coverage endpoints live in a sibling sub-router with its own
-    # module-level ``supabase`` binding — patch both so handlers under
-    # either module see the mock.
+    # Coverage / balance endpoints live in sibling sub-routers, each with
+    # its own module-level ``supabase`` binding — patch every module so
+    # handlers under any of them see the mock.
     monkeypatch.setattr(admin_discovery_coverage, "supabase", mock_sb)
+    monkeypatch.setattr(admin_discovery_balance, "supabase", mock_sb)
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
     # audit_service owns its own top-level ``supabase`` binding; patch it too
     # so audit-row inserts hit the same mock as the primary mutation.
