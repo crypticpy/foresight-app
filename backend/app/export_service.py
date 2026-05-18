@@ -93,7 +93,7 @@ from .export.branding import (  # noqa: E402
     SCORE_COLORS,
     hex_to_rl_color,
 )
-from .export.pdf_components import (  # noqa: E402
+from .export.pdf import (  # noqa: E402
     MarkdownToPDFParser,
     ProfessionalPDFBuilder,
     _safe_md_paragraph,

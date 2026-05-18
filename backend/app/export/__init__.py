@@ -2,5 +2,5 @@
 
 Submodules:
 - branding: City of Austin color/icon constants, logo path resolution, AI disclosure strings.
-- pdf_components: Reusable ReportLab building blocks (styles, builder, markdown parser, classification appendix).
+- pdf: Reusable ReportLab building blocks split into builder/styles/markdown/classifications.
 """
