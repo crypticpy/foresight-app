@@ -63,7 +63,7 @@ class MarkdownToPDFParser:
 
         # Replace common problematic characters
         text = text.replace("​", "")  # Zero-width space
-        text = text.replace(" ", " ")  # Non-breaking space
+        text = text.replace(" ", " ")  # Non-breaking space
         text = text.replace("\r\n", "\n")
         text = text.replace("\r", "\n")
 
