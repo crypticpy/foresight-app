@@ -200,6 +200,16 @@ async def get_discovery_run_detail(
             or []
         )
 
+        # When the aggregate fetch was truncated at MAX_AGGREGATE_FETCH we
+        # don't actually know the real total, so be conservative and treat
+        # ``has_more`` as ``True`` whenever we're inside the truncated window.
+        # Outside truncation, the fetched count *is* the total and the usual
+        # offset+page < total check is exact.
+        if truncated:
+            has_more = True
+        else:
+            has_more = offset + len(page_rows) < sources_total
+
         return {
             "run": run_row,
             "totals": {
@@ -211,7 +221,7 @@ async def get_discovery_run_detail(
                 "items": page_rows,
                 "limit": limit,
                 "offset": offset,
-                "has_more": offset + len(page_rows) < sources_total,
+                "has_more": has_more,
             },
         }
 
