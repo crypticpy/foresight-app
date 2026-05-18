@@ -116,12 +116,14 @@ def _bypass_admin_check(monkeypatch):
 def test_apply_discovery_preset_writes_eight_rows(monkeypatch):
     from app import audit_service
     from app.routers import admin as admin_router
+    from app.routers import admin_settings
 
     actor_id = str(uuid.uuid4())
     mock_sb = _MockSupabase({"admin_settings": []})
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
-    # audit_service owns its own ``supabase`` reference (extracted out of
-    # admin.py); patch it too so audit rows land in the same mock.
+    # apply_discovery_preset now lives in admin_settings; admin.py only
+    # re-exports it for back-compat. Patch the sub-router's binding so
+    # the upsert + audit insert both land on the mock.
+    monkeypatch.setattr(admin_settings, "supabase", mock_sb)
     monkeypatch.setattr(audit_service, "supabase", mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
@@ -164,12 +166,14 @@ def test_apply_discovery_preset_records_prior_value_in_audit(monkeypatch):
     """
     from app import audit_service
     from app.routers import admin as admin_router
+    from app.routers import admin_settings
 
     actor = {"id": str(uuid.uuid4()), "email": "admin@example.com", "role": "admin"}
     mock_sb = _MockSupabase({"admin_settings": []})
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
-    # audit_service owns its own ``supabase`` reference (extracted out of
-    # admin.py); patch it too so audit rows land in the same mock.
+    # apply_discovery_preset now lives in admin_settings; admin.py only
+    # re-exports it for back-compat. Patch the sub-router's binding so
+    # the upsert + audit insert both land on the mock.
+    monkeypatch.setattr(admin_settings, "supabase", mock_sb)
     monkeypatch.setattr(audit_service, "supabase", mock_sb)
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)

@@ -178,11 +178,12 @@ def _disable_rate_limiter(monkeypatch):
 def _patch_supabase(monkeypatch, mock_sb):
     """Patch supabase in every module that touches the registry / audit log."""
     from app import audit_service
-    from app.routers import admin as admin_router
     from app.routers import admin_discovery_sources as admin_discovery
 
+    # Source CRUD endpoints live in the ``admin_discovery_sources``
+    # sub-router. ``admin.py`` is now a pure aggregator with no
+    # ``supabase`` binding, so we patch the sub-router + audit_service.
     monkeypatch.setattr(admin_discovery, "supabase", mock_sb)
-    monkeypatch.setattr(admin_router, "supabase", mock_sb)
     # audit_service holds its own ``supabase`` reference (the audit insert
     # was extracted out of admin.py); patch it too so audit rows land in the
     # same mock as the primary mutation.
