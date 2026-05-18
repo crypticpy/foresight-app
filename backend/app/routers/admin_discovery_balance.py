@@ -378,6 +378,7 @@ async def admin_balance_dispatch(
     status_code=status.HTTP_201_CREATED,
     response_model=AdminWorkstreamScanResponse,
 )
+@limiter.limit("10/minute")
 async def admin_force_workstream_scan(
     request: Request,
     workstream_id: str,
@@ -457,19 +458,31 @@ async def admin_force_workstream_scan(
         logger.exception("Failed to force-scan workstream")
         raise HTTPException(status_code=500, detail=_safe_error("force-scan workstream", e))
 
-    await asyncio.to_thread(
-        log_admin_action,
-        actor=current_user,
-        action="admin.workstream.force_scan",
-        target_type="workstream",
-        target_id=workstream_id,
-        before=None,
-        after={
-            "scan_id": outcome["scan"].get("id"),
-            "workstream_name": outcome["workstream"].get("name"),
-        },
-        request=request,
-    )
+    # The scan is already enqueued in `workstream_scans`. Audit-log failure
+    # must NOT turn a successful 201 into a 500 — that would invite client
+    # retries and duplicate-queue the scan. Log the audit failure and move on.
+    try:
+        await asyncio.to_thread(
+            log_admin_action,
+            actor=current_user,
+            action="admin.workstream.force_scan",
+            target_type="workstream",
+            target_id=workstream_id,
+            before=None,
+            after={
+                "scan_id": outcome["scan"].get("id"),
+                "workstream_name": outcome["workstream"].get("name"),
+            },
+            request=request,
+        )
+    except Exception:
+        logger.exception(
+            "Forced scan queued, but audit logging failed",
+            extra={
+                "workstream_id": workstream_id,
+                "scan_id": outcome["scan"].get("id"),
+            },
+        )
     return {
         "scan_id": outcome["scan"].get("id"),
         "workstream_id": workstream_id,
