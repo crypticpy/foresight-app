@@ -5,7 +5,7 @@ API; the API and a separate worker process share Supabase as the truth store.
 
 ## Topology
 
-```
+```text
                 ┌─────────────────────┐
    Browser ───► │ Vercel (foresight-  │
                 │  frontend, SPA)     │

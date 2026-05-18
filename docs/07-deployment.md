@@ -50,7 +50,7 @@ OPENAI_API_KEY=
 OPENAI_CHAT_MODEL=gpt-5.4-2026-03-05
 OPENAI_CHAT_AGENT_MODEL=gpt-5.4-2026-03-05
 OPENAI_CHAT_MINI_MODEL=gpt-5.4-mini-2026-03-17
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small   # prod override (code default is ada-002)
+# OPENAI_EMBEDDING_MODEL=text-embedding-ada-002  # ada-002 is the only entry in ALLOWED_EMBEDDING_MODELS today; override is a no-op until the allowlist is extended. See docs/03-ai-pipeline.md#embeddings.
 # OPENAI_REASONING_EFFORT=medium
 
 # Search providers (Serper + SearXNG only; Tavily/Firecrawl banned)

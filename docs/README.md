@@ -31,12 +31,15 @@ maintainer + AI agents, not external contributors.
 | Vercel + Railway, env vars, health    | [07-deployment.md](./07-deployment.md)                 |
 | PR ethos, `/babysit-pr`, conventions  | [08-style-and-workflow.md](./08-style-and-workflow.md) |
 
-Plus, at repo root:
+At repo root:
 
 - [CLAUDE.md](../CLAUDE.md) — operational rules for an agent working in this
   repo. Read first. Has the canonical model-tier table and the things you can
   break if you ignore them (e.g. `cost_usd` vs `estimated_cost_usd`).
 - [AGENTS.md](../AGENTS.md) — same idea, for non-Claude agents.
+
+Elsewhere in this folder:
+
 - [SECURITY.md](./SECURITY.md) — auth model, RLS posture, rate limits.
 
 ## How these docs are written
