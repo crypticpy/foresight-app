@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from supabase import Client
 import openai
 
-from .query_generator import QueryGenerator, QueryConfig
+from .query_generator import QueryGenerator
 from .ai_service import AIService, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
@@ -130,6 +130,18 @@ from .discovery_blocked_topics import check_blocked_topics
 from .discovery_run_lifecycle import (
     create_run_record,
     finalize_run,
+)
+
+# Query generation + search execution extracted to ``discovery_search``
+# in PR-D8. Stateless — they take the ``QueryGenerator`` /
+# ``ResearchService`` instances as explicit arguments.
+# ``QUERY_BATCH_SIZE`` is re-imported so the outer step-level wrapper
+# timeout in ``run`` can derive ``num_batches`` from the same constant
+# the batch loop reads.
+from .discovery_search import (
+    QUERY_BATCH_SIZE,
+    execute_searches,
+    generate_queries,
 )
 
 __all__ = [
@@ -251,12 +263,6 @@ class DiscoveryService:
     6. Create new cards or enrich existing ones
     7. Auto-approve high-confidence discoveries
     """
-
-    # Single source of truth for the query batch size used in
-    # _execute_searches. The outer step-level timeout in run() derives
-    # num_batches from this value; keeping them in sync prevents an
-    # under-estimated wrapper timeout from firing mid-batch.
-    _QUERY_BATCH_SIZE = 5
 
     def __init__(
         self,
@@ -381,7 +387,7 @@ class DiscoveryService:
                 [],
             )
             step_start = datetime.now(timezone.utc)
-            queries = await self._generate_queries(config)
+            queries = await generate_queries(self.query_generator, config)
             processing_time.query_generation_seconds = (
                 datetime.now(timezone.utc) - step_start
             ).total_seconds()
@@ -420,7 +426,7 @@ class DiscoveryService:
 
             # Step 2b: Execute query-based searches (Serper-first + gpt-researcher).
             # Each query has a 210s inner cap; queries run in batches of 5
-            # concurrently inside ``_execute_searches``. The outer cap scales
+            # concurrently inside ``execute_searches``. The outer cap scales
             # with the number of batches (~240s/batch budget = inner 210s + the
             # 1s inter-batch sleep + dedup/gather overhead) and clamps at 1200s
             # so a runaway can't hang the discovery run. Without scaling, a
@@ -429,13 +435,15 @@ class DiscoveryService:
             if queries:
                 step_start = datetime.now(timezone.utc)
                 planned_queries = queries[: config.max_queries_per_run]
-                batch_size = self._QUERY_BATCH_SIZE
+                batch_size = QUERY_BATCH_SIZE
                 num_batches = (len(planned_queries) + batch_size - 1) // batch_size
                 per_batch_budget = 240
                 search_step_timeout = min(1200, max(300, num_batches * per_batch_budget))
                 try:
                     query_sources, query_cost = await asyncio.wait_for(
-                        self._execute_searches(planned_queries, config),
+                        execute_searches(
+                            self.research_service, planned_queries, config
+                        ),
                         timeout=search_step_timeout,
                     )
                 except asyncio.TimeoutError:
@@ -1018,140 +1026,6 @@ class DiscoveryService:
             if source.discovered_source_id:
                 await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
             return "new"
-
-    # ========================================================================
-    # Step 2: Generate Queries
-    # ========================================================================
-
-    async def _generate_queries(self, config: DiscoveryConfig) -> List[QueryConfig]:
-        """
-        Generate search queries based on configuration.
-
-        Args:
-            config: Run configuration
-
-        Returns:
-            List of QueryConfig objects
-        """
-        if config.custom_queries:
-            # Coverage-balancer path: caller pre-built the list (e.g. LLM-derived
-            # queries for a starved CSP goal). Trust them and cap at
-            # max_queries_per_run so the global budget still applies.
-            limit = config.max_queries_per_run or len(config.custom_queries)
-            return list(config.custom_queries[:limit])
-        return self.query_generator.generate_queries(
-            pillars_filter=config.pillars_filter or None,
-            horizons=config.horizons_filter or None,
-            include_priorities=config.include_priorities,
-            max_queries=config.max_queries_per_run,
-        )
-
-    # ========================================================================
-    # Step 3: Execute Searches
-    # ========================================================================
-
-    async def _execute_searches(
-        self, queries: List[QueryConfig], config: DiscoveryConfig
-    ) -> Tuple[List[RawSource], float]:
-        """
-        Execute searches for all queries using GPT Researcher.
-
-        Args:
-            queries: List of queries to execute
-            config: Run configuration
-
-        Returns:
-            Tuple of (raw_sources, total_cost)
-        """
-        all_sources: List[RawSource] = []
-        total_cost = 0.0
-        seen_urls = set()
-
-        # Process queries in batches to avoid rate limits
-        batch_size = self._QUERY_BATCH_SIZE
-        for i in range(0, len(queries), batch_size):
-            batch = queries[i : i + batch_size]
-
-            # Execute batch concurrently
-            tasks = [self._execute_single_search(query, config) for query in batch]
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.warning(f"Search failed: {result}")
-                    continue
-
-                sources, cost = result
-                total_cost += cost
-
-                # Deduplicate by URL
-                for source in sources:
-                    if source.url and source.url not in seen_urls:
-                        seen_urls.add(source.url)
-                        all_sources.append(source)
-
-            # Check if we've hit the total source limit
-            if len(all_sources) >= config.max_sources_total:
-                logger.info(f"Hit max_sources_total limit ({config.max_sources_total})")
-                break
-
-            # Small delay between batches to avoid rate limiting
-            if i + batch_size < len(queries):
-                await asyncio.sleep(1)
-
-        return all_sources[: config.max_sources_total], total_cost
-
-    async def _execute_single_search(
-        self, query: QueryConfig, config: DiscoveryConfig
-    ) -> Tuple[List[RawSource], float]:
-        """
-        Execute a single search query.
-
-        Args:
-            query: Query configuration
-            config: Run configuration
-
-        Returns:
-            Tuple of (sources, cost)
-        """
-        try:
-            # The discovery pipeline only consumes the source list; the synthesized
-            # report is discarded. Skip write_report (saves up to 60s/query) and
-            # give the inner Serper+gpt-researcher chain room to finish: Serper
-            # baseline (≤30s, up to 10 sequential crawls) + gpt-researcher
-            # conduct_research (≤150s) ≈ 180s nominal. Outer timeout sits at 210s
-            # to leave headroom for dedup/title-gen overhead so a successful inner
-            # run isn't cancelled by the wrapper.
-            sources, _report, cost = await asyncio.wait_for(
-                self.research_service._discover_sources(
-                    query=query.query_text,
-                    report_type="research_report",
-                    skip_report=True,
-                ),
-                timeout=210,
-            )
-
-            # Limit sources per query
-            sources = sources[: config.max_sources_per_query]
-
-            # Add query context to sources for tracking
-            for source in sources:
-                # Store query context in source for later use
-                source.pillar_code = query.pillar_code  # type: ignore
-                source.priority_id = query.priority_id  # type: ignore
-                source.horizon_target = query.horizon_target  # type: ignore
-
-            return sources, cost
-
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"Search timed out for query '{query.query_text[:50]}...' (210s)"
-            )
-            return [], 0.0
-        except Exception as e:
-            logger.warning(f"Search failed for query '{query.query_text[:50]}...': {e}")
-            return [], 0.0
 
     # ========================================================================
     # Step 4: Triage Sources
