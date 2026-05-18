@@ -43,7 +43,7 @@ from supabase import Client
 import openai
 
 from .query_generator import QueryGenerator, QueryConfig
-from .ai_service import AIService, AnalysisResult, TriageResult
+from .ai_service import AIService, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from .story_clustering_service import cluster_sources
@@ -107,6 +107,19 @@ from .discovery_result_types import (
 # orchestrator now lives at module scope so future stage modules can call
 # it without instantiating ``DiscoveryService``.
 from .discovery_fetch import fetch_from_all_source_categories
+
+# Progress / per-source persistence writers extracted to
+# ``discovery_progress`` in PR-D5. These were instance methods that only
+# touched the Supabase client; they now live as module-level functions
+# that take ``supabase`` as their first argument.
+from .discovery_progress import (
+    persist_discovered_source,
+    update_progress_simple,
+    update_source_analysis,
+    update_source_dedup,
+    update_source_outcome,
+    update_source_triage,
+)
 
 __all__ = [
     "APITokenUsage",
@@ -350,7 +363,7 @@ class DiscoveryService:
 
         try:
             # Step 1: Generate queries
-            await self._update_progress_simple(
+            await update_progress_simple(self.supabase,
                 run_id,
                 "queries",
                 "Generating search queries from pillars and priorities...",
@@ -451,7 +464,7 @@ class DiscoveryService:
                 persist_ok = 0
                 for src in raw_sources:
                     try:
-                        ds_id = await self._persist_discovered_source(run_id, src)
+                        ds_id = await persist_discovered_source(self.supabase,run_id, src)
                         if ds_id:
                             src.discovered_source_id = ds_id
                             persist_ok += 1
@@ -611,7 +624,7 @@ class DiscoveryService:
                 )
 
             # Step 3: Triage sources
-            await self._update_progress_simple(
+            await update_progress_simple(self.supabase,
                 run_id,
                 "triage",
                 f"Triaging {len(validated_sources)} sources for relevance...",
@@ -643,7 +656,7 @@ class DiscoveryService:
                 )
 
             # Step 4: Check blocked topics
-            await self._update_progress_simple(
+            await update_progress_simple(self.supabase,
                 run_id,
                 "blocked",
                 f"Checking {len(triaged_sources)} sources against blocked topics...",
@@ -682,7 +695,7 @@ class DiscoveryService:
                 # --- AI Agent-based signal detection ---
                 from app.signal_agent_service import SignalAgentService
 
-                await self._update_progress_simple(
+                await update_progress_simple(self.supabase,
                     run_id,
                     "signals",
                     f"AI agent analyzing {len(filtered_sources)} sources for signal detection...",
@@ -722,7 +735,7 @@ class DiscoveryService:
                 )
             else:
                 # --- Legacy deterministic pipeline ---
-                await self._update_progress_simple(
+                await update_progress_simple(self.supabase,
                     run_id,
                     "dedupe",
                     f"Deduplicating {len(filtered_sources)} sources against existing cards...",
@@ -745,7 +758,7 @@ class DiscoveryService:
                     f"{len(dedup_result.new_concept_candidates)} new concepts"
                 )
 
-                await self._update_progress_simple(
+                await update_progress_simple(self.supabase,
                     run_id,
                     "cards",
                     f"Creating/enriching cards from {len(dedup_result.new_concept_candidates)} new concepts...",
@@ -865,255 +878,6 @@ class DiscoveryService:
                 api_token_usage_metrics=api_token_usage,
             )
 
-    # ========================================================================
-    # Progress Tracking
-    # ========================================================================
-
-    async def _update_progress(
-        self,
-        run_id: str,
-        stage: str,
-        message: str,
-        stages_status: Dict[str, str],
-        stats: Optional[Dict[str, int]] = None,
-    ) -> None:
-        """
-        Update progress in the discovery_runs record.
-
-        Args:
-            run_id: Discovery run ID
-            stage: Current stage name
-            message: Human-readable progress message
-            stages_status: Dict of stage_name -> status (pending/in_progress/completed)
-            stats: Optional dict of current statistics
-        """
-        try:
-            # Build progress object
-            progress = {
-                "current_stage": stage,
-                "message": message,
-                "stages": stages_status,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            if stats:
-                progress["stats"] = stats
-
-            # Read current summary_report
-            result = (
-                self.supabase.table("discovery_runs")
-                .select("summary_report")
-                .eq("id", run_id)
-                .single()
-                .execute()
-            )
-            current_report = (
-                result.data.get("summary_report", {}) if result.data else {}
-            )
-
-            # Merge progress into summary_report
-            updated_report = {**current_report, "progress": progress}
-
-            # Update the record
-            self.supabase.table("discovery_runs").update(
-                {"summary_report": updated_report}
-            ).eq("id", run_id).execute()
-
-            logger.debug(f"Progress update: {stage} - {message}")
-        except Exception as e:
-            # Don't fail on progress update errors
-            logger.warning(f"Could not update progress: {e}")
-
-    async def _update_progress_simple(
-        self,
-        run_id: str,
-        stage: str,
-        message: str,
-        completed_stages: List[str],
-        stats: Optional[Dict[str, int]] = None,
-    ) -> None:
-        """
-        Simplified progress update that builds stages_status automatically.
-        """
-        all_stages = ["queries", "search", "triage", "blocked", "dedupe", "cards"]
-        stages_status = {}
-
-        for s in all_stages:
-            if s in completed_stages:
-                stages_status[s] = "completed"
-            elif s == stage:
-                stages_status[s] = "in_progress"
-            else:
-                stages_status[s] = "pending"
-
-        await self._update_progress(run_id, stage, message, stages_status, stats)
-
-    # ========================================================================
-    # Source Persistence (saves all discovery data)
-    # ========================================================================
-
-    async def _persist_discovered_source(
-        self, run_id: str, source: "RawSource", query: Optional["QueryConfig"] = None
-    ) -> Optional[str]:
-        """
-        Persist a discovered source immediately when found.
-        Returns the discovered_source ID for later updates.
-        """
-        try:
-            from urllib.parse import urlparse
-
-            domain = urlparse(source.url).netloc if source.url else None
-
-            # Look up domain reputation ID (Task 2.7)
-            _domain_rep_id = None
-            try:
-                if _rep := domain_reputation_service.get_reputation(
-                    self.supabase, source.url or ""
-                ):
-                    _domain_rep_id = _rep.get("id")
-            except Exception as exc:
-                # Non-fatal — missing rep just means no quality bonus on the row.
-                logger.debug(
-                    "discovery: get_reputation failed for %s: %s",
-                    source.url,
-                    exc,
-                )
-
-            record = {
-                "discovery_run_id": run_id,
-                "url": source.url,
-                "title": source.title,
-                "content_snippet": (source.content or "")[:2000],
-                "full_content": source.content,
-                "published_at": source.published_at,
-                "source_type": source.source_type,
-                "domain": domain,
-                "search_query": query.query_text if query else None,
-                "query_pillar": query.pillar_code if query else None,
-                "query_priority": query.priority_id if query else None,
-                "processing_status": "discovered",
-            }
-
-            # Add domain_reputation_id if available (Task 2.7)
-            if _domain_rep_id:
-                record["domain_reputation_id"] = _domain_rep_id
-
-            result = self.supabase.table("discovered_sources").insert(record).execute()
-            if result.data:
-                return result.data[0]["id"]
-        except Exception as e:
-            logger.warning(f"Could not persist discovered source: {e}")
-        return None
-
-    async def _update_source_triage(
-        self, source_id: str, triage: "TriageResult", passed: bool
-    ) -> None:
-        """Update source with triage results."""
-        try:
-            self.supabase.table("discovered_sources").update(
-                {
-                    "triage_is_relevant": triage.is_relevant,
-                    "triage_confidence": triage.confidence,
-                    "triage_primary_pillar": triage.primary_pillar,
-                    "triage_reason": triage.reason,
-                    "triaged_at": datetime.now(timezone.utc).isoformat(),
-                    "processing_status": "triaged" if passed else "filtered_triage",
-                }
-            ).eq("id", source_id).execute()
-        except Exception as e:
-            logger.warning(f"Could not update source triage: {e}")
-
-    async def _update_source_analysis(
-        self, source_id: str, analysis: "AnalysisResult"
-    ) -> None:
-        """Update source with full analysis results."""
-        try:
-            entities_json = [
-                {"name": e.name, "type": e.entity_type, "context": e.context}
-                for e in (analysis.entities or [])
-            ]
-
-            self.supabase.table("discovered_sources").update(
-                {
-                    "analysis_summary": analysis.summary,
-                    "analysis_key_excerpts": analysis.key_excerpts,
-                    "analysis_pillars": analysis.pillars,
-                    "analysis_goals": analysis.goals,
-                    "analysis_steep_categories": analysis.steep_categories,
-                    "analysis_anchors": analysis.anchors,
-                    "analysis_horizon": analysis.horizon,
-                    "analysis_suggested_stage": analysis.suggested_stage,
-                    "analysis_triage_score": analysis.triage_score,
-                    "analysis_credibility": analysis.credibility,
-                    "analysis_novelty": analysis.novelty,
-                    "analysis_likelihood": analysis.likelihood,
-                    "analysis_impact": analysis.impact,
-                    "analysis_relevance": analysis.relevance,
-                    "analysis_time_to_awareness_months": analysis.time_to_awareness_months,
-                    "analysis_time_to_prepare_months": analysis.time_to_prepare_months,
-                    "analysis_suggested_card_name": analysis.suggested_card_name,
-                    "analysis_is_new_concept": analysis.is_new_concept,
-                    "analysis_reasoning": analysis.reasoning,
-                    "analysis_entities": entities_json,
-                    "analyzed_at": datetime.now(timezone.utc).isoformat(),
-                    "processing_status": "analyzed",
-                }
-            ).eq("id", source_id).execute()
-        except Exception as e:
-            logger.warning(f"Could not update source analysis: {e}")
-
-    async def _update_source_dedup(
-        self,
-        source_id: str,
-        status: str,  # 'unique', 'duplicate', 'enrichment_candidate'
-        matched_card_id: Optional[str] = None,
-        similarity: Optional[float] = None,
-    ) -> None:
-        """Update source with deduplication results."""
-        try:
-            processing_status = {
-                "unique": "deduplicated",
-                "duplicate": "filtered_duplicate",
-                "enrichment_candidate": "deduplicated",
-            }.get(status, "deduplicated")
-
-            self.supabase.table("discovered_sources").update(
-                {
-                    "dedup_status": status,
-                    "dedup_matched_card_id": matched_card_id,
-                    "dedup_similarity_score": similarity,
-                    "deduplicated_at": datetime.now(timezone.utc).isoformat(),
-                    "processing_status": processing_status,
-                }
-            ).eq("id", source_id).execute()
-        except Exception as e:
-            logger.warning(f"Could not update source dedup: {e}")
-
-    async def _update_source_outcome(
-        self,
-        source_id: str,
-        status: str,  # 'card_created', 'card_enriched', 'filtered_blocked', 'error'
-        card_id: Optional[str] = None,
-        source_record_id: Optional[str] = None,
-        error_message: Optional[str] = None,
-        error_stage: Optional[str] = None,
-    ) -> None:
-        """Update source with final outcome."""
-        try:
-            update = {
-                "processing_status": status,
-                "resulting_card_id": card_id,
-                "resulting_source_id": source_record_id,
-            }
-            if error_message:
-                update["error_message"] = error_message
-                update["error_stage"] = error_stage
-
-            self.supabase.table("discovered_sources").update(update).eq(
-                "id", source_id
-            ).execute()
-        except Exception as e:
-            logger.warning(f"Could not update source outcome: {e}")
-
     async def _python_vector_search(
         self,
         query_embedding: List[float],
@@ -1155,7 +919,7 @@ class DiscoveryService:
             logger.info("PYTHON FALLBACK: No cards with embeddings found - NEW CONCEPT")
             new_concept_candidates.append(source)
             if source.discovered_source_id:
-                await self._update_source_dedup(source.discovered_source_id, "unique")
+                await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
             return "new"
 
         # Calculate similarities using Python
@@ -1181,7 +945,7 @@ class DiscoveryService:
             )
             enrichment_candidates.append((source, best_match["id"], best_similarity))
             if source.discovered_source_id:
-                await self._update_source_dedup(
+                await update_source_dedup(self.supabase,
                     source.discovered_source_id,
                     "enrichment_candidate",
                     best_match["id"],
@@ -1207,7 +971,7 @@ class DiscoveryService:
                     (source, best_match["id"], best_similarity)
                 )
                 if source.discovered_source_id:
-                    await self._update_source_dedup(
+                    await update_source_dedup(self.supabase,
                         source.discovered_source_id,
                         "enrichment_candidate",
                         best_match["id"],
@@ -1221,7 +985,7 @@ class DiscoveryService:
                 )
                 new_concept_candidates.append(source)
                 if source.discovered_source_id:
-                    await self._update_source_dedup(
+                    await update_source_dedup(self.supabase,
                         source.discovered_source_id, "unique"
                     )
                 return "new"
@@ -1233,7 +997,7 @@ class DiscoveryService:
             )
             new_concept_candidates.append(source)
             if source.discovered_source_id:
-                await self._update_source_dedup(source.discovered_source_id, "unique")
+                await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
             return "new"
 
     # ========================================================================
@@ -1493,7 +1257,7 @@ class DiscoveryService:
                 if passed_triage:
                     # Update discovered_sources with triage passed
                     if source.discovered_source_id:
-                        await self._update_source_triage(
+                        await update_source_triage(self.supabase,
                             source.discovered_source_id, triage, True
                         )
 
@@ -1507,7 +1271,7 @@ class DiscoveryService:
 
                     # Update discovered_sources with analysis
                     if source.discovered_source_id:
-                        await self._update_source_analysis(
+                        await update_source_analysis(self.supabase,
                             source.discovered_source_id, analysis
                         )
 
@@ -1526,7 +1290,7 @@ class DiscoveryService:
                 else:
                     # Update discovered_sources with triage failed
                     if source.discovered_source_id:
-                        await self._update_source_triage(
+                        await update_source_triage(self.supabase,
                             source.discovered_source_id, triage, False
                         )
 
@@ -1534,7 +1298,7 @@ class DiscoveryService:
                 logger.warning(f"Triage/analysis failed for {source.url}: {e}")
                 # Mark error in discovered_sources
                 if source.discovered_source_id:
-                    await self._update_source_outcome(
+                    await update_source_outcome(self.supabase,
                         source.discovered_source_id,
                         "error",
                         error_message=str(e),
@@ -1606,7 +1370,7 @@ class DiscoveryService:
                             },
                         )
                         if source.discovered_source_id:
-                            await self._update_source_outcome(
+                            await update_source_outcome(self.supabase,
                                 source.discovered_source_id,
                                 "filtered_blocked",
                                 error_message="prompt_injection",
@@ -1828,7 +1592,7 @@ class DiscoveryService:
                     logger.debug(f"Blocked source: {source.raw.title[:50]}")
                     # Update discovered_sources with blocked status
                     if source.discovered_source_id:
-                        await self._update_source_outcome(
+                        await update_source_outcome(self.supabase,
                             source.discovered_source_id, "filtered_blocked"
                         )
                 else:
@@ -1905,7 +1669,7 @@ class DiscoveryService:
                     duplicate_count += 1
                     logger.info(f"URL duplicate found: {source.raw.url[:60]}")
                     if source.discovered_source_id:
-                        await self._update_source_dedup(
+                        await update_source_dedup(self.supabase,
                             source.discovered_source_id, "duplicate"
                         )
                     continue
@@ -1924,7 +1688,7 @@ class DiscoveryService:
                             )
                             enrichment_candidates.append((source, card_id, name_sim))
                             if source.discovered_source_id:
-                                await self._update_source_dedup(
+                                await update_source_dedup(self.supabase,
                                     source.discovered_source_id,
                                     "enrichment_candidate",
                                     card_id,
@@ -1962,7 +1726,7 @@ class DiscoveryService:
                                 (source, top_match["id"], similarity)
                             )
                             if source.discovered_source_id:
-                                await self._update_source_dedup(
+                                await update_source_dedup(self.supabase,
                                     source.discovered_source_id,
                                     "enrichment_candidate",
                                     top_match["id"],
@@ -1999,7 +1763,7 @@ class DiscoveryService:
                                         (source, top_match["id"], similarity)
                                     )
                                     if source.discovered_source_id:
-                                        await self._update_source_dedup(
+                                        await update_source_dedup(self.supabase,
                                             source.discovered_source_id,
                                             "enrichment_candidate",
                                             top_match["id"],
@@ -2012,13 +1776,13 @@ class DiscoveryService:
                                     )
                                     new_concept_candidates.append(source)
                                     if source.discovered_source_id:
-                                        await self._update_source_dedup(
+                                        await update_source_dedup(self.supabase,
                                             source.discovered_source_id, "unique"
                                         )
                             else:
                                 new_concept_candidates.append(source)
                                 if source.discovered_source_id:
-                                    await self._update_source_dedup(
+                                    await update_source_dedup(self.supabase,
                                         source.discovered_source_id, "unique"
                                     )
                         else:
@@ -2028,7 +1792,7 @@ class DiscoveryService:
                             )
                             new_concept_candidates.append(source)
                             if source.discovered_source_id:
-                                await self._update_source_dedup(
+                                await update_source_dedup(self.supabase,
                                     source.discovered_source_id, "unique"
                                 )
                     else:
@@ -2037,7 +1801,7 @@ class DiscoveryService:
                         )
                         new_concept_candidates.append(source)
                         if source.discovered_source_id:
-                            await self._update_source_dedup(
+                            await update_source_dedup(self.supabase,
                                 source.discovered_source_id, "unique"
                             )
 
@@ -2062,7 +1826,7 @@ class DiscoveryService:
                         logger.error(f"Python fallback also failed: {fallback_error}")
                         new_concept_candidates.append(source)
                         if source.discovered_source_id:
-                            await self._update_source_dedup(
+                            await update_source_dedup(self.supabase,
                                 source.discovered_source_id, "unique"
                             )
 
@@ -2247,7 +2011,7 @@ class DiscoveryService:
                         )
                     # Update discovered_sources with enrichment outcome
                     if source.discovered_source_id:
-                        await self._update_source_outcome(
+                        await update_source_outcome(self.supabase,
                             source.discovered_source_id,
                             "card_enriched",
                             card_id=card_id,
@@ -2256,7 +2020,7 @@ class DiscoveryService:
             except Exception as e:
                 logger.warning(f"Failed to enrich card {card_id}: {e}")
                 if source.discovered_source_id:
-                    await self._update_source_outcome(
+                    await update_source_outcome(self.supabase,
                         source.discovered_source_id,
                         "error",
                         error_message=str(e),
@@ -2284,7 +2048,7 @@ class DiscoveryService:
                 skipped_due_to_limit += len(cluster)
                 for source in cluster:
                     if source.discovered_source_id:
-                        await self._update_source_outcome(
+                        await update_source_outcome(self.supabase,
                             source.discovered_source_id,
                             "error",
                             error_message=f"Card limit reached ({config.max_new_cards_per_run})",
@@ -2310,7 +2074,7 @@ class DiscoveryService:
                 )
                 if not card_id:
                     if primary_source.discovered_source_id:
-                        await self._update_source_outcome(
+                        await update_source_outcome(self.supabase,
                             primary_source.discovered_source_id,
                             "error",
                             error_message="Card creation returned no ID",
@@ -2333,7 +2097,7 @@ class DiscoveryService:
 
                 # Update discovered_sources for primary
                 if primary_source.discovered_source_id:
-                    await self._update_source_outcome(
+                    await update_source_outcome(self.supabase,
                         primary_source.discovered_source_id,
                         "card_created",
                         card_id=card_id,
@@ -2353,7 +2117,7 @@ class DiscoveryService:
                                 f"Added clustered source to card: {additional_source.raw.title[:40]}"
                             )
                         if additional_source.discovered_source_id:
-                            await self._update_source_outcome(
+                            await update_source_outcome(self.supabase,
                                 additional_source.discovered_source_id,
                                 "card_enriched",
                                 card_id=card_id,
@@ -2374,7 +2138,7 @@ class DiscoveryService:
                     f"Failed to create card for {primary_source.raw.title}: {e}"
                 )
                 if primary_source.discovered_source_id:
-                    await self._update_source_outcome(
+                    await update_source_outcome(self.supabase,
                         primary_source.discovered_source_id,
                         "error",
                         error_message=str(e),
