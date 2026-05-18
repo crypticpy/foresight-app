@@ -38,9 +38,15 @@ async def get_taxonomy(user=Depends(get_current_user)):
             lambda: supabase.table("pillars").select("*").order("name").execute()
         ),
         asyncio.to_thread(
+            # PostgREST requires multi-column ordering as a single
+            # comma-separated string. ``.order("a", "b")`` raises TypeError
+            # because supabase-py's ``order(column: str, *, desc=False, ...)``
+            # marks every arg after ``column`` keyword-only — the original
+            # ``admin.py`` version of this query has been 500-ing in
+            # production. Fix carried with the extraction.
             lambda: supabase.table("goals")
             .select("*")
-            .order("pillar_id", "sort_order")
+            .order("pillar_id,sort_order")
             .execute()
         ),
         asyncio.to_thread(

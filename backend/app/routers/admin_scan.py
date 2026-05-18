@@ -15,6 +15,7 @@ aggregator mounts it under the shared ``/api/v1`` prefix via
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -43,8 +44,11 @@ async def trigger_manual_scan(
         # Get cards that need updates (not updated in last 24 hours)
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
-        cards_result = (
-            supabase.table("cards")
+        # Supabase's sync client blocks the event loop; ``asyncio.to_thread``
+        # off-loads each call so the FastAPI worker can serve other requests
+        # while postgrest is in flight.
+        cards_result = await asyncio.to_thread(
+            lambda: supabase.table("cards")
             .select("id, name")
             .eq("status", "active")
             .lt("updated_at", cutoff)
@@ -68,7 +72,11 @@ async def trigger_manual_scan(
                 "task_type": "update",
                 "status": "queued",
             }
-            result = supabase.table("research_tasks").insert(task_record).execute()
+            result = await asyncio.to_thread(
+                lambda r=task_record: supabase.table("research_tasks")
+                .insert(r)
+                .execute()
+            )
             if result.data:
                 tasks_created += 1
                 logger.info(f"Queued update task for card: {card['name']}")
