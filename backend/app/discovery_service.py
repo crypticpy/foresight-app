@@ -170,6 +170,13 @@ from .discovery_cards_persistence import (
     store_source_to_card,
 )
 
+# Lens classification cascade extracted to ``discovery_lens_cascade`` in
+# PR-D11c. Stateless — it takes the Supabase client and the
+# ``LensClassificationService`` instance as explicit arguments. The
+# per-run service cache still lives on ``DiscoveryService`` via
+# ``_get_lens_service`` so the CSP-taxonomy load is only paid once.
+from .discovery_lens_cascade import classify_card_lens
+
 __all__ = [
     "APITokenUsage",
     "CardAction",
@@ -341,31 +348,15 @@ class DiscoveryService:
     async def _classify_card_lens(
         self, card_id: str, card_dict: Dict[str, Any]
     ) -> None:
-        """Run the lens cascade for a freshly-created card. Best-effort.
+        """Run the lens cascade for this card via the shared lens service.
 
-        Writes only LLM-derived columns; ``user_metadata`` is untouched. A
-        failure here never propagates — discovery returning a card without
-        lens metadata is recoverable via ``/admin/classify/backfill``.
+        Thin wrapper that resolves the per-run lens service from the
+        instance cache and delegates to ``classify_card_lens`` (extracted
+        in PR-D11c).
         """
-        try:
-            service = self._get_lens_service()
-            result = await service.classify_card(card_dict)
-            update = result.to_card_update()
-            # Only stamp classified_at when classifier_version is set —
-            # which the cascade only does when all required stages
-            # succeeded. On partial failure, leave timestamps null so the
-            # backfill picks the card up again next pass.
-            if update.get("classifier_version") is not None:
-                update["classified_at"] = service.now_iso()
-            await asyncio.to_thread(
-                lambda: self.supabase.table("cards")
-                .update(update)
-                .eq("id", card_id)
-                .execute()
-            )
-            logger.debug("Lens cascade complete for card %s", card_id)
-        except Exception as exc:
-            logger.warning("Lens cascade failed for card %s: %s", card_id, exc)
+        await classify_card_lens(
+            self.supabase, self._get_lens_service(), card_id, card_dict
+        )
 
     # ========================================================================
     # Main Entry Point
