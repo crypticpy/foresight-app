@@ -1,4 +1,20 @@
-"""Admin, taxonomy, source rating, quality, and domain reputation router."""
+"""Admin, taxonomy, source rating, quality, and domain reputation router.
+
+This file owns the shared ``/api/v1`` prefix and ``admin`` tag, mounts
+focused sub-routers for endpoint clusters that have been extracted, and
+hosts the remaining endpoints inline pending their own extraction.
+
+Sub-routers mounted here
+------------------------
+* ``admin_taxonomy.py`` — ``GET /taxonomy`` (read-only pillar / goal /
+  anchor / stage rows for the frontend taxonomy selectors).
+* ``admin_scan.py`` — ``POST /admin/scan`` (admin-only trigger that
+  queues update research tasks for stale active cards, 3/min limit).
+
+When extracting another endpoint cluster, add the import + an
+``include_router`` line below. Do NOT change the parent prefix — keep
+``/api/v1`` in exactly one place so the URL surface doesn't drift.
+"""
 
 import asyncio
 import logging
@@ -9,6 +25,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from . import admin_scan, admin_taxonomy
 from app.authz import require_admin
 from app.deps import (
     supabase,
@@ -43,6 +60,16 @@ from app import quality_service, domain_reputation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["admin"])
+
+# Mount sub-routers under the shared /api/v1 prefix.
+router.include_router(admin_taxonomy.router)
+router.include_router(admin_scan.router)
+
+# Back-compat re-exports for tests / legacy callers that reach handlers
+# by attribute on this module. Production code should import from the
+# sub-router directly.
+get_taxonomy = admin_taxonomy.get_taxonomy
+trigger_manual_scan = admin_scan.trigger_manual_scan
 
 # Strong refs for fire-and-forget background tasks (currently the lens
 # backfill). Without this, asyncio.create_task results can be GC'd before
@@ -986,107 +1013,6 @@ async def update_user_account_type(
         return result.data[0]
 
     return await asyncio.to_thread(update_row)
-
-
-# ============================================================================
-# Taxonomy endpoints
-# ============================================================================
-
-
-@router.get("/taxonomy")
-async def get_taxonomy(user=Depends(get_current_user)):
-    """Get all taxonomy data"""
-    pillars, goals, anchors, stages = await asyncio.gather(
-        asyncio.to_thread(
-            lambda: supabase.table("pillars").select("*").order("name").execute()
-        ),
-        asyncio.to_thread(
-            lambda: supabase.table("goals")
-            .select("*")
-            .order("pillar_id", "sort_order")
-            .execute()
-        ),
-        asyncio.to_thread(
-            lambda: supabase.table("anchors").select("*").order("name").execute()
-        ),
-        asyncio.to_thread(
-            lambda: supabase.table("stages").select("*").order("sort_order").execute()
-        ),
-    )
-
-    return {
-        "pillars": pillars.data,
-        "goals": goals.data,
-        "anchors": anchors.data,
-        "stages": stages.data,
-    }
-
-
-# ============================================================================
-# Admin scan
-# ============================================================================
-
-
-@router.post("/admin/scan")
-@limiter.limit("3/minute")
-async def trigger_manual_scan(
-    request: Request, current_user: dict = Depends(get_current_user)
-):
-    """
-    Manually trigger content scan for all active cards.
-
-    This triggers a quick update research task for cards that haven't been
-    updated in the last 24 hours. Limited to admin users.
-
-    """
-    require_admin(current_user)
-
-    try:
-        # Get cards that need updates (not updated in last 24 hours)
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-
-        cards_result = (
-            supabase.table("cards")
-            .select("id, name")
-            .eq("status", "active")
-            .lt("updated_at", cutoff)
-            .limit(10)
-            .execute()
-        )
-
-        if not cards_result.data:
-            return {
-                "status": "skipped",
-                "message": "No cards need updating",
-                "cards_queued": 0,
-            }
-
-        # Queue update tasks for each card
-        tasks_created = 0
-        for card in cards_result.data:
-            task_record = {
-                "user_id": current_user["id"],
-                "card_id": card["id"],
-                "task_type": "update",
-                "status": "queued",
-            }
-            result = supabase.table("research_tasks").insert(task_record).execute()
-            if result.data:
-                tasks_created += 1
-                logger.info(f"Queued update task for card: {card['name']}")
-
-        return {
-            "status": "scan_triggered",
-            "message": f"Queued {tasks_created} update tasks",
-            "cards_queued": tasks_created,
-        }
-
-    except Exception as e:
-        logger.error(f"Manual scan failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=_safe_error("manual scan", e),
-        ) from e
 
 
 # ============================================================================
