@@ -121,6 +121,10 @@ from .discovery_progress import (
     update_source_triage,
 )
 
+# Blocked-topic filtering extracted to ``discovery_blocked_topics`` in
+# PR-D6. Stateless — takes the Supabase client and processed sources.
+from .discovery_blocked_topics import check_blocked_topics
+
 __all__ = [
     "APITokenUsage",
     "CardAction",
@@ -669,8 +673,8 @@ class DiscoveryService:
             )
             step_start = datetime.now(timezone.utc)
             if config.skip_blocked_topics:
-                filtered_sources, blocked_count = await self._check_blocked_topics(
-                    triaged_sources
+                filtered_sources, blocked_count = await check_blocked_topics(
+                    self.supabase, triaged_sources
                 )
                 logger.info(f"Filtered {blocked_count} blocked sources")
             else:
@@ -1537,76 +1541,6 @@ class DiscoveryService:
             logger.debug(f"Failed to persist domain reputation stats: {e}")
 
         return processed, total_tokens
-
-    # ========================================================================
-    # Step 5: Check Blocked Topics
-    # ========================================================================
-
-    async def _check_blocked_topics(
-        self, sources: List[ProcessedSource]
-    ) -> Tuple[List[ProcessedSource], int]:
-        """
-        Filter out sources that match blocked topics.
-
-        Args:
-            sources: Processed sources to check
-
-        Returns:
-            Tuple of (filtered_sources, blocked_count)
-        """
-        try:
-            # Get blocked topics from database
-            result = (
-                self.supabase.table("discovery_blocks")
-                .select("topic_name, block_type, keywords")
-                .eq("is_active", True)
-                .execute()
-            )
-
-            if not result.data:
-                return sources, 0
-
-            blocked_keywords = set()
-            for block in result.data:
-                keywords = block.get("keywords", [])
-                if isinstance(keywords, list):
-                    blocked_keywords.update(kw.lower() for kw in keywords)
-                if topic := block.get("topic_name", ""):
-                    blocked_keywords.add(topic.lower())
-
-            if not blocked_keywords:
-                return sources, 0
-
-            # Filter sources
-            filtered = []
-            blocked_count = 0
-
-            for source in sources:
-                # Check title and summary for blocked keywords
-                check_text = f"{source.raw.title} {source.analysis.summary}".lower()
-
-                is_blocked = any(kw in check_text for kw in blocked_keywords)
-
-                if is_blocked:
-                    blocked_count += 1
-                    logger.debug(f"Blocked source: {source.raw.title[:50]}")
-                    # Update discovered_sources with blocked status
-                    if source.discovered_source_id:
-                        await update_source_outcome(self.supabase,
-                            source.discovered_source_id, "filtered_blocked"
-                        )
-                else:
-                    filtered.append(source)
-
-            return filtered, blocked_count
-
-        except Exception as e:
-            logger.warning(f"Block check failed (continuing without filtering): {e}")
-            return sources, 0
-
-    # ========================================================================
-    # Step 6: Deduplicate Sources
-    # ========================================================================
 
     async def _deduplicate_sources(
         self, sources: List[ProcessedSource], config: DiscoveryConfig
