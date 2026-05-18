@@ -24,6 +24,10 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.routers.analytics_lens import (  # noqa: E402  (after sys.path tweak)
+    _fetch_all_paginated as _real_fetch_all_paginated,
+)
+
 
 # ---------------------------------------------------------------------------
 # Mock supabase chain — supports the calls the endpoint makes.
@@ -141,7 +145,7 @@ def _card(**fields) -> Dict[str, Any]:
 
 
 def _patch(monkeypatch, mock_sb):
-    from app.routers import analytics as analytics_module
+    from app.routers import analytics_lens as analytics_module
 
     monkeypatch.setattr(analytics_module, "supabase", mock_sb)
 
@@ -458,7 +462,7 @@ def test_pagination_aggregates_past_postgrest_page_cap(monkeypatch):
     Regression for the silent undercount that happened when the endpoint
     used a single `.execute()` against an unbounded query.
     """
-    from app.routers import analytics as analytics_module
+    from app.routers import analytics_lens as analytics_module
     from app.routers.analytics import get_lens_overview
 
     # Force a tiny page so the test stays cheap but the loop still has to
@@ -518,9 +522,9 @@ def test_delta_24h_handles_mixed_timestamp_formats(monkeypatch):
 
 async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
     """Override of `_fetch_all_paginated` that uses a 2-row page so tests
-    actually exercise the paginate-then-stop branch on small fixtures."""
+    actually exercise the paginate-then-stop branch on small fixtures.
+
+    ``_real_fetch_all_paginated`` is imported at the top of the module
+    (after the ``sys.path`` tweak) so this helper can call into it.
+    """
     return await _real_fetch_all_paginated(builder_factory, page_size=2)
-
-
-# Bind the real implementation once so the override above can call into it.
-from app.routers.analytics import _fetch_all_paginated as _real_fetch_all_paginated  # noqa: E402
