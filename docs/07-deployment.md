@@ -61,7 +61,7 @@ SEARXNG_URL=
 FORESIGHT_PROCESS_TYPE=web        # or "worker" on the worker service
 FORESIGHT_EMBED_WORKER=false      # prod: false on API when worker service exists
 FORESIGHT_ENABLE_SCHEDULER=true   # prod: true on API service
-FORESIGHT_DEMO_FREEZE=true        # set to true to suppress scheduler + embedded-worker auto-fires; user-initiated jobs still run
+FORESIGHT_DEMO_FREEZE=false       # prod: false. Set to true ONLY during a demo to suppress scheduler + embedded-worker auto-fires (user-initiated jobs still run). Leaving this true in prod silently disables the nightly/weekly jobs and auto-discovery despite ENABLE_SCHEDULER=true.
 
 # Environment
 ENVIRONMENT=production

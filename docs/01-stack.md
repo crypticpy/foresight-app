@@ -41,10 +41,14 @@ Pin the live versions against `backend/requirements.txt` and
 ## Data + infra
 
 - Supabase (Postgres + pgvector + Auth + RLS).
-- pgvector embeddings are 1536-dim. Production embedding model is
-  `text-embedding-3-small` (set via `OPENAI_EMBEDDING_MODEL`); the code
-  default in `app/openai_provider.py` is `text-embedding-ada-002`. Both are
-  1536-dim, so they coexist in the same column without re-embedding.
+- pgvector embeddings are 1536-dim. The embedding model is
+  `text-embedding-ada-002` (code default in `app/openai_provider.py`); the
+  `ALLOWED_EMBEDDING_MODELS` allowlist locks to ada-002, so overriding
+  `OPENAI_EMBEDDING_MODEL` is a no-op today. Rotating models requires
+  extending the allowlist and running the embedding-backfill admin endpoint —
+  mixing two embedding models in the same column silently breaks similarity
+  search even though the dimensionality matches. See
+  [03-ai-pipeline.md](./03-ai-pipeline.md#embeddings).
 - SearXNG runs in Docker (`docker-compose.yml` + `searxng/`).
 - Migrations: `supabase/migrations/<UTC-timestamp>_<description>.sql`. Apply
   with `npx supabase db push`.

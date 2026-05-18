@@ -12,13 +12,13 @@ All model selection goes through `app/openai_provider.py`. **Do not hardcode
 model names** in services — use the tier helpers below. Changing a model
 should be a single env-var or config edit.
 
-| Tier               | Default                                                                                 | Env override              | Used for                                                                        |
-| ------------------ | --------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------- |
-| `model_chat`       | `gpt-5.4-2026-03-05`                                                                    | `OPENAI_CHAT_MODEL`       | User-facing chat, executive briefs                                              |
-| `model_chat_agent` | `gpt-5.4-2026-03-05`                                                                    | `OPENAI_CHAT_AGENT_MODEL` | Signal agent + agentic tool use                                                 |
-| `model_chat_mini`  | `gpt-5.4-mini-2026-03-17`                                                               | `OPENAI_CHAT_MINI_MODEL`  | Triage, classification, query expansion, RAG reranking, chat suggestions/titles |
-| `model_chat_nano`  | falls back to mini                                                                      | `OPENAI_CHAT_NANO_MODEL`  | Reserved (no separate nano tier in production yet)                              |
-| `model_embedding`  | `text-embedding-ada-002` (code default); prod env overrides to `text-embedding-3-small` | `OPENAI_EMBEDDING_MODEL`  | Card + source + chat embeddings (1536-dim, pgvector)                            |
+| Tier               | Default                                                                                | Env override              | Used for                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------- |
+| `model_chat`       | `gpt-5.4-2026-03-05`                                                                   | `OPENAI_CHAT_MODEL`       | User-facing chat, executive briefs                                              |
+| `model_chat_agent` | `gpt-5.4-2026-03-05`                                                                   | `OPENAI_CHAT_AGENT_MODEL` | Signal agent + agentic tool use                                                 |
+| `model_chat_mini`  | `gpt-5.4-mini-2026-03-17`                                                              | `OPENAI_CHAT_MINI_MODEL`  | Triage, classification, query expansion, RAG reranking, chat suggestions/titles |
+| `model_chat_nano`  | falls back to mini                                                                     | `OPENAI_CHAT_NANO_MODEL`  | Reserved (no separate nano tier in production yet)                              |
+| `model_embedding`  | `text-embedding-ada-002` (and only ada-002 is currently in `ALLOWED_EMBEDDING_MODELS`) | `OPENAI_EMBEDDING_MODEL`  | Card + source + chat embeddings (1536-dim, pgvector)                            |
 
 Helpers (all in `openai_provider.py`):
 
@@ -50,9 +50,16 @@ look like under hypothetical routings). Don't prune entries unless asked.
 ## Embeddings
 
 - 1536-dim, written into the `cards`, `sources`, and chat history tables.
-- Production uses `text-embedding-3-small` via env override; the code default
-  is still ada-002. Both are 1536-dim, so pgvector vectors from either model
-  coexist without a re-embed.
+- The code default is `text-embedding-ada-002`, and the allowlist
+  (`ALLOWED_EMBEDDING_MODELS` in `openai_provider.py`) currently locks to
+  ada-002 only — overriding `OPENAI_EMBEDDING_MODEL` to anything else is
+  rejected until the allowlist is extended.
+- Rotating to a new embedding model is a two-step change: extend the
+  allowlist, then run the embedding-backfill admin endpoint to re-embed
+  existing rows. Mixing two embedding models in the same column silently
+  breaks similarity search and card dedup — same dimensionality satisfies the
+  pgvector column type, but the latent spaces differ, so cross-model cosine
+  distances are meaningless.
 - Empty embedding crashes pgvector RPCs → use zero vector `[0.0]*1536` as a
   fallback.
 - pgvector cosine threshold for card-dedup matching: **0.92**.
