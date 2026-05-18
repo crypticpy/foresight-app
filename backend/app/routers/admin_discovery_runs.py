@@ -189,26 +189,23 @@ async def get_discovery_run_detail(
         sources_total = len(agg_rows)
         truncated = sources_total >= MAX_AGGREGATE_FETCH
 
-        page_rows = (
+        # Fetch one extra row so ``has_more`` can be derived from the page
+        # slice itself rather than the (possibly truncated) aggregate total.
+        # This keeps the answer correct even when ``aggregate_truncated`` is
+        # True or when ``offset`` lands past the end of the result set —
+        # both cases would otherwise return ``items=[], has_more=True``.
+        page_rows_full = (
             supabase.table("discovered_sources")
             .select(DISCOVERED_SOURCE_DETAIL_SELECT)
             .eq("discovery_run_id", run_id)
             .order("created_at", desc=True)
-            .range(offset, offset + limit - 1)
+            .range(offset, offset + limit)
             .execute()
             .data
             or []
         )
-
-        # When the aggregate fetch was truncated at MAX_AGGREGATE_FETCH we
-        # don't actually know the real total, so be conservative and treat
-        # ``has_more`` as ``True`` whenever we're inside the truncated window.
-        # Outside truncation, the fetched count *is* the total and the usual
-        # offset+page < total check is exact.
-        if truncated:
-            has_more = True
-        else:
-            has_more = offset + len(page_rows) < sources_total
+        has_more = len(page_rows_full) > limit
+        page_rows = page_rows_full[:limit]
 
         return {
             "run": run_row,
