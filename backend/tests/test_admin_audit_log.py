@@ -167,15 +167,18 @@ def _bypass_admin_check(monkeypatch):
 def _patch_supabase(monkeypatch, mock_sb) -> None:
     """Patch the supabase singleton everywhere the admin paths reach for it.
 
-    ``app.routers.admin`` holds the reference used by the primary
-    mutation, and ``app.audit_service`` holds a separate top-level
-    reference used by the audit insert. Tests must replace both so a
-    single mock captures the full mutation + audit write.
+    ``app.routers.admin`` holds the reference used by setting mutations,
+    ``app.routers.admin_users`` holds the reference used by user mutations
+    (extracted in PR-A5), and ``app.audit_service`` holds a separate
+    top-level reference used by the audit insert. Tests must replace all
+    three so a single mock captures the full mutation + audit write.
     """
     from app import audit_service
     from app.routers import admin as admin_router
+    from app.routers import admin_users
 
     monkeypatch.setattr(admin_router, "supabase", mock_sb)
+    monkeypatch.setattr(admin_users, "supabase", mock_sb)
     monkeypatch.setattr(audit_service, "supabase", mock_sb)
 
 
@@ -185,7 +188,7 @@ def _patch_supabase(monkeypatch, mock_sb) -> None:
 
 
 def test_update_admin_user_writes_audit_log(monkeypatch):
-    from app.routers import admin as admin_router
+    from app.routers import admin_users
 
     user_id = _uuid()
     actor_id = _uuid()
@@ -205,17 +208,17 @@ def test_update_admin_user_writes_audit_log(monkeypatch):
     mock_sb = _MockSupabase(tables)
     _patch_supabase(monkeypatch, mock_sb)
     monkeypatch.setattr(
-        admin_router, "evict_cached_profile", lambda _uid: None
+        admin_users, "evict_cached_profile", lambda _uid: None
     )
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 
-    body = admin_router.AdminUserUpdate(role="admin", account_type="paid")
+    body = admin_users.AdminUserUpdate(role="admin", account_type="paid")
     request = _mock_request()
     actor = {"id": actor_id, "email": actor_email, "role": "admin"}
 
     result = asyncio.run(
-        admin_router.update_admin_user(
+        admin_users.update_admin_user(
             request=request,
             user_id=user_id,
             update=body,
@@ -332,23 +335,23 @@ def test_update_admin_user_returns_404_when_target_missing(monkeypatch):
     import pytest
     from fastapi import HTTPException
 
-    from app.routers import admin as admin_router
+    from app.routers import admin_users
 
     mock_sb = _MockSupabase({"users": []})
     _patch_supabase(monkeypatch, mock_sb)
     monkeypatch.setattr(
-        admin_router, "evict_cached_profile", lambda _uid: None
+        admin_users, "evict_cached_profile", lambda _uid: None
     )
     _disable_rate_limiter(monkeypatch)
     _bypass_admin_check(monkeypatch)
 
-    body = admin_router.AdminUserUpdate(role="admin")
+    body = admin_users.AdminUserUpdate(role="admin")
     request = _mock_request()
     actor = {"id": _uuid(), "email": "admin@example.com", "role": "admin"}
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
-            admin_router.update_admin_user(
+            admin_users.update_admin_user(
                 request=request,
                 user_id=_uuid(),
                 update=body,
