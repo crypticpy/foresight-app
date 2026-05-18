@@ -45,7 +45,6 @@ from .query_generator import QueryGenerator
 from .ai_service import AIService, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
-from .story_clustering_service import cluster_sources
 from . import domain_reputation_service
 
 # Configuration layer (dataclasses, enum, registry/override loaders, factory)
@@ -150,40 +149,18 @@ from .discovery_triage import triage_sources_with_metrics
 # instance as explicit arguments.
 from .discovery_dedup import deduplicate_sources_with_metrics
 
-# Pure cards-stage helpers extracted to ``discovery_cards_helpers`` in
-# PR-D11a. Stateless — no Supabase, no AI calls; only inspect
-# ``ProcessedSource`` attributes and apply similarity math.
-from .discovery_cards_helpers import (
-    calculate_discovery_confidence,
-    cluster_similar_concepts,
-)
-
-# Per-card persistence helpers extracted to
-# ``discovery_cards_persistence`` in PR-D11b. Stateless — they take the
-# Supabase client (and, for ``store_source_to_card``, the ``AIService``
-# instance) as explicit arguments. ``_create_card_from_source`` and the
-# orchestrator still live here and will be extracted once the lens
-# cascade has its own module.
-from .discovery_cards_persistence import (
-    auto_approve_card,
-    store_source_to_card,
-)
-
-# Lens classification cascade extracted to ``discovery_lens_cascade`` in
-# PR-D11c. Stateless — it takes the Supabase client and the
-# ``LensClassificationService`` instance as explicit arguments. The
-# per-run service cache still lives on ``DiscoveryService`` via
-# ``_get_lens_service`` so the CSP-taxonomy load is only paid once.
-from .discovery_lens_cascade import classify_card_lens
-
-# Card creation extracted to ``discovery_card_creation`` in PR-D11d.
-# Stateless — takes the Supabase client, the ``AIService`` instance,
-# and the run context (triggering user id, pending lens tasks set,
-# per-run lens service) as explicit arguments. The orchestrator
-# (``_create_or_enrich_cards``) and its instance wrapper still live
-# here; the wrapper resolves the lens service via
-# ``self._get_lens_service()`` so the CSP-taxonomy load is paid lazily.
+# Cards-stage modules extracted across PR-D11a..D11e:
+#   - ``discovery_cards_helpers``      (PR-D11a)  pure helpers
+#   - ``discovery_cards_persistence``  (PR-D11b)  per-card writers
+#   - ``discovery_lens_cascade``       (PR-D11c)  fire-and-forget lens cascade
+#   - ``discovery_card_creation``      (PR-D11d)  per-card insert + lens dispatch
+#   - ``discovery_cards``              (PR-D11e)  orchestrator
+# All five are stateless; the instance wrappers below resolve the
+# per-run lens service via ``self._get_lens_service()`` so the
+# CSP-taxonomy load is only paid lazily.
 from .discovery_card_creation import create_card_from_source
+from .discovery_cards import create_or_enrich_cards
+from .discovery_lens_cascade import classify_card_lens
 
 __all__ = [
     "APITokenUsage",
@@ -1433,217 +1410,22 @@ class DiscoveryService:
     async def _create_or_enrich_cards(
         self, run_id: str, dedup_result: DeduplicationResult, config: DiscoveryConfig
     ) -> CardActionResult:
+        """Create or enrich cards; thin wrapper around ``create_or_enrich_cards``.
+
+        Forwards the per-run lens context (triggering user id, the
+        ``_pending_lens_tasks`` set, and the lazy lens service) so the
+        extracted module-level orchestrator (PR-D11e) can do the work
+        without a reference back to ``DiscoveryService``.
         """
-        Create new cards or enrich existing ones based on deduplication results.
-
-        SAFEGUARDS:
-        - Limits new cards per run (max_new_cards_per_run)
-        - Clusters similar new concepts before creation
-        - Enrichment always processed first (unlimited)
-
-        Args:
-            dedup_result: Deduplication results
-            config: Run configuration
-
-        Returns:
-            CardActionResult with action statistics
-        """
-        cards_created = []
-        cards_enriched = []
-        sources_added = 0
-        auto_approved = 0
-        pending_review = 0
-        all_stored_source_ids: List[str] = []  # Track for story clustering
-
-        logger.info(
-            f"Processing card actions: {len(dedup_result.enrichment_candidates)} enrichments, "
-            f"{len(dedup_result.new_concept_candidates)} new concepts"
-        )
-
-        # STEP 1: Process enrichment candidates first (no limit - always enrich)
-        for source, card_id, similarity in dedup_result.enrichment_candidates:
-            try:
-                source_id = await store_source_to_card(
-                    self.supabase, self.ai_service, source, card_id
-                )
-                if source_id:
-                    sources_added += 1
-                    all_stored_source_ids.append(source_id)
-                    if card_id not in cards_enriched:
-                        cards_enriched.append(card_id)
-                        logger.info(
-                            f"Enriched card {card_id} with source: {source.raw.title[:50]}"
-                        )
-                    # Update discovered_sources with enrichment outcome
-                    if source.discovered_source_id:
-                        await update_source_outcome(self.supabase,
-                            source.discovered_source_id,
-                            "card_enriched",
-                            card_id=card_id,
-                            source_record_id=source_id,
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to enrich card {card_id}: {e}")
-                if source.discovered_source_id:
-                    await update_source_outcome(self.supabase,
-                        source.discovered_source_id,
-                        "error",
-                        error_message=str(e),
-                        error_stage="enrichment",
-                    )
-
-        # STEP 2: Cluster similar new concepts before creation
-        # Group sources with similar names to avoid creating near-duplicate cards
-        new_concepts = dedup_result.new_concept_candidates
-        if len(new_concepts) > 1:
-            clustered = cluster_similar_concepts(new_concepts, config)
-            logger.info(
-                f"Clustered {len(new_concepts)} new concepts into {len(clustered)} groups"
-            )
-        else:
-            # Each source is its own cluster
-            clustered = [[s] for s in new_concepts]
-
-        # STEP 3: Create cards with limit enforcement
-        cards_created_count = 0
-        skipped_due_to_limit = 0
-
-        for cluster in clustered:
-            if cards_created_count >= config.max_new_cards_per_run:
-                skipped_due_to_limit += len(cluster)
-                for source in cluster:
-                    if source.discovered_source_id:
-                        await update_source_outcome(self.supabase,
-                            source.discovered_source_id,
-                            "error",
-                            error_message=f"Card limit reached ({config.max_new_cards_per_run})",
-                            error_stage="card_creation",
-                        )
-                continue
-
-            # Pick the best source from the cluster as the card template
-            primary_source = cluster[0]  # First source (could use confidence ranking)
-            if not primary_source.analysis:
-                logger.warning(
-                    f"Skipping cluster without analysis: {primary_source.raw.title}"
-                )
-                continue
-
-            try:
-                # Calculate confidence score for auto-approval
-                confidence = calculate_discovery_confidence(primary_source)
-
-                # Create new card from primary source
-                card_id = await self._create_card_from_source(
-                    primary_source, run_id=run_id, confidence=confidence
-                )
-                if not card_id:
-                    if primary_source.discovered_source_id:
-                        await update_source_outcome(self.supabase,
-                            primary_source.discovered_source_id,
-                            "error",
-                            error_message="Card creation returned no ID",
-                            error_stage="card_creation",
-                        )
-                    continue
-
-                cards_created.append(card_id)
-                cards_created_count += 1
-                logger.info(
-                    f"Created card {cards_created_count}/{config.max_new_cards_per_run}: "
-                    f"'{primary_source.analysis.suggested_card_name}'"
-                )
-
-                # Store primary source to new card
-                source_id = await store_source_to_card(
-                    self.supabase, self.ai_service, primary_source, card_id
-                )
-                if source_id:
-                    sources_added += 1
-                    all_stored_source_ids.append(source_id)
-
-                # Update discovered_sources for primary
-                if primary_source.discovered_source_id:
-                    await update_source_outcome(self.supabase,
-                        primary_source.discovered_source_id,
-                        "card_created",
-                        card_id=card_id,
-                        source_record_id=source_id,
-                    )
-
-                # Add remaining cluster sources to the same card (enrichment)
-                for additional_source in cluster[1:]:
-                    try:
-                        add_source_id = await store_source_to_card(
-                            self.supabase,
-                            self.ai_service,
-                            additional_source,
-                            card_id,
-                        )
-                        if add_source_id:
-                            sources_added += 1
-                            all_stored_source_ids.append(add_source_id)
-                            logger.debug(
-                                f"Added clustered source to card: {additional_source.raw.title[:40]}"
-                            )
-                        if additional_source.discovered_source_id:
-                            await update_source_outcome(self.supabase,
-                                additional_source.discovered_source_id,
-                                "card_enriched",
-                                card_id=card_id,
-                                source_record_id=add_source_id,
-                            )
-                    except Exception as e:
-                        logger.warning(f"Failed to add clustered source: {e}")
-
-                # Auto-approve if confidence exceeds threshold
-                if confidence >= config.auto_approve_threshold:
-                    await auto_approve_card(self.supabase, card_id)
-                    auto_approved += 1
-                else:
-                    pending_review += 1
-
-            except Exception as e:
-                logger.warning(
-                    f"Failed to create card for {primary_source.raw.title}: {e}"
-                )
-                if primary_source.discovered_source_id:
-                    await update_source_outcome(self.supabase,
-                        primary_source.discovered_source_id,
-                        "error",
-                        error_message=str(e),
-                        error_stage="card_creation",
-                    )
-
-        if skipped_due_to_limit > 0:
-            logger.warning(
-                f"Card creation limit reached: {skipped_due_to_limit} sources skipped "
-                f"(limit: {config.max_new_cards_per_run})"
-            )
-
-        # STEP 4: Story-level deduplication via semantic clustering
-        # Sources are now persisted with DB IDs, so we can cluster them.
-        # This assigns story_cluster_id to each source, enabling corroboration
-        # counting and deduplication in the discovery queue.
-        story_cluster_count = 0
-        if all_stored_source_ids:
-            try:
-                cluster_result = cluster_sources(self.supabase, all_stored_source_ids)
-                story_cluster_count = cluster_result.get("cluster_count", 0)
-                logger.info(
-                    f"Story clustering: {len(all_stored_source_ids)} sources -> "
-                    f"{story_cluster_count} story clusters"
-                )
-            except Exception as e:
-                logger.warning(f"Story clustering failed (non-fatal): {e}")
-
-        return CardActionResult(
-            cards_created=cards_created,
-            cards_enriched=cards_enriched,
-            sources_added=sources_added,
-            auto_approved=auto_approved,
-            pending_review=pending_review,
-            story_cluster_count=story_cluster_count,
+        return await create_or_enrich_cards(
+            self.supabase,
+            self.ai_service,
+            run_id,
+            dedup_result,
+            config,
+            triggered_by_user_id=self.triggered_by_user_id,
+            pending_lens_tasks=self._pending_lens_tasks,
+            lens_service=self._get_lens_service(),
         )
 
     async def _create_card_from_source(
