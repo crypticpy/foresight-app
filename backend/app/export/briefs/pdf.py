@@ -14,6 +14,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape as xml_escape
 
 from reportlab.lib import colors as rl_colors
 from reportlab.lib.enums import TA_CENTER
@@ -46,6 +47,17 @@ PDF_TITLE_FONT_SIZE = 24
 PDF_HEADING_FONT_SIZE = 14
 PDF_BODY_FONT_SIZE = 11
 PDF_SMALL_FONT_SIZE = 9
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Return ``dt`` as a UTC-aware datetime.
+
+    Treats naive inputs as already-UTC; converts aware inputs to UTC so
+    timestamps formatted with a literal ``UTC`` suffix are actually correct.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _get_basic_brief_styles() -> Dict[str, ParagraphStyle]:
@@ -153,8 +165,9 @@ async def generate_brief_pdf(
 
         meta_parts = [f"Card: {card_name}"]
         if generated_at:
+            generated_at_utc = _to_utc(generated_at)
             meta_parts.append(
-                f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                f"Generated: {generated_at_utc.strftime('%Y-%m-%d %H:%M UTC')}"
             )
         if version:
             meta_parts.append(f"Version: {version}")
@@ -164,7 +177,9 @@ async def generate_brief_pdf(
                 Spacer(1, 12),
                 Paragraph("Executive Summary", styles["Heading1"]),
                 Paragraph(
-                    executive_summary or "No summary available.",
+                    xml_escape(executive_summary)
+                    if executive_summary
+                    else "No summary available.",
                     styles["Body"],
                 ),
                 Spacer(1, 18),
@@ -181,9 +196,13 @@ async def generate_brief_pdf(
                     continue
 
                 if para_text.startswith("# "):
-                    elements.append(Paragraph(para_text[2:], styles["Heading1"]))
+                    elements.append(
+                        Paragraph(xml_escape(para_text[2:]), styles["Heading1"])
+                    )
                 elif para_text.startswith("## "):
-                    elements.append(Paragraph(para_text[3:], styles["Heading2"]))
+                    elements.append(
+                        Paragraph(xml_escape(para_text[3:]), styles["Heading2"])
+                    )
                 elif para_text.startswith("### "):
                     heading3_style = ParagraphStyle(
                         "Heading3",
@@ -193,7 +212,9 @@ async def generate_brief_pdf(
                         spaceBefore=10,
                         spaceAfter=4,
                     )
-                    elements.append(Paragraph(para_text[4:], heading3_style))
+                    elements.append(
+                        Paragraph(xml_escape(para_text[4:]), heading3_style)
+                    )
                 elif para_text.startswith("- ") or para_text.startswith("* "):
                     bullet_style = ParagraphStyle(
                         "Bullet",
@@ -208,12 +229,17 @@ async def generate_brief_pdf(
                         line = line.strip()
                         if line.startswith("- ") or line.startswith("* "):
                             elements.append(
-                                Paragraph(f"• {line[2:]}", bullet_style)
+                                Paragraph(
+                                    f"• {xml_escape(line[2:])}", bullet_style
+                                )
                             )
                         elif line:
-                            elements.append(Paragraph(line, styles["Body"]))
+                            elements.append(
+                                Paragraph(xml_escape(line), styles["Body"])
+                            )
                 else:
-                    formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", para_text)
+                    safe_text = xml_escape(para_text)
+                    formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe_text)
                     formatted = re.sub(r"\*(.+?)\*", r"<i>\1</i>", formatted)
                     formatted = formatted.replace("\n", "<br/>")
                     elements.append(Paragraph(formatted, styles["Body"]))
@@ -328,8 +354,9 @@ async def generate_professional_brief_pdf(
 
         meta_items = []
         if generated_at:
+            generated_at_utc = _to_utc(generated_at)
             meta_items.append(
-                f"Generated: {generated_at.strftime('%B %d, %Y at %I:%M %p UTC')}"
+                f"Generated: {generated_at_utc.strftime('%B %d, %Y at %I:%M %p UTC')}"
             )
         if version:
             meta_items.append(f"Version: {version}")

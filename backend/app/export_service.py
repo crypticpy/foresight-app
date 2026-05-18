@@ -70,45 +70,34 @@ from .gamma_service import (
     STAGE_DEFINITIONS,
 )
 
-logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Re-exported helpers (definitions live in app.export package)
-# ============================================================================
-
-from .export.branding import (  # noqa: E402
+# Re-exported helpers (definitions live in app.export package). Imported here so
+# legacy callers can continue to reach them via app.export_service.
+from .export.branding import (
     COA_BRAND_COLORS,
     FORESIGHT_COLORS,
     PDF_COLORS,
 )
-from .export import briefs as _briefs  # noqa: E402
-from .export import cards as _cards  # noqa: E402
-from .export import charts as _charts  # noqa: E402
-from .export import csv_export as _csv_export  # noqa: E402
-from .export import data_access as _data_access  # noqa: E402
-from .export import utils as _utils  # noqa: E402
-from .export import pptx as _pptx_components  # noqa: E402
-from .export import workstreams as _workstreams  # noqa: E402
+from .export import briefs as _briefs
+from .export import cards as _cards
+from .export import charts as _charts
+from .export import csv_export as _csv_export
+from .export import data_access as _data_access
+from .export import utils as _utils
+from .export import pptx as _pptx_components
+from .export import workstreams as _workstreams
+from .export.charts import CHART_DPI
+from .export.pptx import (
+    PPTX_MARGIN,
+    PPTX_SLIDE_HEIGHT,
+    PPTX_SLIDE_WIDTH,
+)
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
 # Dimensional constants used by ExportService methods
 # ============================================================================
-
-# Chart settings — defined in app.export.charts; re-exported here for callers
-# that still import from this module.
-from .export.charts import (  # noqa: E402
-    CHART_DPI,
-)
-
-# PowerPoint settings — defined in app.export.pptx.components; re-exported here
-# for callers that still import from this module.
-from .export.pptx import (  # noqa: E402
-    PPTX_MARGIN,
-    PPTX_SLIDE_HEIGHT,
-    PPTX_SLIDE_WIDTH,
-)
 
 # PDF settings
 PDF_PAGE_SIZE = letter
