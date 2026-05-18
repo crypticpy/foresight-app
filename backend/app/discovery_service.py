@@ -150,6 +150,14 @@ from .discovery_triage import triage_sources_with_metrics
 # instance as explicit arguments.
 from .discovery_dedup import deduplicate_sources_with_metrics
 
+# Pure cards-stage helpers extracted to ``discovery_cards_helpers`` in
+# PR-D11a. Stateless — no Supabase, no AI calls; only inspect
+# ``ProcessedSource`` attributes and apply similarity math.
+from .discovery_cards_helpers import (
+    calculate_discovery_confidence,
+    cluster_similar_concepts,
+)
+
 __all__ = [
     "APITokenUsage",
     "CardAction",
@@ -1475,7 +1483,7 @@ class DiscoveryService:
         # Group sources with similar names to avoid creating near-duplicate cards
         new_concepts = dedup_result.new_concept_candidates
         if len(new_concepts) > 1:
-            clustered = self._cluster_similar_concepts(new_concepts, config)
+            clustered = cluster_similar_concepts(new_concepts, config)
             logger.info(
                 f"Clustered {len(new_concepts)} new concepts into {len(clustered)} groups"
             )
@@ -1510,7 +1518,7 @@ class DiscoveryService:
 
             try:
                 # Calculate confidence score for auto-approval
-                confidence = self._calculate_discovery_confidence(primary_source)
+                confidence = calculate_discovery_confidence(primary_source)
 
                 # Create new card from primary source
                 card_id = await self._create_card_from_source(
@@ -1619,141 +1627,6 @@ class DiscoveryService:
             pending_review=pending_review,
             story_cluster_count=story_cluster_count,
         )
-
-    def _cluster_similar_concepts(
-        self, sources: List[ProcessedSource], config: DiscoveryConfig
-    ) -> List[List[ProcessedSource]]:
-        """
-        Cluster similar new concepts to avoid creating near-duplicate cards.
-
-        Uses a two-tier approach:
-        1. Embedding cosine similarity (semantic meaning) — primary signal
-        2. Name similarity (word overlap) — fallback when embeddings are missing
-
-        This prevents the situation where 5 sources about "AI in healthcare" create
-        5 different cards instead of 1 card with 5 sources.
-
-        Args:
-            sources: List of new concept sources to cluster
-            config: Discovery configuration with thresholds
-
-        Returns:
-            List of clusters, where each cluster is a list of sources
-        """
-        if not sources:
-            return []
-
-        # Use a simple greedy clustering approach
-        clusters: List[List[ProcessedSource]] = []
-        used = set()
-
-        # Threshold for embedding-based clustering (lower than dedup's 0.85
-        # to catch topically-related articles that aren't exact duplicates)
-        EMBEDDING_CLUSTER_THRESHOLD = 0.80
-        NAME_CLUSTER_THRESHOLD = 0.6
-
-        # Sort by confidence (highest first) to pick best source as cluster representative
-        sorted_sources = sorted(
-            sources, key=lambda s: self._calculate_discovery_confidence(s), reverse=True
-        )
-
-        for source in sorted_sources:
-            if id(source) in used:
-                continue
-
-            # Start a new cluster with this source
-            cluster = [source]
-            used.add(id(source))
-
-            source_name = source.analysis.suggested_card_name if source.analysis else ""
-            source_embedding = source.embedding if source.embedding else None
-
-            if not source_name and not source_embedding:
-                clusters.append(cluster)
-                continue
-
-            # Find similar sources to add to this cluster
-            for other in sorted_sources:
-                if id(other) in used:
-                    continue
-
-                matched = False
-                match_reason = ""
-                match_score = 0.0
-
-                # Tier 1: Embedding cosine similarity (semantic)
-                other_embedding = other.embedding if other.embedding else None
-                if source_embedding and other_embedding:
-                    sim = cosine_similarity(source_embedding, other_embedding)
-                    if sim >= EMBEDDING_CLUSTER_THRESHOLD:
-                        matched = True
-                        match_reason = "embedding"
-                        match_score = sim
-
-                # Tier 2: Name similarity fallback (when embeddings unavailable)
-                if not matched:
-                    other_name = (
-                        other.analysis.suggested_card_name if other.analysis else ""
-                    )
-                    if source_name and other_name:
-                        name_sim = calculate_name_similarity(source_name, other_name)
-                        if name_sim >= NAME_CLUSTER_THRESHOLD:
-                            matched = True
-                            match_reason = "name"
-                            match_score = name_sim
-
-                if matched:
-                    cluster.append(other)
-                    used.add(id(other))
-                    other_name = (
-                        other.analysis.suggested_card_name
-                        if other.analysis
-                        else other.raw.title[:40]
-                    )
-                    logger.info(
-                        f"Clustered '{other_name}' with '{source_name}' "
-                        f"({match_reason} similarity: {match_score:.2f})"
-                    )
-
-            clusters.append(cluster)
-
-        return clusters
-
-    def _calculate_discovery_confidence(self, source: ProcessedSource) -> float:
-        """
-        Calculate confidence score for a discovered source.
-
-        Combines triage confidence, analysis scores, and source quality.
-
-        Args:
-            source: Processed source
-
-        Returns:
-            Confidence score between 0 and 1
-        """
-        if not source.analysis:
-            return 0.5
-
-        # Weight different factors
-        triage_weight = 0.2
-        credibility_weight = 0.3
-        relevance_weight = 0.3
-        novelty_weight = 0.2
-
-        # Normalize scores (credibility, relevance, novelty are 1-5 scale)
-        triage_score = source.triage.confidence if source.triage else 0.5
-        credibility_score = (source.analysis.credibility - 1) / 4  # Convert 1-5 to 0-1
-        relevance_score = (source.analysis.relevance - 1) / 4
-        novelty_score = (source.analysis.novelty - 1) / 4
-
-        confidence = (
-            triage_score * triage_weight
-            + credibility_score * credibility_weight
-            + relevance_score * relevance_weight
-            + novelty_score * novelty_weight
-        )
-
-        return min(max(confidence, 0.0), 1.0)
 
     async def _create_card_from_source(
         self,
