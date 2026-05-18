@@ -15,6 +15,9 @@ def extract_key_takeaways(brief_markdown: str) -> List[str]:
     Looks for sections like "Key Takeaways", "Key Findings", "Key Implications",
     "What This Means", bullet points, or numbered lists.
     """
+    if not brief_markdown:
+        return []
+
     takeaways: List[str] = []
 
     key_section_patterns = [
@@ -47,22 +50,33 @@ def extract_city_examples(brief_markdown: str) -> List[Dict[str, str]]:
 
     Returns list of dicts with 'city', 'project', and 'detail' keys.
     """
+    if not brief_markdown:
+        return []
+
     examples: List[Dict[str, str]] = []
 
     city_patterns = [
         r"(?:City\s+of\s+|The\s+)?([\w\s]+?)(?:\s+has|\s+is|\s+launched|\s+implemented|\s+deployed|\s+piloted|\s+tested)\s+(.+?)(?:\.|,\s+(?:which|resulting|leading))",
         r"In\s+([\w\s,]+?),\s+(?:they|the\s+city|officials|government)\s+(?:have|has)\s+(.+?)(?:\.|,)",
         r"([\w\s]+?)'s\s+([\w\s]+?(?:program|initiative|project|pilot|system))\s+(.+?)(?:\.|,)",
+        # NOTE: pattern_index 3 captures (project, city) — swapped relative to the
+        # other patterns. Handled below.
         r"(?:programs?|initiatives?|projects?)\s+(?:like|such\s+as)\s+(.+?)\s+in\s+([\w\s]+?)(?:\.|,|$)",
     ]
 
-    for pattern in city_patterns:
+    for pattern_index, pattern in enumerate(city_patterns):
         matches = re.findall(pattern, brief_markdown, re.IGNORECASE)
         for match in matches:
             if len(match) >= 2:
-                city = match[0].strip() if match[0] else ""
-                detail = match[1].strip() if len(match) > 1 else ""
-                project = match[2].strip() if len(match) > 2 else ""
+                if pattern_index == 3:
+                    # "programs/initiatives like X in Y" → match[0]=project, match[1]=city
+                    project = match[0].strip() if match[0] else ""
+                    city = match[1].strip() if len(match) > 1 else ""
+                    detail = ""
+                else:
+                    city = match[0].strip() if match[0] else ""
+                    detail = match[1].strip() if len(match) > 1 else ""
+                    project = match[2].strip() if len(match) > 2 else ""
 
                 skip_terms = [
                     "the",

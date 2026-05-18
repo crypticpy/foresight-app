@@ -7,10 +7,12 @@ per card than the PPTX since readers can absorb more on the page.
 """
 
 import logging
+import os
 import re
 import tempfile
 from datetime import datetime, timezone
 from typing import List
+from xml.sax.saxutils import escape as xml_escape
 
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import letter
@@ -37,9 +39,14 @@ async def generate_portfolio_pdf(
     temp_file = tempfile.NamedTemporaryFile(
         suffix=".pdf", delete=False, prefix="foresight_portfolio_"
     )
+    pdf_path = temp_file.name
+    # Close the underlying file handle immediately; ReportLab writes via the
+    # path. This avoids handle leaks when doc.build() raises before our
+    # original temp_file.close() was reached.
+    temp_file.close()
 
     doc = SimpleDocTemplate(
-        temp_file.name,
+        pdf_path,
         pagesize=letter,
         rightMargin=72,
         leftMargin=72,
@@ -96,7 +103,7 @@ async def generate_portfolio_pdf(
 
     elements = [Spacer(1, inch * 2)]
 
-    elements.append(Paragraph(workstream_name, title_style))
+    elements.append(Paragraph(xml_escape(workstream_name or ""), title_style))
     elements.append(Paragraph("Strategic Intelligence Portfolio", subtitle_style))
     elements.append(
         Paragraph(
@@ -112,13 +119,14 @@ async def generate_portfolio_pdf(
     overview_text = synthesis.executive_overview or "Portfolio analysis in progress."
     for para in overview_text.split("\n\n"):
         if para.strip():
-            elements.append(Paragraph(para.strip(), body_style))
+            elements.append(Paragraph(xml_escape(para.strip()), body_style))
     elements.append(Spacer(1, 12))
 
     # Key Themes
     elements.append(Paragraph("Key Themes", section_style))
     elements.extend(
-        Paragraph(f"• {theme}", body_style) for theme in (synthesis.key_themes or [])
+        Paragraph(f"• {xml_escape(theme)}", body_style)
+        for theme in (synthesis.key_themes or [])
     )
     elements.append(Spacer(1, 12))
 
@@ -126,22 +134,22 @@ async def generate_portfolio_pdf(
     elements.append(Paragraph("Strategic Priorities", section_style))
     matrix = synthesis.priority_matrix or {}
 
-    if urgent := matrix.get("high_impact_urgent", []):
+    if urgent := matrix.get("high_impact_urgent") or []:
         elements.append(Paragraph("<b>High Impact - Urgent Action:</b>", body_style))
         for item in urgent:
-            elements.append(Paragraph(f"  • {item}", body_style))
+            elements.append(Paragraph(f"  • {xml_escape(item)}", body_style))
 
-    if strategic := matrix.get("high_impact_strategic", []):
+    if strategic := matrix.get("high_impact_strategic") or []:
         elements.append(
             Paragraph("<b>High Impact - Strategic Planning:</b>", body_style)
         )
         for item in strategic:
-            elements.append(Paragraph(f"  • {item}", body_style))
+            elements.append(Paragraph(f"  • {xml_escape(item)}", body_style))
 
-    if monitor := matrix.get("monitor", []):
-        elements.append(Paragraph("<b>Monitor & Evaluate:</b>", body_style))
+    if monitor := matrix.get("monitor") or []:
+        elements.append(Paragraph("<b>Monitor &amp; Evaluate:</b>", body_style))
         for item in monitor:
-            elements.append(Paragraph(f"  • {item}", body_style))
+            elements.append(Paragraph(f"  • {xml_escape(item)}", body_style))
 
     elements.append(PageBreak())
 
@@ -152,10 +160,11 @@ async def generate_portfolio_pdf(
         pillar_def = PILLAR_DEFINITIONS.get(
             brief.pillar_id.upper() if brief.pillar_id else "", {}
         )
-        pillar_name = pillar_def.get("name", brief.pillar_id or "Unknown")
-        horizon_name = brief.horizon or "H2"
+        pillar_name = xml_escape(pillar_def.get("name", brief.pillar_id or "Unknown"))
+        horizon_name = xml_escape(brief.horizon or "H2")
+        card_name_safe = xml_escape(brief.card_name or "")
 
-        elements.append(Paragraph(f"{i}. {brief.card_name}", card_title_style))
+        elements.append(Paragraph(f"{i}. {card_name_safe}", card_title_style))
         elements.append(
             Paragraph(
                 f"<b>Pillar:</b> {pillar_name} | <b>Horizon:</b> {horizon_name} | "
@@ -166,11 +175,16 @@ async def generate_portfolio_pdf(
 
         if brief.brief_summary:
             elements.append(
-                Paragraph(f"<b>Summary:</b> {brief.brief_summary}", body_style)
+                Paragraph(
+                    f"<b>Summary:</b> {xml_escape(brief.brief_summary)}", body_style
+                )
             )
 
         if brief.brief_content_markdown:
-            content = brief.brief_content_markdown
+            # Escape first so any literal <, >, & in source content is safe,
+            # THEN apply the bold/italic regex substitutions so the resulting
+            # <b>/<i> tags stay valid ReportLab markup.
+            content = xml_escape(brief.brief_content_markdown)
             content = re.sub(r"^#+\s+", "", content, flags=re.MULTILINE)
             content = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", content)
             content = re.sub(r"\*([^*]+)\*", r"<i>\1</i>", content)
@@ -189,16 +203,16 @@ async def generate_portfolio_pdf(
     # Cross-Cutting Insights
     elements.append(Paragraph("Cross-Cutting Insights", section_style))
     for insight in synthesis.cross_cutting_insights or []:
-        elements.append(Paragraph(f"• {insight}", body_style))
+        elements.append(Paragraph(f"• {xml_escape(insight)}", body_style))
     elements.append(Spacer(1, 12))
 
     # Recommended Actions
     elements.append(Paragraph("Recommended Actions", section_style))
     for action in synthesis.recommended_actions or []:
-        action_text = action.get("action", "")
-        owner = action.get("owner", "TBD")
-        timeline = action.get("timeline", "TBD")
-        cards = ", ".join(action.get("cards", []))
+        action_text = xml_escape(action.get("action", ""))
+        owner = xml_escape(action.get("owner", "TBD"))
+        timeline = xml_escape(action.get("timeline", "TBD"))
+        cards = xml_escape(", ".join(action.get("cards", [])))
 
         elements.append(Paragraph(f"<b>{action_text}</b>", body_style))
         elements.append(
@@ -218,8 +232,17 @@ async def generate_portfolio_pdf(
     for accuracy and relevance."""
     elements.append(Paragraph(disclosure, body_style))
 
-    doc.build(elements)
-    temp_file.close()
+    try:
+        doc.build(elements)
+    except Exception:
+        # Best-effort cleanup of the partially-written temp file on failure so
+        # we don't leak it on disk. Swallow unlink errors — the original
+        # exception is more useful.
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+        raise
 
     logger.info(f"Generated portfolio PDF: {len(briefs)} cards")
-    return temp_file.name
+    return pdf_path

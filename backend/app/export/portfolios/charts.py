@@ -30,7 +30,11 @@ def generate_portfolio_comparison_chart(
         valid_briefs = [
             b
             for b in briefs
-            if b.impact_score is not None or b.relevance_score is not None
+            if (
+                b.impact_score is not None
+                or b.relevance_score is not None
+                or b.velocity_score is not None
+            )
         ]
 
         if not valid_briefs:
@@ -111,9 +115,9 @@ def generate_priority_matrix_chart(
     """Generate a visual 2x2 priority matrix chart placing cards by quadrant."""
     try:
         matrix = synthesis.priority_matrix or {}
-        urgent = set(matrix.get("high_impact_urgent", []))
-        strategic = set(matrix.get("high_impact_strategic", []))
-        monitor = set(matrix.get("monitor", []))
+        urgent = set(matrix.get("high_impact_urgent") or [])
+        strategic = set(matrix.get("high_impact_strategic") or [])
+        monitor = set(matrix.get("monitor") or [])
 
         fig, ax = plt.subplots(figsize=(10, 8))
 
