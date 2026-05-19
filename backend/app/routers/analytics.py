@@ -55,9 +55,11 @@ get_personal_stats = analytics_personal_stats.get_personal_stats
 get_lens_overview = analytics_lens.get_lens_overview
 
 # Internal helper exposed for test patching. Tests in
-# ``test_lens_overview.py`` rebind ``analytics._fetch_all_paginated`` with
+# ``test_lens_overview.py`` rebind ``analytics.fetch_all_paginated`` with
 # a smaller page size to exercise the pagination branch on tiny fixtures.
-_fetch_all_paginated = analytics_lens._fetch_all_paginated
+# Moved out of ``analytics_lens`` to ``app.analytics_pagination`` in PR-A3
+# so ``analytics_system_stats`` can share it.
+fetch_all_paginated = analytics_lens.fetch_all_paginated
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["analytics"])

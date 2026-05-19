@@ -24,8 +24,8 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.routers.analytics_lens import (  # noqa: E402  (after sys.path tweak)
-    _fetch_all_paginated as _real_fetch_all_paginated,
+from app.analytics_pagination import (  # noqa: E402  (after sys.path tweak)
+    fetch_all_paginated as _real_fetch_all_paginated,
 )
 
 
@@ -467,7 +467,7 @@ def test_pagination_aggregates_past_postgrest_page_cap(monkeypatch):
 
     # Force a tiny page so the test stays cheap but the loop still has to
     # paginate multiple times to reach the full corpus.
-    monkeypatch.setattr(analytics_module, "_fetch_all_paginated", _fetch_all_paginated_small)
+    monkeypatch.setattr(analytics_module, "fetch_all_paginated", _fetch_all_paginated_small)
 
     cards = [
         _card(classifier_version="v1", signal_type="trend", csp_goal_ids=[])
@@ -520,14 +520,20 @@ def test_delta_24h_handles_mixed_timestamp_formats(monkeypatch):
     assert result.delta_24h.new_classifications == 3
 
 
-async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
-    """Override of `_fetch_all_paginated` that uses a 2-row page so tests
+async def _fetch_all_paginated_small(
+    builder_factory, order_by: str = "id", page_size: int = 1000
+):
+    """Override of ``fetch_all_paginated`` that uses a 2-row page so tests
     actually exercise the paginate-then-stop branch on small fixtures.
 
     ``_real_fetch_all_paginated`` is imported at the top of the module
     (after the ``sys.path`` tweak) so this helper can call into it.
+    ``order_by`` is forwarded so the deterministic-ordering kwarg added in
+    the helper still threads through the wrapper.
     """
-    return await _real_fetch_all_paginated(builder_factory, page_size=2)
+    return await _real_fetch_all_paginated(
+        builder_factory, order_by=order_by, page_size=2
+    )
 
 
 def test_csp_goal_ids_dedupe_per_card(monkeypatch):

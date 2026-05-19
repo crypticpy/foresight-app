@@ -24,9 +24,11 @@ import asyncio
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.analytics_pagination import fetch_all_paginated
 from app.deps import _safe_error, get_current_user, supabase
 from app.models.analytics import (
     DiscoveryStats,
@@ -95,24 +97,35 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # Batch 1: All independent count & distribution queries in parallel
         # -------------------------------------------------------------------------
 
+        # Distribution queries that select raw rows (no ``count="exact"``)
+        # are routed through ``fetch_all_paginated`` — PostgREST applies a
+        # ~1000-row cap to a single ``.execute()`` and a naive call silently
+        # undercounts once the active corpus or workstream/follow tables
+        # exceed that. The helper also applies ``ORDER BY id`` for
+        # pagination determinism — without a stable order, PostgreSQL is
+        # free to return rows in any order between ``.range()`` calls
+        # (especially while the discovery worker is inserting), which would
+        # silently duplicate or skip rows across page boundaries.
+        # ``count="exact"`` count-only requests are cheap and stay on plain
+        # ``.execute()``.
         (
             total_cards_resp,
             active_cards_resp,
             cards_week_resp,
             cards_month_resp,
-            pillar_resp,
-            stage_resp,
-            horizon_resp,
-            recent_pillar_resp,
+            pillar_data,
+            stage_data,
+            horizon_data,
+            recent_pillar_data,
             hot_cards_resp,
             sources_resp,
             discovery_resp,
             search_resp,
             ws_resp,
-            ws_cards_resp,
-            follows_resp,
+            ws_cards_data,
+            follows_data,
         ) = await asyncio.gather(
-            # Core card counts
+            # Core card counts (count-only — no row data)
             asyncio.to_thread(
                 lambda: supabase.table("cards").select("id", count="exact").execute()
             ),
@@ -134,34 +147,31 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
                 .gte("created_at", one_month_ago.isoformat())
                 .execute()
             ),
-            # Distribution queries
-            asyncio.to_thread(
+            # Distribution queries — paginate to avoid 1000-row truncation
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("pillar_id, velocity_score")
                 .eq("status", "active")
-                .execute()
             ),
-            asyncio.to_thread(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("stage_id")
                 .eq("status", "active")
-                .execute()
             ),
-            asyncio.to_thread(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("horizon")
                 .eq("status", "active")
-                .execute()
             ),
-            # Trending pillars
-            asyncio.to_thread(
+            # Trending pillars (7-day window is small but still paginate
+            # so a busy week doesn't silently truncate)
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("pillar_id, velocity_score")
                 .gte("created_at", one_week_ago.isoformat())
                 .eq("status", "active")
-                .execute()
             ),
-            # Hot topics
+            # Hot topics (intentionally bounded)
             asyncio.to_thread(
                 lambda: supabase.table("cards")
                 .select("name, velocity_score")
@@ -171,42 +181,45 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
                 .limit(5)
                 .execute()
             ),
-            # Sources (bounded)
+            # Sources — keep ``count="exact"`` for the total and use the
+            # bounded sample for "this week" / per-type tallies. Going fully
+            # paginated here would be a large round-trip count on busy orgs
+            # and the 10K sample is enough for the per-type chart.
             asyncio.to_thread(
                 lambda: supabase.table("sources")
                 .select("id, source_type, created_at", count="exact")
                 .limit(10000)
                 .execute()
             ),
-            # Discovery runs (bounded)
+            # Discovery runs (bounded — only the most recent 1000 by design)
             asyncio.to_thread(
                 lambda: supabase.table("discovery_runs")
                 .select("id, cards_created, started_at, status")
                 .limit(1000)
                 .execute()
             ),
-            # Search history (bounded)
+            # Search history (bounded — same)
             asyncio.to_thread(
                 lambda: supabase.table("search_history")
                 .select("id, executed_at", count="exact")
                 .limit(1000)
                 .execute()
             ),
-            # Workstreams
+            # Workstreams — count + row data for active-workstreams check
             asyncio.to_thread(
                 lambda: supabase.table("workstreams")
                 .select("id, updated_at", count="exact")
                 .execute()
             ),
-            # Workstream cards
-            asyncio.to_thread(
-                lambda: supabase.table("workstream_cards").select("card_id").execute()
+            # Workstream cards — paginate to keep ``unique_cards_in_ws``
+            # honest past 1000 rows.
+            fetch_all_paginated(
+                lambda: supabase.table("workstream_cards").select("card_id")
             ),
-            # Follows
-            asyncio.to_thread(
-                lambda: supabase.table("card_follows")
-                .select("card_id, user_id")
-                .execute()
+            # Follows — paginate to keep ``unique_cards_followed`` and the
+            # most-followed Counter honest past 1000 rows.
+            fetch_all_paginated(
+                lambda: supabase.table("card_follows").select("card_id, user_id")
             ),
         )
 
@@ -223,17 +236,20 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # Cards by Pillar
         # -------------------------------------------------------------------------
 
-        pillar_data = pillar_resp.data or []
-
         pillar_counts = Counter()
-        pillar_velocity = {}
+        pillar_velocity: Dict[str, list] = {}
         for card in pillar_data:
             if p := card.get("pillar_id"):
                 pillar_counts[p] += 1
                 if p not in pillar_velocity:
                     pillar_velocity[p] = []
-                if card.get("velocity_score"):
-                    pillar_velocity[p].append(card["velocity_score"])
+                # ``is not None`` rather than truthy: a card with
+                # ``velocity_score == 0`` is a legitimate data point and
+                # excluding it (as ``if card.get("velocity_score"):`` did)
+                # biases the pillar average upward.
+                vel = card.get("velocity_score")
+                if vel is not None:
+                    pillar_velocity[p].append(vel)
 
         cards_by_pillar = []
         for code, name in ANALYTICS_PILLAR_DEFINITIONS.items():
@@ -257,8 +273,6 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # -------------------------------------------------------------------------
         # Cards by Stage
         # -------------------------------------------------------------------------
-
-        stage_data = stage_resp.data or []
 
         stage_counts = Counter()
         for card in stage_data:
@@ -289,8 +303,6 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # Cards by Horizon
         # -------------------------------------------------------------------------
 
-        horizon_data = horizon_resp.data or []
-
         horizon_counts = Counter()
         for card in horizon_data:
             if h := card.get("horizon"):
@@ -310,17 +322,18 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # Trending Pillars (based on recent card creation)
         # -------------------------------------------------------------------------
 
-        recent_pillar_data = recent_pillar_resp.data or []
-
         recent_pillar_counts = Counter()
-        recent_pillar_velocity = {}
+        recent_pillar_velocity: Dict[str, list] = {}
         for card in recent_pillar_data:
             if p := card.get("pillar_id"):
                 recent_pillar_counts[p] += 1
                 if p not in recent_pillar_velocity:
                     recent_pillar_velocity[p] = []
-                if card.get("velocity_score"):
-                    recent_pillar_velocity[p].append(card["velocity_score"])
+                # See pillar loop above — ``is not None`` so zero-velocity
+                # cards aren't silently dropped from the trending average.
+                vel = card.get("velocity_score")
+                if vel is not None:
+                    recent_pillar_velocity[p].append(vel)
 
         trending_pillars = []
         for code, count in recent_pillar_counts.most_common(6):
@@ -467,7 +480,6 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
                 for w in ws_data
             )
 
-            ws_cards_data = ws_cards_resp.data or []
             unique_cards_in_ws = len(
                 {c.get("card_id") for c in ws_cards_data if c.get("card_id")}
             )
@@ -491,8 +503,6 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # -------------------------------------------------------------------------
 
         try:
-            follows_data = follows_resp.data or []
-
             total_follows = len(follows_data)
             unique_cards_followed = len(
                 {f.get("card_id") for f in follows_data if f.get("card_id")}
