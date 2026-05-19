@@ -112,16 +112,125 @@ class _Query:
         return _Resp(ordered, count=total_count if self._count_mode else None)
 
 
+class _RpcResult:
+    """Mimics supabase-py's RPC builder: `.execute().data` returns the payload."""
+
+    def __init__(self, data: Any):
+        self._data = data
+
+    def execute(self):
+        return _Resp(self._data)
+
+
 class _Client:
     def __init__(self, tables: Dict[str, List[Dict[str, Any]]]):
         self.tables = tables
+        # Capture every RPC call so tests can assert that the URL-bypassing
+        # RPC path was taken instead of `.in_("id", [...])`.
+        self.rpc_calls: List[tuple[str, Dict[str, Any]]] = []
 
     def table(self, name: str):
         return _Query(name, self.tables.get(name, []))
 
-    def rpc(self, *_a, **_kw):
-        # Trigger the non-RPC fallback path inside get_follower_counts.
-        raise RuntimeError("rpc not available in tests")
+    def rpc(self, name: str = "", params: Optional[Dict[str, Any]] = None):
+        self.rpc_calls.append((name, params or {}))
+        if name == "me_signals_counts":
+            return _RpcResult(self._compute_counts(params or {}))
+        if name == "me_signals_feed_page":
+            return _RpcResult(self._compute_feed_page(params or {}))
+        if name == "me_signals_filter_ids":
+            return _RpcResult(self._compute_filter_ids(params or {}))
+        # Trigger the non-RPC fallback path inside get_follower_counts (and
+        # any other helper that gracefully degrades when its RPC is absent).
+        raise RuntimeError(f"rpc '{name}' not available in tests")
+
+    def _apply_card_filters(
+        self,
+        card_ids: List[str],
+        search: Optional[str],
+        pillar: Optional[str],
+        horizon: Optional[str],
+        quality_min: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        cards = self.tables.get("cards", [])
+        card_set = set(card_ids or [])
+        out = [c for c in cards if c.get("id") in card_set and c.get("status") == "active"]
+        if search:
+            s = search.lower()
+            out = [
+                c for c in out
+                if s in (c.get("name") or "").lower()
+                or s in (c.get("summary") or "").lower()
+            ]
+        if pillar:
+            out = [c for c in out if c.get("pillar_id") == pillar]
+        if horizon:
+            out = [c for c in out if c.get("horizon") == horizon]
+        if quality_min is not None and quality_min > 0:
+            out = [c for c in out if (c.get("signal_quality_score") or 0) >= quality_min]
+        return out
+
+    def _compute_counts(self, p: Dict[str, Any]) -> Dict[str, int]:
+        rows = self._apply_card_filters(
+            p.get("p_card_ids") or [],
+            p.get("p_search"),
+            p.get("p_pillar"),
+            p.get("p_horizon"),
+            p.get("p_quality_min"),
+        )
+        followed_set = set(p.get("p_followed_ids") or [])
+        created_set = set(p.get("p_created_ids") or [])
+        threshold = p.get("p_needs_research_threshold") or 0
+        one_week_ago = p.get("p_one_week_ago") or ""
+        return {
+            "total": len(rows),
+            "updates_this_week": sum(
+                1 for r in rows if (r.get("updated_at") or "") >= one_week_ago
+            ),
+            "needs_research": sum(
+                1 for r in rows if (r.get("signal_quality_score") or 0) < threshold
+            ),
+            "followed_count": sum(1 for r in rows if r.get("id") in followed_set),
+            "created_count": sum(1 for r in rows if r.get("id") in created_set),
+        }
+
+    def _compute_feed_page(self, p: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows = self._apply_card_filters(
+            p.get("p_card_ids") or [],
+            p.get("p_search"),
+            p.get("p_pillar"),
+            p.get("p_horizon"),
+            p.get("p_quality_min"),
+        )
+        sort_by = p.get("p_sort_by") or "updated"
+        # Apply tiebreaker first (stable sort = primary key applied last wins).
+        rows = sorted(rows, key=lambda r: r.get("id") or "", reverse=True)
+        if sort_by == "quality":
+            rows = sorted(
+                rows,
+                key=lambda r: (
+                    r.get("signal_quality_score") is None,
+                    -(r.get("signal_quality_score") or 0),
+                ),
+            )
+        elif sort_by == "name":
+            rows = sorted(rows, key=lambda r: r.get("id") or "")
+            rows = sorted(rows, key=lambda r: r.get("name") or "")
+        else:  # updated (default)
+            rows = sorted(rows, key=lambda r: r.get("updated_at") or "", reverse=True)
+        offset = p.get("p_offset") or 0
+        limit = p.get("p_limit") or 0
+        return rows[offset : offset + limit]
+
+    def _compute_filter_ids(self, p: Dict[str, Any]) -> List[Dict[str, str]]:
+        rows = self._apply_card_filters(
+            p.get("p_card_ids") or [],
+            p.get("p_search"),
+            p.get("p_pillar"),
+            p.get("p_horizon"),
+            p.get("p_quality_min"),
+        )
+        return [{"id": r.get("id")} for r in rows if r.get("id")]
 
 
 # ---------------------------------------------------------------------------
@@ -460,3 +569,66 @@ def test_stats_followed_and_created_counts_are_filter_aware(patch_supabase):
     assert filtered["stats"]["created_count"] == 1, (
         "created_count must exclude cards filtered out by pillar"
     )
+
+
+def test_stats_uses_rpc_not_url_in_filter(patch_supabase):
+    """Regression: stats must call me_signals_counts (POST body) instead of
+    `.in_("id", filtered_ids)` (GET URL). With ~300 followed cards the URL
+    encoding of `id=in.(<UUIDs>)` exceeds Cloudflare's ~8KB limit and returns
+    HTML 400 that postgrest can't parse — see request_id 5d2a2767-... in prod.
+    """
+    cards = [_make_card(f"c{i}", quality=80) for i in range(300)]
+    follows = [
+        {
+            "card_id": f"c{i}",
+            "user_id": USER_ID,
+            "created_at": "2026-05-10T00:00:00Z",
+        }
+        for i in range(300)
+    ]
+    client = patch_supabase(
+        {"cards": cards, "card_follows": follows, "workstreams": []}
+    )
+
+    stats = _call_stats()
+
+    assert stats["stats"]["total"] == 300
+    assert stats["stats"]["followed_count"] == 300
+    counts_calls = [c for c in client.rpc_calls if c[0] == "me_signals_counts"]
+    assert counts_calls, "stats handler must hit the me_signals_counts RPC"
+    # The ID array travels in the JSON body — never URL-encoded as id=in.(...).
+    assert len(counts_calls[0][1].get("p_card_ids", [])) == 300
+
+
+def test_feed_updated_sort_uses_rpc(patch_supabase):
+    """Regression: feed updated/quality/name sorts must call
+    me_signals_feed_page instead of `.in_("id", ids)` for the same URL-limit
+    reason as stats. Without this, /me/signals?sort_by=updated 500s for users
+    with ~300 cards.
+    """
+    cards = [
+        _make_card(f"c{i}", updated_at=f"2026-05-{(i % 28) + 1:02d}T00:00:00Z")
+        for i in range(120)
+    ]
+    follows = [
+        {
+            "card_id": f"c{i}",
+            "user_id": USER_ID,
+            "created_at": "2026-05-10T00:00:00Z",
+        }
+        for i in range(120)
+    ]
+    client = patch_supabase(
+        {"cards": cards, "card_follows": follows, "workstreams": []}
+    )
+
+    result = _call_feed(sort_by="updated", limit=10)
+
+    assert len(result["signals"]) == 10
+    page_calls = [c for c in client.rpc_calls if c[0] == "me_signals_feed_page"]
+    assert page_calls, "feed handler must hit the me_signals_feed_page RPC"
+    rpc_params = page_calls[0][1]
+    assert rpc_params.get("p_sort_by") == "updated"
+    # Feed asks for limit+1 to detect has_more; just confirm it's bounded.
+    assert rpc_params.get("p_limit") <= 12
+    assert len(rpc_params.get("p_card_ids", [])) == 120

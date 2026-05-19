@@ -726,40 +726,18 @@ async def _build_signal_context(
     )
 
 
-async def _count_in_set(
-    ids: List[str],
-    search: Optional[str],
-    pillar: Optional[str],
-    horizon: Optional[str],
-    quality_min: Optional[int],
-) -> int:
-    """Count active cards in `ids` that also pass the shared filters.
+def _sanitize_ilike(search: Optional[str]) -> Optional[str]:
+    """Strip ILIKE metacharacters from the user-supplied search term.
 
-    Used by /me/signals/stats to make followed_count / created_count honor the
-    same search/pillar/horizon/quality_min predicate as /me/signals — otherwise
-    a stats response can report followed_count > total, breaking the contract.
+    The /me/signals RPCs and `_apply_card_filters` both feed `search` into
+    `column ILIKE '%' || $1 || '%'`. Without sanitization, a `%` or `_` in
+    the search would alter the LIKE pattern, and `,.()[]` would break the
+    postgrest `or_` clause filter syntax. Returns None for empty/blank input.
     """
-    if not ids:
-        return 0
-
-    def build_and_execute():
-        q = (
-            supabase.table("cards")
-            .select("id", count="exact")
-            .in_("id", ids)
-            .eq("status", "active")
-        )
-        q = _apply_card_filters(
-            q,
-            search=search,
-            pillar=pillar,
-            horizon=horizon,
-            quality_min=quality_min,
-        )
-        return q.range(0, 0).execute()
-
-    resp = await execute_with_h2_retry(build_and_execute)
-    return getattr(resp, "count", None) or 0
+    if not search:
+        return None
+    cleaned = re.sub(r"[,.()\[\]%_]", "", search).strip()
+    return cleaned or None
 
 
 def _apply_card_filters(
@@ -771,12 +749,11 @@ def _apply_card_filters(
     quality_min: Optional[int],
 ):
     """Apply the shared text/pillar/horizon/quality filters to a cards query."""
-    if search:
-        safe_search = re.sub(r"[,.()\[\]%_]", "", search)
-        if safe_search:
-            query = query.or_(
-                f"name.ilike.%{safe_search}%,summary.ilike.%{safe_search}%"
-            )
+    safe_search = _sanitize_ilike(search)
+    if safe_search:
+        query = query.or_(
+            f"name.ilike.%{safe_search}%,summary.ilike.%{safe_search}%"
+        )
     if pillar:
         query = query.eq("pillar_id", pillar)
     if horizon:
@@ -845,32 +822,35 @@ async def _fetch_cards_page(
     if not ids or limit <= 0:
         return []
 
+    safe_search = _sanitize_ilike(search)
+
     # For sorts that live on the cards table, push pagination into Postgres
     # so we never materialize more than `limit` rows per page.
+    # RPC instead of `.in_("id", ids)` because `ids` can hold ~300 UUIDs for
+    # heavy users, which blows the URL past Cloudflare's ~8KB limit (returns
+    # HTML 400 that postgrest can't parse as JSON).
     if sort_by in ("quality", "name", "updated"):
-        def fetch() -> List[dict]:
-            q = (
-                supabase.table("cards")
-                .select("*")
-                .in_("id", ids)
-                .eq("status", "active")
+        def fetch_page() -> List[dict]:
+            return (
+                supabase.rpc(
+                    "me_signals_feed_page",
+                    {
+                        "p_card_ids": ids,
+                        "p_search": safe_search,
+                        "p_pillar": pillar,
+                        "p_horizon": horizon,
+                        "p_quality_min": quality_min,
+                        "p_sort_by": sort_by,
+                        "p_limit": limit,
+                        "p_offset": offset,
+                    },
+                )
+                .execute()
+                .data
+                or []
             )
-            q = _apply_card_filters(
-                q,
-                search=search,
-                pillar=pillar,
-                horizon=horizon,
-                quality_min=quality_min,
-            )
-            if sort_by == "quality":
-                q = q.order("signal_quality_score", desc=True).order("id", desc=True)
-            elif sort_by == "name":
-                q = q.order("name").order("id")
-            else:  # updated
-                q = q.order("updated_at", desc=True).order("id", desc=True)
-            return q.range(offset, offset + limit - 1).execute().data or []
 
-        return await asyncio.to_thread(fetch)
+        return await execute_with_h2_retry(fetch_page)
 
     # sort_by == "followed" — sort field lives on card_follows, not cards.
     # We must filter BEFORE slicing: filtering after the slice would under-fill
@@ -881,22 +861,24 @@ async def _fetch_cards_page(
     # then slice — so pagination + filtering stay aligned.
     if search or pillar or horizon or (quality_min is not None and quality_min > 0):
         def fetch_filtered_ids() -> List[str]:
-            q = (
-                supabase.table("cards")
-                .select("id")
-                .in_("id", ids)
-                .eq("status", "active")
+            rows = (
+                supabase.rpc(
+                    "me_signals_filter_ids",
+                    {
+                        "p_card_ids": ids,
+                        "p_search": safe_search,
+                        "p_pillar": pillar,
+                        "p_horizon": horizon,
+                        "p_quality_min": quality_min,
+                    },
+                )
+                .execute()
+                .data
+                or []
             )
-            q = _apply_card_filters(
-                q,
-                search=search,
-                pillar=pillar,
-                horizon=horizon,
-                quality_min=quality_min,
-            )
-            return [r["id"] for r in (q.execute().data or []) if r.get("id")]
+            return [r["id"] for r in rows if r.get("id")]
 
-        filtered_id_list = await asyncio.to_thread(fetch_filtered_ids)
+        filtered_id_list = await execute_with_h2_retry(fetch_filtered_ids)
         filtered_id_set = set(filtered_id_list)
         candidate_ids = [cid for cid in ids if cid in filtered_id_set]
     else:
@@ -1077,29 +1059,6 @@ async def get_my_signals_stats(
 
     one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
-    async def count(extra_filter):
-        def build_and_execute():
-            q = (
-                supabase.table("cards")
-                .select("id", count="exact")
-                .in_("id", filtered_ids)
-                .eq("status", "active")
-            )
-            q = _apply_card_filters(
-                q,
-                search=search,
-                pillar=pillar,
-                horizon=horizon,
-                quality_min=quality_min,
-            )
-            q = extra_filter(q)
-            # `select("id", count="exact")` returns rows too — fetch just one
-            # to keep the response light; we only care about resp.count.
-            return q.range(0, 0).execute()
-
-        resp = await execute_with_h2_retry(build_and_execute)
-        return getattr(resp, "count", None) or 0
-
     # followed_count + created_count must mirror the feed's filter/status
     # predicate — counting raw relationship sets would leak archived cards and
     # cards filtered out by search/pillar/horizon/quality_min, breaking the
@@ -1107,28 +1066,39 @@ async def get_my_signals_stats(
     followed_id_list = list(ctx.followed_map.keys() & ctx.filtered_ids)
     created_id_list = list(ctx.created_id_set & ctx.filtered_ids)
 
-    (
-        total,
-        updates_this_week,
-        needs_research,
-        followed_count,
-        created_count,
-    ) = await asyncio.gather(
-        count(lambda q: q),
-        count(lambda q: q.gte("updated_at", one_week_ago)),
-        count(lambda q: q.lt("signal_quality_score", NEEDS_RESEARCH_QUALITY_THRESHOLD)),
-        _count_in_set(followed_id_list, search, pillar, horizon, quality_min),
-        _count_in_set(created_id_list, search, pillar, horizon, quality_min),
-    )
+    # Single RPC instead of 5-way .in_("id", filtered_ids) fan-out. The
+    # previous fan-out URL-encoded ~300 UUIDs five times and hit Cloudflare's
+    # ~8KB URL limit (HTML 400 → APIError "JSON could not be generated").
+    # RPC sends the ID array in the JSON body, so URL length is constant.
+    safe_search = _sanitize_ilike(search)
+
+    def call_counts_rpc():
+        return supabase.rpc(
+            "me_signals_counts",
+            {
+                "p_card_ids": filtered_ids,
+                "p_followed_ids": followed_id_list,
+                "p_created_ids": created_id_list,
+                "p_search": safe_search,
+                "p_pillar": pillar,
+                "p_horizon": horizon,
+                "p_quality_min": quality_min,
+                "p_one_week_ago": one_week_ago,
+                "p_needs_research_threshold": NEEDS_RESEARCH_QUALITY_THRESHOLD,
+            },
+        ).execute()
+
+    resp = await execute_with_h2_retry(call_counts_rpc)
+    counts = resp.data or {}
 
     return {
         "stats": {
-            "total": total,
-            "followed_count": followed_count,
-            "created_count": created_count,
+            "total": counts.get("total") or 0,
+            "followed_count": counts.get("followed_count") or 0,
+            "created_count": counts.get("created_count") or 0,
             "workstream_count": len(ctx.workstreams),
-            "updates_this_week": updates_this_week,
-            "needs_research": needs_research,
+            "updates_this_week": counts.get("updates_this_week") or 0,
+            "needs_research": counts.get("needs_research") or 0,
         },
         "workstreams": ctx.workstreams,
     }
