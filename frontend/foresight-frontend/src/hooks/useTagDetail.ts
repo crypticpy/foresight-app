@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getTagDetail,
+  TagsApiError,
   type Tag,
   type TagDetailCard,
   type TagDetailResponse,
@@ -85,6 +86,21 @@ export function useTagDetail(
         });
       } catch (err) {
         if (seq !== requestSeq.current || !mounted.current) return;
+        // 404 means the slug doesn't exist — settle into a clean missing
+        // state so the page renders its dedicated empty UI (`isMissing`
+        // in pages/TagDetail/index.tsx) instead of an error banner.
+        if (err instanceof TagsApiError && err.status === 404) {
+          setState({
+            tag: null,
+            cards: [],
+            total: 0,
+            loading: false,
+            isFetchingMore: false,
+            hasMore: false,
+            error: null,
+          });
+          return;
+        }
         const message =
           err instanceof Error ? err.message : "Failed to load tag";
         setState((prev) => ({

@@ -732,12 +732,13 @@ def test_get_tag_detail_empty_when_no_applications(monkeypatch):
     assert res.total == 0
 
 
-def test_get_tag_detail_skips_archived_cards(monkeypatch):
-    """The handler filters on status='active', so an archived card
-    referenced by card_tags must be dropped from the response. Without
-    this, an admin who archives a card leaves a dead-link tile."""
+def test_get_tag_detail_excludes_archived_via_rpc_contract(monkeypatch):
+    """`tag_cards_page` filters archived rows inside its CTE, so the route
+    relies on the RPC's contract: only active card_ids come back and total
+    reflects only active cards. The route no longer applies a second
+    status filter (that would shrink already-paginated results below
+    `limit`)."""
     tag_id = _uuid()
-    card_archived = _uuid()
     card_active = _uuid()
 
     tag_row = {
@@ -747,32 +748,12 @@ def test_get_tag_detail_skips_archived_cards(monkeypatch):
         "created_by": _uuid(),
         "created_at": _ts(),
     }
+    # RPC hides archived rows entirely; only the active card_id surfaces
+    # and total counts the active set.
     rpc_rows = [
-        {"card_id": card_archived, "most_recent_at": _ts(), "total": 2},
-        {"card_id": card_active, "most_recent_at": _ts(), "total": 2},
+        {"card_id": card_active, "most_recent_at": _ts(), "total": 1},
     ]
     card_rows = [
-        # Archived card — must be dropped by the .eq("status", "active") filter.
-        {
-            "id": card_archived,
-            "status": "archived",
-            "slug": "card-archived",
-            "name": "Archived",
-            "summary": "",
-            "pillar_id": "CH",
-            "stage_id": "1_concept",
-            "horizon": "H1",
-            "impact_score": 0,
-            "relevance_score": 0,
-            "velocity_score": 0,
-            "novelty_score": 0,
-            "signal_quality_score": 0,
-            "velocity_trend": None,
-            "trend_direction": None,
-            "top25_relevance": None,
-            "created_at": _ts(),
-            "updated_at": _ts(),
-        },
         {
             "id": card_active,
             "status": "active",
@@ -807,9 +788,71 @@ def test_get_tag_detail_skips_archived_cards(monkeypatch):
         )
     )
     assert [c.id for c in res.cards] == [card_active]
-    # `total` is what the RPC reports (counts distinct card_id rows from
-    # card_tags) — we don't try to adjust it for archived hides here.
-    assert res.total == 2
+    assert res.total == 1
+
+
+def test_get_tag_detail_preserves_total_when_offset_past_end(monkeypatch):
+    """When `offset` lands past the last row the page RPC returns 0 rows
+    and the window-function total is unavailable. The route must call
+    `tag_cards_count` so `total` still reflects the global count — otherwise
+    pagination state on the client (e.g. 'showing N of M') breaks."""
+    tag_id = _uuid()
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": []},
+        rpcs={
+            "tag_cards_page": lambda _params: [],
+            "tag_cards_count": lambda _params: 7,
+        },
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="climate", limit=20, offset=40, current_user={"id": _uuid()}
+        )
+    )
+    assert res.cards == []
+    assert res.total == 7
+
+
+def test_get_tag_detail_skips_count_call_when_offset_is_zero(monkeypatch):
+    """offset=0 + empty page means genuinely zero cards — the route must
+    NOT call `tag_cards_count` (extra round-trip for no information)."""
+    tag_id = _uuid()
+    tag_row = {
+        "id": tag_id,
+        "slug": "orphan",
+        "label": "orphan",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": []},
+        rpcs={
+            "tag_cards_page": lambda _params: [],
+            "tag_cards_count": lambda _params: pytest.fail(
+                "count RPC should not run when offset=0"
+            ),
+        },
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="orphan", limit=20, offset=0, current_user={"id": _uuid()}
+        )
+    )
+    assert res.cards == []
+    assert res.total == 0
 
 
 def test_list_tags_escapes_ilike_metachars(monkeypatch):

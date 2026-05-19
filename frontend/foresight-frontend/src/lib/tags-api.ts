@@ -80,6 +80,21 @@ export const TAG_MINI_DISPLAY_LIMIT = 3;
 // Match the backend cap in models/tag.py. Callers must page above this.
 export const TAG_BATCH_CARD_LIMIT = 250;
 
+/**
+ * Error thrown by `apiRequest` for non-2xx responses. Carries the HTTP
+ * status so callers can branch on 404 vs 5xx without string-matching the
+ * detail message (e.g. `useTagDetail` routes 404 into the missing-tag
+ * empty state instead of a generic error banner).
+ */
+export class TagsApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "TagsApiError";
+    this.status = status;
+  }
+}
+
 async function apiRequest<T>(
   endpoint: string,
   token: string,
@@ -97,7 +112,10 @@ async function apiRequest<T>(
     const error = await response
       .json()
       .catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || `API error: ${response.status}`);
+    throw new TagsApiError(
+      error.detail || `API error: ${response.status}`,
+      response.status,
+    );
   }
   return response.json() as Promise<T>;
 }
