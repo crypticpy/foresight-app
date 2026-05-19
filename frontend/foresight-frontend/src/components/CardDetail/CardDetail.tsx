@@ -58,6 +58,7 @@ import {
   ActivityStatsPanel,
 } from "./tabs/OverviewTab";
 import { LensMetadataPanel } from "../lens/LensMetadataPanel";
+import { TagsPanel } from "../tags/TagsPanel";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { TimelineTab } from "./tabs/TimelineTab";
 import { NotesTab } from "./tabs/NotesTab";
@@ -342,6 +343,11 @@ export const CardDetail: React.FC<CardDetailProps> = ({
               description={card.description}
               cardId={card.id}
               onRestore={refetch}
+            />
+            <TagsPanel
+              cardId={card.id}
+              getAuthToken={getAuthToken}
+              readOnly={readOnly}
             />
             <CardClassification
               card={card}
