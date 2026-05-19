@@ -607,6 +607,211 @@ def test_list_card_tags_batch_rejects_oversize(monkeypatch):
     assert exc.value.status_code == 400
 
 
+# ---------------------------------------------------------------------------
+# GET /tags/{slug} — tag detail page payload
+# ---------------------------------------------------------------------------
+
+
+def test_get_tag_detail_404_when_slug_missing(monkeypatch):
+    mock_sb = _MockSupabase(tables={"tags": []})
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            tags_module.get_tag_detail(
+                slug="missing", limit=20, offset=0, current_user={"id": _uuid()}
+            )
+        )
+    assert exc.value.status_code == 404
+
+
+def test_get_tag_detail_returns_cards_in_rpc_order(monkeypatch):
+    """The RPC returns card_ids ordered by most-recent application; the
+    handler must preserve that order even though `cards.in_(...)` returns
+    rows in arbitrary order."""
+    tag_id = _uuid()
+    card_a = _uuid()
+    card_b = _uuid()
+
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+    # RPC ordering: card_b is more recent, so it should appear first.
+    rpc_rows = [
+        {"card_id": card_b, "most_recent_at": _ts(), "total": 2},
+        {"card_id": card_a, "most_recent_at": _ts(), "total": 2},
+    ]
+    # `cards.in_(...)` returns these in DB order; the handler must reorder
+    # to match the RPC sequence.
+    card_rows = [
+        {
+            "id": card_a,
+            "status": "active",
+            "slug": "card-a",
+            "name": "Card A",
+            "summary": "first",
+            "pillar_id": "CH",
+            "stage_id": "1_concept",
+            "horizon": "H1",
+            "impact_score": 50,
+            "relevance_score": 50,
+            "velocity_score": 50,
+            "novelty_score": 50,
+            "signal_quality_score": 50,
+            "velocity_trend": None,
+            "trend_direction": None,
+            "top25_relevance": None,
+            "created_at": _ts(),
+            "updated_at": _ts(),
+        },
+        {
+            "id": card_b,
+            "status": "active",
+            "slug": "card-b",
+            "name": "Card B",
+            "summary": "second",
+            "pillar_id": "EW",
+            "stage_id": "2_exploring",
+            "horizon": "H2",
+            "impact_score": 60,
+            "relevance_score": 60,
+            "velocity_score": 60,
+            "novelty_score": 60,
+            "signal_quality_score": 60,
+            "velocity_trend": None,
+            "trend_direction": None,
+            "top25_relevance": None,
+            "created_at": _ts(),
+            "updated_at": _ts(),
+        },
+    ]
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": card_rows},
+        rpcs={"tag_cards_page": lambda _params: rpc_rows},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="climate", limit=20, offset=0, current_user={"id": _uuid()}
+        )
+    )
+
+    assert res.tag.slug == "climate"
+    assert [c.id for c in res.cards] == [card_b, card_a]
+    assert res.total == 2
+
+
+def test_get_tag_detail_empty_when_no_applications(monkeypatch):
+    """Tag exists but has no card_tags rows → empty list, total=0."""
+    tag_id = _uuid()
+    tag_row = {
+        "id": tag_id,
+        "slug": "orphan",
+        "label": "orphan",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": []},
+        rpcs={"tag_cards_page": lambda _params: []},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="orphan", limit=20, offset=0, current_user={"id": _uuid()}
+        )
+    )
+    assert res.cards == []
+    assert res.total == 0
+
+
+def test_get_tag_detail_skips_archived_cards(monkeypatch):
+    """The handler filters on status='active', so an archived card
+    referenced by card_tags must be dropped from the response. Without
+    this, an admin who archives a card leaves a dead-link tile."""
+    tag_id = _uuid()
+    card_archived = _uuid()
+    card_active = _uuid()
+
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+    rpc_rows = [
+        {"card_id": card_archived, "most_recent_at": _ts(), "total": 2},
+        {"card_id": card_active, "most_recent_at": _ts(), "total": 2},
+    ]
+    card_rows = [
+        # Archived card — must be dropped by the .eq("status", "active") filter.
+        {
+            "id": card_archived,
+            "status": "archived",
+            "slug": "card-archived",
+            "name": "Archived",
+            "summary": "",
+            "pillar_id": "CH",
+            "stage_id": "1_concept",
+            "horizon": "H1",
+            "impact_score": 0,
+            "relevance_score": 0,
+            "velocity_score": 0,
+            "novelty_score": 0,
+            "signal_quality_score": 0,
+            "velocity_trend": None,
+            "trend_direction": None,
+            "top25_relevance": None,
+            "created_at": _ts(),
+            "updated_at": _ts(),
+        },
+        {
+            "id": card_active,
+            "status": "active",
+            "slug": "card-active",
+            "name": "Active",
+            "summary": "",
+            "pillar_id": "CH",
+            "stage_id": "1_concept",
+            "horizon": "H1",
+            "impact_score": 0,
+            "relevance_score": 0,
+            "velocity_score": 0,
+            "novelty_score": 0,
+            "signal_quality_score": 0,
+            "velocity_trend": None,
+            "trend_direction": None,
+            "top25_relevance": None,
+            "created_at": _ts(),
+            "updated_at": _ts(),
+        },
+    ]
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": card_rows},
+        rpcs={"tag_cards_page": lambda _params: rpc_rows},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="climate", limit=20, offset=0, current_user={"id": _uuid()}
+        )
+    )
+    assert [c.id for c in res.cards] == [card_active]
+    # `total` is what the RPC reports (counts distinct card_id rows from
+    # card_tags) — we don't try to adjust it for archived hides here.
+    assert res.total == 2
+
+
 def test_list_tags_escapes_ilike_metachars(monkeypatch):
     """% and _ in the query don't pattern-match the rest of the dictionary."""
     captured: Dict[str, Any] = {}

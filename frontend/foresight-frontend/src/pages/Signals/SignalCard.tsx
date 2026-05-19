@@ -60,71 +60,73 @@ export const SignalCard: React.FC<SignalCardProps> = React.memo(
           />
         </button>
 
-        <Link
-          to={`/signals/${signal.slug}`}
-          state={{ from: "/signals" }}
-          aria-label={`View signal: ${signal.name}`}
-          className="block"
-        >
-          <div className="p-5">
-            {/* pr-10 reserves space for the absolutely-positioned pin button. */}
-            <div className="flex items-start justify-between gap-3 mb-3 pr-10">
-              <h3 className="min-w-0 flex-1 text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
+        {/* Card body. Card-link pattern: only the title is a semantic
+            <Link>; its ::before pseudo expands to inset-0 so a click
+            anywhere on the card navigates. Interactive descendants
+            (pin button, tag chips) opt out by sitting at z-10. */}
+        <div className="p-5">
+          {/* pr-10 reserves space for the absolutely-positioned pin button. */}
+          <div className="flex items-start justify-between gap-3 mb-3 pr-10">
+            <h3 className="min-w-0 flex-1 text-lg font-semibold text-gray-900 dark:text-white group-hover:text-brand-blue transition-colors line-clamp-2">
+              <Link
+                to={`/signals/${signal.slug}`}
+                state={{ from: "/signals" }}
+                aria-label={`View signal: ${signal.name}`}
+                className="before:absolute before:inset-0 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 rounded-sm"
+              >
                 {signal.name}
-              </h3>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <ArtifactRibbon
-                  artifacts={signal.artifacts}
-                  className="static top-auto right-auto"
-                />
-                <QualityScoreBadge
-                  score={signal.signal_quality_score}
-                  size="sm"
-                />
-              </div>
-            </div>
-
-            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 mb-4">
-              {signal.summary}
-            </p>
-
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <PillarBadge pillarId={signal.pillar_id} size="sm" />
-              <HorizonBadge horizon={signal.horizon} size="sm" />
-              {stageNumber && <StageBadge stage={stageNumber} size="sm" />}
-              {signal.top25_relevance && signal.top25_relevance.length > 0 && (
-                <Top25Badge priorities={signal.top25_relevance} size="sm" />
-              )}
-              <VelocityBadge
-                trend={signal.velocity_trend as VelocityTrend}
-                score={signal.velocity_score}
+              </Link>
+            </h3>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ArtifactRibbon
+                artifacts={signal.artifacts}
+                className="static top-auto right-auto"
               />
-              <TrendBadge
-                direction={signal.trend_direction as TrendDirection}
+              <QualityScoreBadge
+                score={signal.signal_quality_score}
+                size="sm"
               />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5 mb-3">
-              {signal.is_followed && <SourceBadge type="followed" />}
-              {signal.is_created && <SourceBadge type="created" />}
-              {signal.workstream_names.map((ws) => (
-                <SourceBadge key={ws} type="workstream" label={ws} />
-              ))}
-            </div>
-
-            {tags && tags.length > 0 && (
-              <MiniTagBadge tags={tags} className="mb-3" />
-            )}
-
-            <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-              <span>Impact {signal.impact_score}</span>
-              <span>Rel. {signal.relevance_score}</span>
-              <span className="ml-auto">
-                {new Date(signal.updated_at).toLocaleDateString()}
-              </span>
             </div>
           </div>
-        </Link>
+
+          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 mb-4">
+            {signal.summary}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <PillarBadge pillarId={signal.pillar_id} size="sm" />
+            <HorizonBadge horizon={signal.horizon} size="sm" />
+            {stageNumber && <StageBadge stage={stageNumber} size="sm" />}
+            {signal.top25_relevance && signal.top25_relevance.length > 0 && (
+              <Top25Badge priorities={signal.top25_relevance} size="sm" />
+            )}
+            <VelocityBadge
+              trend={signal.velocity_trend as VelocityTrend}
+              score={signal.velocity_score}
+            />
+            <TrendBadge direction={signal.trend_direction as TrendDirection} />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            {signal.is_followed && <SourceBadge type="followed" />}
+            {signal.is_created && <SourceBadge type="created" />}
+            {signal.workstream_names.map((ws) => (
+              <SourceBadge key={ws} type="workstream" label={ws} />
+            ))}
+          </div>
+
+          {tags && tags.length > 0 && (
+            <MiniTagBadge tags={tags} className="relative z-10 mb-3" />
+          )}
+
+          <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+            <span>Impact {signal.impact_score}</span>
+            <span>Rel. {signal.relevance_score}</span>
+            <span className="ml-auto">
+              {new Date(signal.updated_at).toLocaleDateString()}
+            </span>
+          </div>
+        </div>
       </div>
     );
   },

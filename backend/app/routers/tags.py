@@ -31,6 +31,8 @@ from app.models.tag import (
     PopularTagsResponse,
     Tag,
     TagApplyRequest,
+    TagDetailCard,
+    TagDetailResponse,
     TagListResponse,
     TagOnCard,
     TagWithUsage,
@@ -130,14 +132,27 @@ async def list_popular_tags(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/tags/{slug}")
+_TAG_DETAIL_CARD_FIELDS = (
+    "id, slug, name, summary, pillar_id, stage_id, horizon, "
+    "impact_score, relevance_score, velocity_score, novelty_score, "
+    "signal_quality_score, velocity_trend, trend_direction, "
+    "top25_relevance, created_at, updated_at"
+)
+
+
+@router.get("/tags/{slug}", response_model=TagDetailResponse)
 async def get_tag_detail(
     slug: str,
     limit: int = Query(20, ge=1, le=_DETAIL_CARDS_MAX),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Tag header + paginated list of card IDs that carry the tag."""
+) -> TagDetailResponse:
+    """Tag header + paginated tile rows for /tags/{slug}.
+
+    Returns card summaries (not just IDs) so the page renders in one
+    round-trip. The application_count for the tag is `total`, exposed
+    so the UI can show "showing N of M" and gate `loadMore`.
+    """
     tag_res = await asyncio.to_thread(
         lambda: supabase.table("tags")
         .select("id, slug, label, created_by, created_at")
@@ -149,20 +164,47 @@ async def get_tag_detail(
         raise HTTPException(status_code=404, detail="Tag not found")
     tag = tag_res.data[0]
 
-    cards_res = await asyncio.to_thread(
-        lambda: supabase.table("card_tags")
-        .select("card_id, created_at", count="exact")
-        .eq("tag_id", tag["id"])
-        .order("created_at", desc=True)
-        .range(offset, offset + limit - 1)
-        .execute()
+    # Paginate over (card_id, max(created_at)) so a card that gets a fresh
+    # application bubbles back up the list. Total reflects distinct cards
+    # that carry the tag, not distinct applications.
+    distinct_res = await asyncio.to_thread(
+        lambda: supabase.rpc(
+            "tag_cards_page",
+            {
+                "p_tag_id": tag["id"],
+                "p_limit": limit,
+                "p_offset": offset,
+            },
+        ).execute()
     )
-    card_ids = list({row["card_id"] for row in (cards_res.data or [])})
-    return {
-        "tag": _row_to_tag(tag).model_dump(),
-        "card_ids": card_ids,
-        "total": cards_res.count or 0,
-    }
+    page_rows = distinct_res.data or []
+    card_ids = [row["card_id"] for row in page_rows]
+    # `total` comes from the same RPC — every row carries the same total
+    # so we read it from any row. When the page is empty, fall back to 0.
+    total = page_rows[0]["total"] if page_rows else 0
+
+    cards: list[TagDetailCard] = []
+    if card_ids:
+        cards_res = await asyncio.to_thread(
+            lambda: supabase.table("cards")
+            .select(_TAG_DETAIL_CARD_FIELDS)
+            .in_("id", card_ids)
+            .eq("status", "active")
+            .execute()
+        )
+        # Preserve the RPC's ordering — `in_(...)` returns rows in
+        # whatever order Postgres feels like, not in `card_ids` order.
+        by_id = {row["id"]: row for row in (cards_res.data or [])}
+        for cid in card_ids:
+            row = by_id.get(cid)
+            if row:
+                cards.append(TagDetailCard(**row))
+
+    return TagDetailResponse(
+        tag=_row_to_tag(tag),
+        cards=cards,
+        total=total,
+    )
 
 
 # ---------------------------------------------------------------------------

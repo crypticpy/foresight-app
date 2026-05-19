@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import { Tag as TagIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { TAG_MINI_DISPLAY_LIMIT, type TagOnCard } from "../../lib/tags-api";
@@ -12,11 +13,14 @@ export interface MiniTagBadgeProps {
 
 /**
  * Compact tag display for a card tile. Renders up to `limit` chip pills
- * (label only, no count) followed by a "+N" overflow pill, or a single
- * icon-plus-count pill when the list view doesn't have room for chips.
+ * (label only, no count) followed by a "+N" overflow pill.
  *
- * Stays passive — no apply/remove affordances at the tile level. Clicking
- * is a no-op until PR 5 wires tag-detail navigation.
+ * Each chip links to the tag detail page (`/tags/{slug}`). When this
+ * component is rendered inside a card tile that uses the card-link
+ * pattern (e.g. `SignalCard`), the parent must lift the chip row above
+ * the card's overlay link — wrap with `relative z-10`. The chip
+ * `onClick` also calls `stopPropagation` so a chip-on-card-link click
+ * doesn't bubble back to a host that also navigates.
  */
 export const MiniTagBadge: React.FC<MiniTagBadgeProps> = ({
   tags,
@@ -36,18 +40,20 @@ export const MiniTagBadge: React.FC<MiniTagBadgeProps> = ({
     >
       <TagIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" />
       {visible.map((tag) => (
-        <span
+        <Link
           key={tag.id}
+          to={`/tags/${encodeURIComponent(tag.slug)}`}
+          onClick={(e) => e.stopPropagation()}
           title={tag.label}
           className={cn(
-            "max-w-[120px] truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+            "max-w-[120px] truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium transition-colors duration-200 hover:underline",
             tag.applied_by_me
               ? "border-brand-blue/40 bg-brand-blue/10 text-brand-blue dark:border-brand-blue/60 dark:bg-brand-blue/20 dark:text-blue-200"
-              : "border-gray-200 bg-gray-100 text-gray-600 dark:border-dark-surface-hover dark:bg-dark-surface-elevated dark:text-gray-300",
+              : "border-gray-200 bg-gray-100 text-gray-600 hover:text-brand-blue dark:border-dark-surface-hover dark:bg-dark-surface-elevated dark:text-gray-300 dark:hover:text-blue-200",
           )}
         >
           {tag.label}
-        </span>
+        </Link>
       ))}
       {overflow > 0 && (
         <span

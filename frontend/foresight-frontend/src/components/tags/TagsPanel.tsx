@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, Tag as TagIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useCardTags } from "../../hooks/useCardTags";
@@ -27,6 +28,7 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
     cardId,
     getAuthToken,
   );
+  const navigate = useNavigate();
   const [showAll, setShowAll] = useState(false);
 
   // Collapse the "show all" expansion when the card context changes so the
@@ -49,9 +51,8 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
 
   const handleCoApply = (tag: TagOnCard) => apply(tag.label, workstreamId);
   const handleRemove = (tag: TagOnCard) => remove(tag.slug);
-  // Tag-detail navigation is gated on the /tags/:slug route landing in
-  // PR 5 of this stack; until then chips render without a click handler
-  // so we don't dead-link users to a 404.
+  const handleNavigate = (tag: TagOnCard) =>
+    navigate(`/tags/${encodeURIComponent(tag.slug)}`);
 
   return (
     <div
@@ -81,6 +82,7 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
               tag={tag}
               onCoApply={readOnly ? undefined : handleCoApply}
               onRemove={readOnly ? undefined : handleRemove}
+              onClick={handleNavigate}
               readOnly={readOnly}
             />
           ))}
