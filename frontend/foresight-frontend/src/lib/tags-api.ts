@@ -30,9 +30,36 @@ export interface PopularTagsResponse {
   tags: TagWithUsage[];
 }
 
+/**
+ * Card summary returned inline by `GET /tags/{slug}`. Mirrors the
+ * `BaseCard` shape so the tag detail page renders tiles in one
+ * round-trip. Personal relationship fields (pinned/followed) are
+ * deliberately omitted — the tag page is a global view.
+ */
+export interface TagDetailCard {
+  id: string;
+  slug: string;
+  name: string;
+  summary: string | null;
+  pillar_id: string | null;
+  stage_id: string | null;
+  horizon: string | null;
+  impact_score: number | null;
+  relevance_score: number | null;
+  velocity_score: number | null;
+  novelty_score: number | null;
+  signal_quality_score: number | null;
+  velocity_trend: string | null;
+  trend_direction: string | null;
+  top25_relevance: string[] | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
 export interface TagDetailResponse {
   tag: Tag;
-  card_ids: string[];
+  cards: TagDetailCard[];
+  /** Distinct cards that carry this tag, across all pages. */
   total: number;
 }
 

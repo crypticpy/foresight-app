@@ -87,3 +87,45 @@ class CardTagsBatchResponse(BaseModel):
     """
 
     tags_by_card: Dict[str, List[TagOnCard]]
+
+
+class TagDetailCard(BaseModel):
+    """Card summary returned inline by GET /tags/{slug}.
+
+    Mirrors the `BaseCard` shape on the frontend so the tag detail page
+    can render tiles without a follow-up hydration round-trip. Personal
+    relationship fields (pinned/followed) are deliberately omitted — the
+    tag page is a global view, and per-viewer state would force the
+    endpoint to do an extra join per request.
+    """
+
+    id: str
+    slug: str
+    name: str
+    summary: Optional[str] = None
+    pillar_id: Optional[str] = None
+    stage_id: Optional[str] = None
+    horizon: Optional[str] = None
+    impact_score: Optional[float] = None
+    relevance_score: Optional[float] = None
+    velocity_score: Optional[float] = None
+    novelty_score: Optional[float] = None
+    signal_quality_score: Optional[float] = None
+    velocity_trend: Optional[str] = None
+    trend_direction: Optional[str] = None
+    top25_relevance: Optional[List[str]] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class TagDetailResponse(BaseModel):
+    """Tag header + paginated card tiles for /tags/{slug}.
+
+    `cards` is empty when the page sits past the end of the result set;
+    `total` is the unfiltered count across all offsets so the UI can
+    show "showing N of M" and decide when to stop calling loadMore.
+    """
+
+    tag: Tag
+    cards: List[TagDetailCard]
+    total: int

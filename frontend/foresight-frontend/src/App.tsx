@@ -49,6 +49,7 @@ const Analytics = lazy(() => import("./pages/AnalyticsV2"));
 const Methodology = lazy(() => import("./pages/Methodology"));
 const HowItWorks = lazy(() => import("./pages/HowItWorks"));
 const Signals = lazy(() => import("./pages/Signals"));
+const TagDetail = lazy(() => import("./pages/TagDetail"));
 const Patterns = lazy(() => import("./pages/Patterns"));
 const PatternDetail = lazy(() => import("./pages/PatternDetail"));
 const AskForesight = lazy(() => import("./pages/AskForesight"));
@@ -263,6 +264,17 @@ function App() {
                       <ProtectedRoute
                         element={<Signals />}
                         loadingMessage="Loading signals..."
+                      />
+                    }
+                  />
+
+                  {/* Community-tag detail (all cards carrying a tag) */}
+                  <Route
+                    path="/tags/:slug"
+                    element={
+                      <ProtectedRoute
+                        element={<TagDetail />}
+                        loadingMessage="Loading tagged signals..."
                       />
                     }
                   />
