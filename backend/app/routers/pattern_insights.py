@@ -70,7 +70,9 @@ async def get_pattern_insight_by_id(
                 )
                 return resp.data or []
 
-            insight["related_cards"] = chunked_in_query(_fetch_related, related_ids)
+            insight["related_cards"] = await asyncio.to_thread(
+                chunked_in_query, _fetch_related, related_ids
+            )
         else:
             insight["related_cards"] = []
 

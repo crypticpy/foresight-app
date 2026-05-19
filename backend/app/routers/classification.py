@@ -1,5 +1,6 @@
 """Classification validation router."""
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -196,7 +197,9 @@ async def get_cards_pending_validation(
         )
         return resp.data or []
 
-    validated_rows = chunked_in_query(_fetch_validations, card_ids)
+    validated_rows = await asyncio.to_thread(
+        chunked_in_query, _fetch_validations, card_ids
+    )
     validated_ids = {v["card_id"] for v in validated_rows if v.get("card_id")}
 
     return [c for c in cards_response.data if c["id"] not in validated_ids]

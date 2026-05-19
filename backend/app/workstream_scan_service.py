@@ -1146,8 +1146,8 @@ Example: ["query 1", "query 2", ...]"""
                         )
                         return resp.data or []
 
-                    ws_card_rows = chunked_in_query(
-                        _check_ws, list(existing_card_ids)
+                    ws_card_rows = await asyncio.to_thread(
+                        chunked_in_query, _check_ws, list(existing_card_ids)
                     )
                     if ws_card_rows:
                         duplicate_count += 1
