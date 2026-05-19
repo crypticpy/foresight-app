@@ -165,8 +165,9 @@ async def get_tag_detail(
     tag = tag_res.data[0]
 
     # Paginate over (card_id, max(created_at)) so a card that gets a fresh
-    # application bubbles back up the list. Total reflects distinct cards
-    # that carry the tag, not distinct applications.
+    # application bubbles back up the list. `tag_cards_page` already
+    # filters to active cards inside its CTE, so LIMIT/OFFSET apply
+    # post-filter and a page returns up to `limit` active cards.
     distinct_res = await asyncio.to_thread(
         lambda: supabase.rpc(
             "tag_cards_page",
@@ -179,9 +180,23 @@ async def get_tag_detail(
     )
     page_rows = distinct_res.data or []
     card_ids = [row["card_id"] for row in page_rows]
-    # `total` comes from the same RPC — every row carries the same total
-    # so we read it from any row. When the page is empty, fall back to 0.
-    total = page_rows[0]["total"] if page_rows else 0
+
+    # `total` rides inline on every page row via a window function.
+    # When the page is empty the RPC can't surface it, so for offset>0
+    # we fall back to a dedicated count RPC to preserve the contract
+    # ("total reflects the global count regardless of pagination").
+    # offset=0 + empty rows is genuinely zero — skip the extra round-trip.
+    if page_rows:
+        total = page_rows[0]["total"]
+    elif offset > 0:
+        count_res = await asyncio.to_thread(
+            lambda: supabase.rpc(
+                "tag_cards_count", {"p_tag_id": tag["id"]}
+            ).execute()
+        )
+        total = int(count_res.data or 0)
+    else:
+        total = 0
 
     cards: list[TagDetailCard] = []
     if card_ids:
@@ -189,7 +204,6 @@ async def get_tag_detail(
             lambda: supabase.table("cards")
             .select(_TAG_DETAIL_CARD_FIELDS)
             .in_("id", card_ids)
-            .eq("status", "active")
             .execute()
         )
         # Preserve the RPC's ordering — `in_(...)` returns rows in
