@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from .discovery_config import (
     DEFAULT_RSS_FEEDS,
@@ -94,14 +94,21 @@ async def fetch_from_all_source_categories(
     if news_config.enabled:
         # ``_apply_schedule_scope`` writes per-schedule URL lists into the
         # ``rss_feeds`` field for every category (the field is reused as a
-        # generic URL slot — see SourceCategoryConfig). Pass them through so
-        # a non-RSS schedule actually scopes the fetch to those URLs instead
-        # of silently broadcasting topic-search across the whole catalog.
-        tasks.append(
-            _fetch_news_sources(
-                topics, news_config.max_sources, news_config.rss_feeds
+        # generic URL slot — see SourceCategoryConfig). For non-RSS
+        # categories the registry rows are *source-level* URLs (feed roots,
+        # homepages, search endpoints) rather than article URLs, so the
+        # downstream fetcher can't simply fetch them as articles. Until the
+        # fetchers grow a "scope topic search to these source URLs" path,
+        # we warn and fall back to broad topic search rather than silently
+        # downgrading scheduled runs to homepage fetches.
+        if news_config.rss_feeds:
+            logger.warning(
+                "News category got %d scoped URLs from source_ids, but the "
+                "news fetcher doesn't yet scope topic search to a URL list; "
+                "ignoring source_ids scope for news.",
+                len(news_config.rss_feeds),
             )
-        )
+        tasks.append(_fetch_news_sources(topics, news_config.max_sources))
 
     # 3. Academic publications
     academic_config = config.source_categories.get(
@@ -126,22 +133,30 @@ async def fetch_from_all_source_categories(
         SourceCategory.GOVERNMENT.value, SourceCategoryConfig()
     )
     if gov_config.enabled:
-        tasks.append(
-            _fetch_government_sources(
-                topics, gov_config.max_sources, gov_config.rss_feeds
+        # Same as news above — gov registry rows are source-level URLs.
+        if gov_config.rss_feeds:
+            logger.warning(
+                "Government category got %d scoped URLs from source_ids, "
+                "but the government fetcher doesn't yet scope topic search "
+                "to a URL list; ignoring source_ids scope for government.",
+                len(gov_config.rss_feeds),
             )
-        )
+        tasks.append(_fetch_government_sources(topics, gov_config.max_sources))
 
     # 5. Tech blogs
     tech_config = config.source_categories.get(
         SourceCategory.TECH_BLOG.value, SourceCategoryConfig()
     )
     if tech_config.enabled:
-        tasks.append(
-            _fetch_tech_blog_sources(
-                topics, tech_config.max_sources, tech_config.rss_feeds
+        # Same as news above — tech blog registry rows are source-level URLs.
+        if tech_config.rss_feeds:
+            logger.warning(
+                "Tech blog category got %d scoped URLs from source_ids, but "
+                "the tech blog fetcher doesn't yet scope topic search to a "
+                "URL list; ignoring source_ids scope for tech_blog.",
+                len(tech_config.rss_feeds),
             )
-        )
+        tasks.append(_fetch_tech_blog_sources(topics, tech_config.max_sources))
 
     # Execute all fetches concurrently
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -251,21 +266,12 @@ async def _fetch_rss_sources(
 
 
 async def _fetch_news_sources(
-    topics: List[str],
-    max_sources: int,
-    scoped_urls: Optional[List[str]] = None,
+    topics: List[str], max_sources: int
 ) -> Tuple[List[RawSource], str]:
-    """Fetch sources from news outlets.
-
-    When ``scoped_urls`` is provided (i.e. a schedule selected specific
-    news URLs via ``source_ids``), fetch only those URLs rather than
-    broadcasting a topic search across the whole catalog. Topics still
-    apply when no scoped URLs are configured.
-    """
+    """Fetch sources from news outlets via topic search."""
     try:
         articles = await fetch_news_articles(
-            topics=None if scoped_urls else topics[:3],
-            urls=scoped_urls or None,
+            topics=topics[:3],  # Limit topics to avoid rate limiting
             max_articles=max_sources,
         )
 
@@ -317,21 +323,12 @@ async def _fetch_academic_sources(
 
 
 async def _fetch_government_sources(
-    topics: List[str],
-    max_sources: int,
-    scoped_urls: Optional[List[str]] = None,
+    topics: List[str], max_sources: int
 ) -> Tuple[List[RawSource], str]:
-    """Fetch sources from government websites (.gov domains).
-
-    When ``scoped_urls`` is provided (i.e. a schedule selected specific
-    .gov URLs via ``source_ids``), fetch only those URLs rather than
-    broadcasting a topic search across all configured government sources.
-    """
+    """Fetch sources from government websites (.gov domains)."""
     try:
         documents = await fetch_government_sources(
-            topics=None if scoped_urls else topics[:3],
-            urls=scoped_urls or None,
-            max_results=max_sources,
+            topics=topics[:3], max_results=max_sources  # Limit topics
         )
 
         sources = []
@@ -354,21 +351,12 @@ async def _fetch_government_sources(
 
 
 async def _fetch_tech_blog_sources(
-    topics: List[str],
-    max_sources: int,
-    scoped_urls: Optional[List[str]] = None,
+    topics: List[str], max_sources: int
 ) -> Tuple[List[RawSource], str]:
-    """Fetch sources from tech blogs.
-
-    When ``scoped_urls`` is provided (i.e. a schedule selected specific
-    tech-blog URLs via ``source_ids``), fetch only those URLs rather than
-    broadcasting a topic search across the whole tech-blog catalog.
-    """
+    """Fetch sources from tech blogs."""
     try:
         articles = await fetch_tech_blog_articles(
-            topics=None if scoped_urls else topics[:3],
-            urls=scoped_urls or None,
-            max_articles=max_sources,
+            topics=topics[:3], max_articles=max_sources  # Limit topics
         )
 
         sources = []

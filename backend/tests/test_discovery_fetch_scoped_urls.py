@@ -1,31 +1,34 @@
-"""Regression tests for the non-RSS ``source_ids`` scoping plumbing.
+"""Regression tests for the non-RSS ``source_ids`` scoping behavior.
 
 ``_apply_schedule_scope`` writes per-schedule URL lists into the
 ``SourceCategoryConfig.rss_feeds`` field for *every* category (the field
 is reused as a generic URL slot — see the docstring on
-``_apply_schedule_scope``). Before this patch the discovery_fetch
-helpers ignored those lists for non-RSS categories: a schedule that
-selected three specific .gov URLs ended up running a broadcast topic
-search across the whole government catalog instead. These tests pin the
-plumbing so a schedule's ``source_ids`` actually constrain the fetch.
+``_apply_schedule_scope``). For non-RSS categories the registry rows are
+*source-level* URLs (homepages, feed roots, search endpoints) rather
+than article URLs, so the downstream news/gov/tech_blog fetchers can't
+fetch them directly without retrieving useless homepage HTML.
+
+Until the fetchers grow a "scope topic search to these source URLs"
+path, the dispatcher logs a warning and falls back to broad topic
+search. These tests pin that observable behavior so a future scoping
+implementation doesn't accidentally regress to silent no-op fetches.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
-from typing import List, Optional
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app import discovery_fetch  # noqa: E402
-from app.discovery_config import SourceCategory  # noqa: E402
-from app.discovery_fetch import (  # noqa: E402
-    _fetch_government_sources,
-    _fetch_news_sources,
-    _fetch_tech_blog_sources,
+from app.discovery_config import (  # noqa: E402
+    DiscoveryConfig,
+    SourceCategory,
+    SourceCategoryConfig,
 )
 
 
@@ -33,162 +36,143 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _StubArticle:
-    """Minimal stand-in for a fetcher result.
+async def _empty_fetcher(*args, **kwargs):
+    return []
 
-    News / tech-blog / gov-doc all share the same ``url/title/content/
-    source_name/relevance`` shape on the conversion path we test against.
+
+class _StubAcademicResult:
+    papers: list = []
+
+
+async def _empty_academic(*args, **kwargs):
+    return _StubAcademicResult()
+
+
+def _config_with_scoped_urls(category: SourceCategory, urls: list[str]) -> DiscoveryConfig:
+    """Build a DiscoveryConfig where only ``category`` is enabled and has
+    a non-empty ``rss_feeds`` slot — mimicking what
+    ``_apply_schedule_scope`` produces for a non-RSS scoped schedule.
     """
-
-    def __init__(self, idx: int) -> None:
-        self.url = f"https://example.test/article/{idx}"
-        self.title = f"Article {idx}"
-        self.content = f"body {idx}"
-        self.source_name = f"src-{idx}"
-        self.relevance = 0.5
-
-
-# ---------------------------------------------------------------------------
-# News
-# ---------------------------------------------------------------------------
+    cfg = DiscoveryConfig()
+    cfg.source_categories = {
+        cat.value: SourceCategoryConfig(enabled=False) for cat in SourceCategory
+    }
+    cfg.source_categories[category.value] = SourceCategoryConfig(
+        enabled=True, rss_feeds=urls, max_sources=5
+    )
+    return cfg
 
 
-def test_news_scoped_urls_skip_topic_search() -> None:
-    """Scoped URLs ⇒ ``urls`` kwarg gets the list, ``topics`` is None."""
-    captured: dict = {}
-
-    async def fake_fetch_news_articles(
-        *,
-        topics: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
-        max_articles: int = 20,
-    ):
-        captured["topics"] = topics
-        captured["urls"] = urls
-        captured["max_articles"] = max_articles
-        return [_StubArticle(i) for i in range(len(urls or []))]
-
-    scoped = ["https://gov.example/a", "https://gov.example/b"]
-    with patch.object(discovery_fetch, "fetch_news_articles", new=fake_fetch_news_articles):
-        sources, category = _run(
-            _fetch_news_sources(
-                topics=["smart cities", "civic tech"],
-                max_sources=5,
-                scoped_urls=scoped,
-            )
-        )
-
-    assert captured["topics"] is None  # explicitly suppressed
-    assert captured["urls"] == scoped
-    assert captured["max_articles"] == 5
-    assert category == SourceCategory.NEWS.value
-    assert len(sources) == 2
+def _warning_messages(caplog_records, needle: str) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog_records
+        if r.levelno == logging.WARNING and needle in r.getMessage()
+    ]
 
 
-def test_news_no_scoped_urls_falls_back_to_topics() -> None:
-    """No scoped URLs ⇒ topics drive the search (back-compat path)."""
-    captured: dict = {}
+def test_news_scoped_source_ids_logs_warning_and_falls_back(caplog) -> None:
+    """News with scoped URLs warns + still runs broad topic search."""
+    cfg = _config_with_scoped_urls(
+        SourceCategory.NEWS, ["https://reuters.example/", "https://ap.example/"]
+    )
 
-    async def fake_fetch_news_articles(
-        *,
-        topics: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
-        max_articles: int = 20,
-    ):
-        captured["topics"] = topics
-        captured["urls"] = urls
-        return [_StubArticle(0)]
-
-    with patch.object(discovery_fetch, "fetch_news_articles", new=fake_fetch_news_articles):
-        _run(
-            _fetch_news_sources(
-                topics=["a", "b", "c", "d"],
-                max_sources=10,
-                scoped_urls=None,
-            )
-        )
-
-    assert captured["urls"] is None
-    # Original limiter (first 3 topics) preserved.
-    assert captured["topics"] == ["a", "b", "c"]
-
-
-# ---------------------------------------------------------------------------
-# Government
-# ---------------------------------------------------------------------------
-
-
-def test_government_scoped_urls_skip_topic_search() -> None:
-    captured: dict = {}
-
-    async def fake_fetch_government_sources(
-        *,
-        topics: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
-        max_results: int = 30,
-    ):
-        captured["topics"] = topics
-        captured["urls"] = urls
-        # Return objects that convert_government_to_raw_source can handle —
-        # use stubs because we also patch the converter.
-        return [_StubArticle(i) for i in range(len(urls or []))]
-
-    def fake_convert(doc):
-        return {
-            "url": doc.url,
-            "title": doc.title,
-            "content": doc.content,
-            "source_name": doc.source_name,
-            "relevance": doc.relevance,
-        }
-
-    scoped = ["https://austintexas.gov/policy/a", "https://austintexas.gov/policy/b"]
-    with patch.object(
-        discovery_fetch, "fetch_government_sources", new=fake_fetch_government_sources
+    with caplog.at_level(logging.WARNING), patch.object(
+        discovery_fetch, "fetch_news_articles", new=_empty_fetcher
     ), patch.object(
-        discovery_fetch, "convert_government_to_raw_source", new=fake_convert
+        discovery_fetch, "fetch_academic_papers", new=_empty_academic
+    ), patch.object(
+        discovery_fetch, "fetch_government_sources", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_tech_blog_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_rss_sources", new=_empty_fetcher
     ):
-        sources, category = _run(
-            _fetch_government_sources(
-                topics=["budget"], max_sources=5, scoped_urls=scoped
-            )
+        result = _run(discovery_fetch.fetch_from_all_source_categories(cfg))
+
+    warnings = _warning_messages(caplog.records, "News category got 2 scoped URLs")
+    assert warnings, f"expected news scope warning, got records: {caplog.records}"
+    # Topic-search fallback still ran (no crash, returns a result).
+    assert result.total_sources == 0  # stubbed fetcher returns []
+
+
+def test_government_scoped_source_ids_logs_warning_and_falls_back(caplog) -> None:
+    cfg = _config_with_scoped_urls(
+        SourceCategory.GOVERNMENT, ["https://austintexas.gov/policy/a"]
+    )
+
+    with caplog.at_level(logging.WARNING), patch.object(
+        discovery_fetch, "fetch_news_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_academic_papers", new=_empty_academic
+    ), patch.object(
+        discovery_fetch, "fetch_government_sources", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_tech_blog_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_rss_sources", new=_empty_fetcher
+    ):
+        _run(discovery_fetch.fetch_from_all_source_categories(cfg))
+
+    warnings = _warning_messages(
+        caplog.records, "Government category got 1 scoped URLs"
+    )
+    assert warnings, f"expected gov scope warning, got records: {caplog.records}"
+
+
+def test_tech_blog_scoped_source_ids_logs_warning_and_falls_back(caplog) -> None:
+    cfg = _config_with_scoped_urls(
+        SourceCategory.TECH_BLOG,
+        ["https://arstechnica.test/", "https://techcrunch.test/"],
+    )
+
+    with caplog.at_level(logging.WARNING), patch.object(
+        discovery_fetch, "fetch_news_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_academic_papers", new=_empty_academic
+    ), patch.object(
+        discovery_fetch, "fetch_government_sources", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_tech_blog_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_rss_sources", new=_empty_fetcher
+    ):
+        _run(discovery_fetch.fetch_from_all_source_categories(cfg))
+
+    warnings = _warning_messages(
+        caplog.records, "Tech blog category got 2 scoped URLs"
+    )
+    assert warnings, f"expected tech_blog scope warning, got records: {caplog.records}"
+
+
+def test_no_warning_when_no_scoped_urls(caplog) -> None:
+    """Default config (no source_ids) ⇒ no scope warnings."""
+    cfg = DiscoveryConfig()
+    cfg.source_categories = {
+        cat.value: SourceCategoryConfig(enabled=True, max_sources=5)
+        for cat in SourceCategory
+    }
+    # Leave rss_feeds empty on every category to simulate no schedule scope.
+
+    with caplog.at_level(logging.WARNING), patch.object(
+        discovery_fetch, "fetch_news_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_academic_papers", new=_empty_academic
+    ), patch.object(
+        discovery_fetch, "fetch_government_sources", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_tech_blog_articles", new=_empty_fetcher
+    ), patch.object(
+        discovery_fetch, "fetch_rss_sources", new=_empty_fetcher
+    ):
+        _run(discovery_fetch.fetch_from_all_source_categories(cfg))
+
+    for needle in (
+        "News category got",
+        "Government category got",
+        "Tech blog category got",
+        "Academic category got",
+    ):
+        assert not _warning_messages(caplog.records, needle), (
+            f"unexpected warning for '{needle}'"
         )
-
-    assert captured["topics"] is None
-    assert captured["urls"] == scoped
-    assert category == SourceCategory.GOVERNMENT.value
-    assert len(sources) == 2
-
-
-# ---------------------------------------------------------------------------
-# Tech blog
-# ---------------------------------------------------------------------------
-
-
-def test_tech_blog_scoped_urls_skip_topic_search() -> None:
-    captured: dict = {}
-
-    async def fake_fetch_tech_blog_articles(
-        *,
-        topics: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
-        max_articles: int = 20,
-    ):
-        captured["topics"] = topics
-        captured["urls"] = urls
-        return [_StubArticle(i) for i in range(len(urls or []))]
-
-    scoped = ["https://arstechnica.test/a", "https://techcrunch.test/b"]
-    with patch.object(
-        discovery_fetch, "fetch_tech_blog_articles", new=fake_fetch_tech_blog_articles
-    ):
-        sources, category = _run(
-            _fetch_tech_blog_sources(
-                topics=["smart cities"], max_sources=5, scoped_urls=scoped
-            )
-        )
-
-    assert captured["topics"] is None
-    assert captured["urls"] == scoped
-    assert category == SourceCategory.TECH_BLOG.value
-    assert len(sources) == 2
