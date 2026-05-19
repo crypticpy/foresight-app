@@ -308,6 +308,18 @@ from .lens import (
     effective_array,
 )
 
+from .tag import (
+    TAG_DISPLAY_LIMIT,
+    TAG_LABEL_MAX,
+    Tag,
+    TagOnCard,
+    TagWithUsage,
+    TagApplyRequest,
+    CardTagListResponse,
+    TagListResponse,
+    PopularTagsResponse,
+)
+
 from .workstream_collab import (
     WorkstreamMember,
     WorkstreamMemberCreate,
@@ -568,6 +580,16 @@ __all__ = [
     "UserMetadata",
     "effective_anchor_scores",
     "effective_array",
+    # tag
+    "TAG_DISPLAY_LIMIT",
+    "TAG_LABEL_MAX",
+    "Tag",
+    "TagOnCard",
+    "TagWithUsage",
+    "TagApplyRequest",
+    "CardTagListResponse",
+    "TagListResponse",
+    "PopularTagsResponse",
     # workstream_collab
     "WorkstreamMember",
     "WorkstreamMemberCreate",
