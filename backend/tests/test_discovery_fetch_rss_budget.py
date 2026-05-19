@@ -63,12 +63,14 @@ def test_rss_per_feed_cap_clamped_to_one_when_budget_smaller_than_feeds() -> Non
         return [_StubArticle(i) for i in range(len(feed_urls))]
 
     with patch.object(discovery_fetch, "fetch_rss_sources", new=fake_fetch_rss_sources):
-        sources, category = _run(_fetch_rss_sources(feed_urls, max_sources=3))
+        sources, category, error = _run(_fetch_rss_sources(feed_urls, max_sources=3))
 
     assert captured["max_articles_per_feed"] == 1
     assert category == SourceCategory.RSS.value
     # Caller slice still honors the total budget.
     assert len(sources) == 3
+    # Successful fetch surfaces no error reason.
+    assert error is None
 
 
 def test_rss_per_feed_cap_uses_ceiling_division() -> None:
@@ -82,7 +84,7 @@ def test_rss_per_feed_cap_uses_ceiling_division() -> None:
         return [_StubArticle(i) for i in range(max_articles_per_feed * len(feed_urls))]
 
     with patch.object(discovery_fetch, "fetch_rss_sources", new=fake_fetch_rss_sources):
-        sources, _ = _run(_fetch_rss_sources(feed_urls, max_sources=7))
+        sources, _, _ = _run(_fetch_rss_sources(feed_urls, max_sources=7))
 
     assert captured["max_articles_per_feed"] == 3  # ceil(7/3) == 3, not floor=2
     assert len(sources) == 7  # caller slices to budget
@@ -99,11 +101,13 @@ def test_rss_zero_budget_short_circuits_without_fetching() -> None:
         return []
 
     with patch.object(discovery_fetch, "fetch_rss_sources", new=fake_fetch_rss_sources):
-        sources, category = _run(_fetch_rss_sources(feed_urls, max_sources=0))
+        sources, category, error = _run(_fetch_rss_sources(feed_urls, max_sources=0))
 
     assert called["count"] == 0
     assert sources == []
     assert category == SourceCategory.RSS.value
+    # Short-circuit on zero budget is not a fetch error.
+    assert error is None
 
 
 def test_rss_empty_feed_list_short_circuits() -> None:
@@ -115,8 +119,10 @@ def test_rss_empty_feed_list_short_circuits() -> None:
         return []
 
     with patch.object(discovery_fetch, "fetch_rss_sources", new=fake_fetch_rss_sources):
-        sources, category = _run(_fetch_rss_sources([], max_sources=10))
+        sources, category, error = _run(_fetch_rss_sources([], max_sources=10))
 
     assert called["count"] == 0
     assert sources == []
     assert category == SourceCategory.RSS.value
+    # Empty-feed short-circuit is not a fetch error.
+    assert error is None
