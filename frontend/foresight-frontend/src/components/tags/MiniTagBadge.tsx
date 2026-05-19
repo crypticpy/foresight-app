@@ -30,6 +30,7 @@ export const MiniTagBadge: React.FC<MiniTagBadgeProps> = ({
 
   return (
     <div
+      role="group"
       className={cn("flex flex-wrap items-center gap-1", className)}
       aria-label={`Tags: ${tags.map((t) => t.label).join(", ")}`}
     >

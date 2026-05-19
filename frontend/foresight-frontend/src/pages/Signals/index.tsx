@@ -98,13 +98,16 @@ export default function Signals() {
     patchStats,
   } = useSignalsFeed(queryParams);
 
-  // One batched hydrate covers both pinned + paginated signals. Memo keeps
-  // the array stable across renders that don't change membership; the hook
-  // already keys on a sorted-join of the IDs, but this also stops React
-  // from seeing a new reference each pass and re-running the effect via
-  // dep-changed checks elsewhere in the tree.
+  // One batched hydrate covers both pinned + paginated signals. We dedupe
+  // here because a pinned signal often also appears in the paginated feed
+  // — without dedupe, those duplicates waste batch slots and can push
+  // unique cards past the 250-card cap (see useCardTagsBatch). Memoizing
+  // keeps the array stable across renders that don't change membership.
   const allSignalCardIds = useMemo(
-    () => [...pinned.map((s) => s.id), ...signals.map((s) => s.id)],
+    () =>
+      Array.from(
+        new Set([...pinned.map((s) => s.id), ...signals.map((s) => s.id)]),
+      ),
     [pinned, signals],
   );
   const { tagsByCard } = useCardTagsBatch(allSignalCardIds, getAuthToken);
