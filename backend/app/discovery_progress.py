@@ -81,9 +81,26 @@ async def update_progress(
             .single()
             .execute()
         )
-        current_report = (
-            result.data.get("summary_report", {}) if result.data else {}
-        )
+
+        # Two failure modes the old code didn't handle:
+        # 1. Row missing (result.data is None) — pre-fix we silently wrote
+        #    a no-op UPDATE that matched zero rows. Skip the write and log
+        #    so we surface that the run id is bogus instead of pretending
+        #    progress was recorded.
+        # 2. ``summary_report`` column is JSONB null — ``.get("k", {})``
+        #    only returns the default when the key is *missing*. When the
+        #    key exists with value None, ``.get`` returns None and the
+        #    ``{**current_report, ...}`` splat below would raise TypeError.
+        #    Coerce non-dict values to ``{}`` (the lifecycle helper uses
+        #    the same defensive pattern — see ``discovery_run_lifecycle``).
+        if not result.data:
+            logger.warning(
+                "Progress update skipped: discovery_runs row %s not found",
+                run_id,
+            )
+            return
+        raw_report = result.data.get("summary_report")
+        current_report = raw_report if isinstance(raw_report, dict) else {}
 
         # Merge progress into summary_report
         updated_report = {**current_report, "progress": progress}
