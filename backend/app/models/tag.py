@@ -129,3 +129,39 @@ class TagDetailResponse(BaseModel):
     tag: Tag
     cards: List[TagDetailCard]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Admin operations (PR 7) — merge / rename / delete.
+# ---------------------------------------------------------------------------
+
+
+class AdminTagMergeRequest(BaseModel):
+    """Body for `POST /admin/tags/{source_slug}/merge`.
+
+    The target tag must already exist — admins should rename first if they
+    want a brand-new label as the merge target. Keeping merge "join only"
+    makes the operation auditable: every merge is a deliberate dictionary
+    consolidation, not an accidental new-tag creation.
+    """
+
+    target_slug: str = Field(..., min_length=1, max_length=TAG_LABEL_MAX)
+
+
+class AdminTagMergeResponse(BaseModel):
+    """Summary of a merge operation."""
+
+    target: Tag
+    moved_count: int
+    deduped_count: int
+
+
+class AdminTagRenameRequest(BaseModel):
+    """Body for `PATCH /admin/tags/{slug}`.
+
+    The slug is recomputed from the new label via `normalize_tag_slug`.
+    Renaming to a label whose slug already exists returns 409 — the admin
+    should `POST .../merge` instead so the consolidation is explicit.
+    """
+
+    label: str = Field(..., min_length=1, max_length=TAG_LABEL_MAX)
