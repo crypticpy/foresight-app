@@ -528,3 +528,73 @@ async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
     (after the ``sys.path`` tweak) so this helper can call into it.
     """
     return await _real_fetch_all_paginated(builder_factory, page_size=2)
+
+
+def test_csp_goal_ids_dedupe_per_card(monkeypatch):
+    """A card listing the same goal id twice contributes one card to the
+    heatmap, not two. Regression for a legacy duplicate entry slipping in
+    via re-classification or hand-edited rows.
+    """
+    from app.routers.analytics import get_lens_overview
+
+    goal_a = _uuid()
+    cards = [
+        # Same goal id listed twice on a single card.
+        _card(
+            classifier_version="v1",
+            signal_type="trend",
+            csp_goal_ids=[goal_a, goal_a],
+        ),
+    ]
+    goals = [
+        {
+            "id": goal_a,
+            "code": "CH.1",
+            "name": "Climate goal",
+            "pillar_code": "CH",
+            "display_order": 1,
+        },
+    ]
+    _patch(monkeypatch, _MockSupabase({"cards": cards, "csp_goals": goals}))
+
+    user = {"id": _uuid(), "account_type": "paid"}
+    result = _call(get_lens_overview, days=14, current_user=user)
+
+    coverage = {c.code: c.card_count for c in result.csp_coverage}
+    # The duplicate id must NOT double-count the single card.
+    assert coverage == {"CH.1": 1}
+
+
+def test_signal_type_unknown_values_bucket_to_unclassified(monkeypatch):
+    """Legacy or externally-written signal_type values that fall outside
+    VALID_SIGNAL_TYPES bucket into "unclassified" so the donut totals
+    always sum to total_active_cards (instead of silently dropping
+    unknown buckets the dashboard doesn't render).
+    """
+    from app.routers.analytics import get_lens_overview
+
+    cards = [
+        _card(classifier_version="v1", signal_type="trend"),
+        # Unknown legacy value — must NOT vanish from the totals.
+        _card(classifier_version="v1", signal_type="weak_signal_legacy"),
+        # Empty string — same fate as None: unclassified.
+        _card(classifier_version="v1", signal_type=""),
+    ]
+    _patch(monkeypatch, _MockSupabase({"cards": cards}))
+
+    user = {"id": _uuid(), "account_type": "paid"}
+    result = _call(get_lens_overview, days=14, current_user=user)
+
+    by_type = {s.signal_type: s.count for s in result.signal_type_counts}
+    # Donut totals must equal total_active_cards — no silent drops.
+    assert sum(by_type.values()) == result.total_active_cards == 3
+    assert by_type["trend"] == 1
+    # Both the legacy value and the empty string fall into unclassified.
+    assert by_type["unclassified"] == 2
+    # Stable bucket order is unchanged for the frontend.
+    assert [s.signal_type for s in result.signal_type_counts] == [
+        "trend",
+        "driver",
+        "signal",
+        "unclassified",
+    ]

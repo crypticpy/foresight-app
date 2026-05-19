@@ -41,6 +41,7 @@ from app.models.analytics import (
 )
 from app.models.lens import (
     VALID_ANCHOR_CODES,
+    VALID_SIGNAL_TYPES,
     AnchorScores,
     UserMetadata,
     effective_anchor_scores,
@@ -182,7 +183,20 @@ async def get_lens_overview(
     """
     user_id = current_user["id"]
     now = datetime.now(timezone.utc)
-    window_start = now - timedelta(days=days)
+    # ``_daily_buckets`` builds exactly ``days`` calendar bins ending today
+    # (window_start_date = (end - timedelta(days=days - 1)).date()). Anchor the
+    # SQL window to the *start of that same day* so the query and the sparkline
+    # cover the same span. Previously ``window_start = now - timedelta(days=days)``
+    # fetched an extra rolling-hour slice that ``_daily_buckets`` then silently
+    # dropped (a `gte` of "14 days ago at 03:35" can let rows from "day 15
+    # before bucket boundary" through, only to be filtered out client-side).
+    earliest_bucket_date = (now - timedelta(days=days - 1)).date()
+    window_start = datetime(
+        earliest_bucket_date.year,
+        earliest_bucket_date.month,
+        earliest_bucket_date.day,
+        tzinfo=timezone.utc,
+    )
     one_day_ago = now - timedelta(days=1)
     window_iso = window_start.isoformat()
 
@@ -286,13 +300,23 @@ async def get_lens_overview(
                         anchor_high_counts[code] += 1
 
             # Signal type — bucket null/unknown together as "unclassified".
+            # ``VALID_SIGNAL_TYPES`` is the schema-enforced whitelist; anything
+            # outside it (legacy rows, externally-written garbage) also folds
+            # into "unclassified" so the donut totals match
+            # ``total_active_cards`` instead of silently dropping unknown
+            # buckets the donut UI doesn't render.
             sig = card.get("signal_type")
-            signal_type_counts[sig if sig else "unclassified"] += 1
+            if sig in VALID_SIGNAL_TYPES:
+                signal_type_counts[sig] += 1
+            else:
+                signal_type_counts["unclassified"] += 1
 
             # CSP goal coverage — unique per card to avoid double counting.
-            for gid in card.get("csp_goal_ids") or []:
-                if gid:
-                    goal_card_counts[gid] += 1
+            # Dedupe via ``set`` so a row that lists the same goal id twice
+            # (a legacy write or a re-classification artifact) contributes
+            # one card to the heatmap, not two.
+            for gid in {gid for gid in (card.get("csp_goal_ids") or []) if gid}:
+                goal_card_counts[gid] += 1
 
             # Issue tags — apply effective_array so user add/remove takes hold.
             llm_tags = card.get("issue_tags") or []
@@ -353,8 +377,15 @@ async def get_lens_overview(
         ]
 
         # Signal-type mix — fixed buckets so the donut has stable slices
-        # even when the corpus is empty.
+        # even when the corpus is empty. The dashboard legend orders the
+        # slices ``trend → driver → signal → unclassified``, so keep this
+        # list aligned to that order rather than alphabetizing.
+        # ``VALID_SIGNAL_TYPES`` is the schema-enforced source of truth for
+        # what counts as a real bucket; assert the ordered list matches.
         signal_type_buckets = ["trend", "driver", "signal", "unclassified"]
+        assert set(signal_type_buckets) - {"unclassified"} == VALID_SIGNAL_TYPES, (
+            "signal_type_buckets drifted from VALID_SIGNAL_TYPES — update both"
+        )
         signal_mix = [
             SignalTypeMix(signal_type=t, count=signal_type_counts.get(t, 0))
             for t in signal_type_buckets
