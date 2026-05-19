@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from supabase import Client
@@ -48,7 +48,7 @@ async def triage_sources_with_metrics(
     sources: List[RawSource],
     *,
     current_run_id: Optional[str] = None,
-) -> Tuple[List[ProcessedSource], int]:
+) -> Tuple[List[ProcessedSource], Dict[str, int]]:
     """
     Triage sources for municipal relevance with token usage tracking.
 
@@ -64,11 +64,24 @@ async def triage_sources_with_metrics(
     persisted into ``discovery_runs.summary_report.quality_stats``
     when ``current_run_id`` is supplied.
 
-    Returns ``(processed_sources, estimated_total_tokens)``.
+    Returns ``(processed_sources, token_breakdown)`` where
+    ``token_breakdown`` is a dict keyed by ``APITokenUsage`` operation
+    name — ``triage``, ``analysis``, ``embedding`` — and valued by the
+    estimated token count for each. The previous version returned a
+    single int aggregating all three, which the caller then attributed
+    entirely to the ``triage`` bucket via
+    ``api_token_usage.add_tokens("triage", ...)``: that silently
+    inflated ``triage_tokens`` and left ``analysis_tokens`` /
+    ``embedding_tokens`` permanently zero in every recorded run.
     """
     processed: List[ProcessedSource] = []
     triage_threshold = 0.6
-    total_tokens = 0
+    # Per-operation accumulators so callers can attribute each bucket
+    # correctly. Returned as a dict keyed by ``APITokenUsage``
+    # operation name (matches the dataclass's ``add_tokens`` contract).
+    triage_tokens_total = 0
+    analysis_tokens_total = 0
+    embedding_tokens_total = 0
 
     # Domain reputation stats tracking (Task 2.7)
     domain_rep_stats = {
@@ -143,7 +156,7 @@ async def triage_sources_with_metrics(
                     len(source.title or "") // 4 + len(source.content or "") // 4
                 )
                 output_tokens = 100  # Estimated output tokens for triage
-                total_tokens += input_tokens + output_tokens
+                triage_tokens_total += input_tokens + output_tokens
 
             # Pre-print relevance penalty (Task 2.6): soft penalty, not a hard block
             if getattr(source, "is_preprint", False) and triage.confidence > 0:
@@ -215,13 +228,13 @@ async def triage_sources_with_metrics(
                     len(source.title or "") // 4 + len(source.content or "") // 4
                 )
                 output_tokens = 500  # Estimated output tokens for analysis
-                total_tokens += input_tokens + output_tokens
+                analysis_tokens_total += input_tokens + output_tokens
 
                 # Generate embedding
                 embed_text = f"{source.title} {analysis.summary}"
                 embedding = await ai_service.generate_embedding(embed_text)
                 # Estimate tokens for embedding
-                total_tokens += len(embed_text) // 4
+                embedding_tokens_total += len(embed_text) // 4
 
                 processed.append(
                     ProcessedSource(
@@ -276,4 +289,8 @@ async def triage_sources_with_metrics(
     except Exception as e:
         logger.debug(f"Failed to persist domain reputation stats: {e}")
 
-    return processed, total_tokens
+    return processed, {
+        "triage": triage_tokens_total,
+        "analysis": analysis_tokens_total,
+        "embedding": embedding_tokens_total,
+    }
