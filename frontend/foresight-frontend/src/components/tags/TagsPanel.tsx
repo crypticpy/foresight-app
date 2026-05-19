@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Tag as TagIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useCardTags } from "../../hooks/useCardTags";
@@ -28,6 +28,12 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
     getAuthToken,
   );
   const [showAll, setShowAll] = useState(false);
+
+  // Collapse the "show all" expansion when the card context changes so the
+  // next opened card doesn't inherit the previous card's expanded state.
+  useEffect(() => {
+    setShowAll(false);
+  }, [cardId]);
 
   const { visible, overflow } = useMemo(() => {
     if (showAll || tags.length <= TAG_DISPLAY_LIMIT) {
