@@ -251,13 +251,103 @@ class RAGEngine:
         if source_scope_ids is not None:
             source_params["scope_card_ids"] = source_scope_ids
 
-        # Execute both RPCs in parallel
+        # Execute all retrieval legs in parallel.
         card_task = self._rpc_safe("hybrid_search_cards", card_params)
         source_task = self._rpc_safe("hybrid_search_sources", source_params)
+        tag_task = self._tag_match_cards(query, scope)
 
-        card_results, source_results = await asyncio.gather(card_task, source_task)
+        card_results, source_results, tag_results = await asyncio.gather(
+            card_task, source_task, tag_task
+        )
 
-        return {"cards": card_results, "sources": source_results}
+        merged_cards = self._merge_tag_matches(card_results, tag_results)
+
+        return {"cards": merged_cards, "sources": source_results}
+
+    async def _tag_match_cards(
+        self,
+        query: str,
+        scope: str,
+    ) -> List[Dict[str, Any]]:
+        """Surface cards via community-tag fuzzy match on the raw query.
+
+        Runs the ``tag_match_cards`` RPC and reshapes each row into the same
+        card dict shape as ``hybrid_search_cards`` so ``_merge_tag_matches``
+        can treat the two legs uniformly. The leg is global-only — signal
+        scope already has a fixed primary card, and workstream scope is
+        constrained to the workstream's own card set, so the tag-match
+        signal there is redundant with the existing scope filter.
+        """
+        if scope != "global":
+            return []
+        trimmed = (query or "").strip()
+        if not trimmed:
+            return []
+        rows = await self._rpc_safe(
+            "tag_match_cards",
+            {"p_query": trimmed, "p_limit": 10},
+        )
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            card_id = row.get("card_id")
+            if not card_id:
+                continue
+            tag_score = row.get("tag_match_score") or 0.0
+            results.append(
+                {
+                    "id": card_id,
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "summary": row.get("summary"),
+                    "description": row.get("description"),
+                    "pillar_id": row.get("pillar_id"),
+                    "horizon": row.get("horizon"),
+                    "stage_id": row.get("stage_id"),
+                    "impact_score": row.get("impact_score"),
+                    "relevance_score": row.get("relevance_score"),
+                    "velocity_score": row.get("velocity_score"),
+                    "risk_score": row.get("risk_score"),
+                    "signal_quality_score": row.get("signal_quality_score"),
+                    # Surface the tag-similarity through rrf_score so the
+                    # reranker / context-assembly steps can weigh tag matches
+                    # alongside FTS/vector hits without a separate code path.
+                    "rrf_score": float(tag_score),
+                    "fts_rank": 0.0,
+                    "vector_similarity": 0.0,
+                    "matched_tags": row.get("matched_tag_labels") or [],
+                }
+            )
+        return results
+
+    @staticmethod
+    def _merge_tag_matches(
+        hybrid_cards: List[Dict[str, Any]],
+        tag_cards: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Fold tag-matched cards into the hybrid-search result list.
+
+        - Cards that hybrid_search already returned keep their original
+          ``rrf_score`` / FTS / vector fields and gain a ``matched_tags``
+          annotation so the LLM can see why the card was retrieved.
+        - Cards surfaced only by the tag leg are appended to the end.
+        """
+        merged = list(hybrid_cards)
+        by_id: Dict[str, Dict[str, Any]] = {
+            c["id"]: c for c in merged if c.get("id")
+        }
+        for tagged in tag_cards:
+            tid = tagged.get("id")
+            if not tid:
+                continue
+            existing = by_id.get(tid)
+            if existing is not None:
+                # Same card came up in both legs — keep hybrid scores, just
+                # attach the matched-tag list.
+                existing["matched_tags"] = tagged.get("matched_tags") or []
+            else:
+                merged.append(tagged)
+                by_id[tid] = tagged
+        return merged
 
     # ------------------------------------------------------------------
     # Enrichment (scope-specific additions)
@@ -745,6 +835,12 @@ class RAGEngine:
                     f"Horizon: {card.get('horizon', 'N/A')} | "
                     f"Stage: {card.get('stage_id', 'N/A')}"
                 )
+
+                matched_tags = card.get("matched_tags") or []
+                if matched_tags:
+                    parts.append(
+                        f"Community tags matched: {', '.join(matched_tags)}"
+                    )
 
                 score_parts = []
                 for sn in (
