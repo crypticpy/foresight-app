@@ -43,7 +43,12 @@ export function useCardTags(
 
   // Hydrate from server. Re-runs on cardId change.
   useEffect(() => {
-    if (!cardId) return;
+    if (!cardId) {
+      // Clearing the card context (modal close, navigation away) must reset
+      // local state so the next opened card doesn't briefly show stale tags.
+      setState({ tags: [], loading: false, saving: false, error: null });
+      return;
+    }
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
     getAuthToken()
@@ -69,9 +74,17 @@ export function useCardTags(
 
   const apply = useCallback(
     async (label: string, workstreamId?: string) => {
-      if (!cardId) return;
+      if (!cardId) {
+        const err = new Error("Cannot apply tag: card context missing");
+        safeSetState((s) => ({ ...s, error: err.message }));
+        throw err;
+      }
       const token = await getAuthToken();
-      if (!token) return;
+      if (!token) {
+        const err = new Error("Cannot apply tag: not signed in");
+        safeSetState((s) => ({ ...s, error: err.message }));
+        throw err;
+      }
       safeSetState((s) => ({ ...s, saving: true, error: null }));
       try {
         const res = await applyTagToCard(token, cardId, label, workstreamId);
@@ -88,9 +101,17 @@ export function useCardTags(
 
   const remove = useCallback(
     async (slug: string) => {
-      if (!cardId) return;
+      if (!cardId) {
+        const err = new Error("Cannot remove tag: card context missing");
+        safeSetState((s) => ({ ...s, error: err.message }));
+        throw err;
+      }
       const token = await getAuthToken();
-      if (!token) return;
+      if (!token) {
+        const err = new Error("Cannot remove tag: not signed in");
+        safeSetState((s) => ({ ...s, error: err.message }));
+        throw err;
+      }
       safeSetState((s) => ({ ...s, saving: true, error: null }));
       try {
         const res = await removeTagFromCard(token, cardId, slug);

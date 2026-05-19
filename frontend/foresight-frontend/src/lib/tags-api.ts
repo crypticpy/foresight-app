@@ -92,7 +92,10 @@ export function getTagDetail(
 }
 
 export function getCardTags(token: string, cardId: string) {
-  return apiRequest<CardTagListResponse>(`/api/v1/cards/${cardId}/tags`, token);
+  return apiRequest<CardTagListResponse>(
+    `/api/v1/cards/${encodeURIComponent(cardId)}/tags`,
+    token,
+  );
 }
 
 export function applyTagToCard(
@@ -104,7 +107,7 @@ export function applyTagToCard(
   const body: { label: string; workstream_id?: string } = { label };
   if (workstreamId) body.workstream_id = workstreamId;
   return apiRequest<CardTagListResponse>(
-    `/api/v1/cards/${cardId}/tags`,
+    `/api/v1/cards/${encodeURIComponent(cardId)}/tags`,
     token,
     { method: "POST", body: JSON.stringify(body) },
   );
@@ -112,7 +115,7 @@ export function applyTagToCard(
 
 export function removeTagFromCard(token: string, cardId: string, slug: string) {
   return apiRequest<CardTagListResponse>(
-    `/api/v1/cards/${cardId}/tags/${encodeURIComponent(slug)}`,
+    `/api/v1/cards/${encodeURIComponent(cardId)}/tags/${encodeURIComponent(slug)}`,
     token,
     { method: "DELETE" },
   );

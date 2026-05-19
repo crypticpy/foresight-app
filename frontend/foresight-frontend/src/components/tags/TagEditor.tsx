@@ -129,6 +129,9 @@ export const TagEditor: React.FC<TagEditorProps> = ({
       if (showCreate && activeIdx === suggestions.length) {
         submit(trimmed);
       } else if (suggestions[activeIdx]) {
+        // Skip suggestions already applied to this card — the listbox dims
+        // them with aria-disabled and ignores mousedown; keyboard must match.
+        if (existingSet.has(suggestions[activeIdx].slug.toLowerCase())) return;
         submit(suggestions[activeIdx].label);
       } else if (trimmed) {
         submit(trimmed);
@@ -187,7 +190,7 @@ export const TagEditor: React.FC<TagEditorProps> = ({
             </li>
           )}
           {suggestions.map((tag, idx) => {
-            const already = existingSet.has(tag.slug);
+            const already = existingSet.has(tag.slug.toLowerCase());
             const active = idx === activeIdx;
             return (
               <li
