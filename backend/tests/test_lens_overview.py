@@ -520,14 +520,20 @@ def test_delta_24h_handles_mixed_timestamp_formats(monkeypatch):
     assert result.delta_24h.new_classifications == 3
 
 
-async def _fetch_all_paginated_small(builder_factory, page_size: int = 1000):
+async def _fetch_all_paginated_small(
+    builder_factory, order_by: str = "id", page_size: int = 1000
+):
     """Override of ``fetch_all_paginated`` that uses a 2-row page so tests
     actually exercise the paginate-then-stop branch on small fixtures.
 
     ``_real_fetch_all_paginated`` is imported at the top of the module
     (after the ``sys.path`` tweak) so this helper can call into it.
+    ``order_by`` is forwarded so the deterministic-ordering kwarg added in
+    the helper still threads through the wrapper.
     """
-    return await _real_fetch_all_paginated(builder_factory, page_size=2)
+    return await _real_fetch_all_paginated(
+        builder_factory, order_by=order_by, page_size=2
+    )
 
 
 def test_csp_goal_ids_dedupe_per_card(monkeypatch):

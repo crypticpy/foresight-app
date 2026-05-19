@@ -23,7 +23,9 @@ from .supabase_retry import execute_with_h2_retry
 
 
 async def fetch_all_paginated(
-    builder_factory: Callable[[], Any], page_size: int = 1000
+    builder_factory: Callable[[], Any],
+    order_by: str = "id",
+    page_size: int = 1000,
 ) -> list:
     """Fetch every row for a Supabase query, paginating in ``page_size`` chunks.
 
@@ -32,6 +34,18 @@ async def fetch_all_paginated(
             builder (so filters/order are reapplied per page). Don't pass
             an already-built query — calling ``.range()`` twice on the
             same builder mutates it.
+        order_by: Column name used as the deterministic ordering for
+            pagination. Without a stable ORDER BY, PostgREST/PostgreSQL
+            is free to return rows in any order between ``.range()``
+            calls (especially while the discovery worker is inserting
+            into the table), which silently duplicates or skips rows
+            across page boundaries. Defaults to ``"id"`` — every
+            paginated table in this codebase has an ``id`` UUID PK.
+            Callers that already chain ``.order(...)`` in
+            ``builder_factory`` (e.g. to drive sort order in the API
+            response) still get this column appended as a tiebreaker
+            via supabase-py's stacking ``.order()`` semantics, which is
+            harmless when the upstream columns already make rows unique.
         page_size: Rows per page. Defaults to PostgREST's typical 1000-row
             server cap; smaller values raise round-trip count, larger
             values risk server-side truncation.
@@ -46,6 +60,7 @@ async def fetch_all_paginated(
         # Default arg binds ``start`` for the thread closure.
         resp = await execute_with_h2_retry(
             lambda s=start: builder_factory()
+            .order(order_by)
             .range(s, s + page_size - 1)
             .execute()
         )

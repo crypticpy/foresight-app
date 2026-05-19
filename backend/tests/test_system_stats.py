@@ -162,9 +162,13 @@ async def _call_system_stats(monkeypatch, tables):
     monkeypatch.setattr(mod, "supabase", mock_sb)
 
     # Tiny page size so the paginate loop runs more than once on small
-    # fixtures (exercises the "paged past the cap" branch).
-    async def _small(builder_factory, page_size=1000):
-        return await _real_fetch_all_paginated(builder_factory, page_size=3)
+    # fixtures (exercises the "paged past the cap" branch). Forward
+    # ``order_by`` so the deterministic-ordering kwarg added in the helper
+    # still threads through the wrapper.
+    async def _small(builder_factory, order_by="id", page_size=1000):
+        return await _real_fetch_all_paginated(
+            builder_factory, order_by=order_by, page_size=3
+        )
 
     monkeypatch.setattr(mod, "fetch_all_paginated", _small)
     current_user = {"id": "user-1"}

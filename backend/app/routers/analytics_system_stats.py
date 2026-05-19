@@ -101,8 +101,13 @@ async def get_system_wide_stats(current_user: dict = Depends(get_current_user)):
         # are routed through ``fetch_all_paginated`` — PostgREST applies a
         # ~1000-row cap to a single ``.execute()`` and a naive call silently
         # undercounts once the active corpus or workstream/follow tables
-        # exceed that. ``count="exact"`` count-only requests are cheap and
-        # stay on plain ``.execute()``.
+        # exceed that. The helper also applies ``ORDER BY id`` for
+        # pagination determinism — without a stable order, PostgreSQL is
+        # free to return rows in any order between ``.range()`` calls
+        # (especially while the discovery worker is inserting), which would
+        # silently duplicate or skip rows across page boundaries.
+        # ``count="exact"`` count-only requests are cheap and stay on plain
+        # ``.execute()``.
         (
             total_cards_resp,
             active_cards_resp,
