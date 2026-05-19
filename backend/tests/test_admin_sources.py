@@ -619,3 +619,30 @@ def test_build_discovery_config_overlays_registry_rss(monkeypatch):
     cfg = discovery_service.build_discovery_config()
     rss_cat = cfg.source_categories[discovery_service.SourceCategory.RSS.value]
     assert rss_cat.rss_feeds == ["https://only-this.example.com/feed"]
+
+
+def test_build_discovery_config_honors_all_rss_disabled(monkeypatch):
+    """When the registry is seeded but every RSS row is disabled,
+    ``load_active_source_urls`` returns ``[]``. ``build_discovery_config``
+    must honor that operator choice by emptying the feed list AND turning the
+    RSS category off — otherwise ``DiscoveryConfig.__post_init__``'s
+    ``DEFAULT_RSS_FEEDS`` keep the fetcher running against the very URLs the
+    operator just turned off.
+    """
+    from app import discovery_config, discovery_service
+
+    monkeypatch.setattr(
+        discovery_config, "load_discovery_admin_overrides", lambda: {}
+    )
+    # Seeded-but-all-disabled returns []. ``load_active_source_urls`` will only
+    # return [] for RSS in that exact case — the unseeded path falls back to
+    # DEFAULT_RSS_FEEDS, so this signal is unambiguous.
+    monkeypatch.setattr(
+        discovery_config,
+        "load_active_source_urls",
+        lambda category: [],
+    )
+    cfg = discovery_service.build_discovery_config()
+    rss_cat = cfg.source_categories[discovery_service.SourceCategory.RSS.value]
+    assert rss_cat.rss_feeds == []
+    assert rss_cat.enabled is False

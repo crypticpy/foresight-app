@@ -411,11 +411,21 @@ def build_discovery_config(**explicit: Any) -> DiscoveryConfig:
     merged = {**admin_overrides, **explicit_non_none}
     config = DiscoveryConfig(**merged)
 
-    rss_feeds = load_active_source_urls(SourceCategory.RSS.value)
-    if rss_feeds:
-        rss_cat = config.source_categories.get(SourceCategory.RSS.value)
-        if rss_cat is not None:
+    rss_cat = config.source_categories.get(SourceCategory.RSS.value)
+    if rss_cat is not None:
+        rss_feeds = load_active_source_urls(SourceCategory.RSS.value)
+        if rss_feeds:
             rss_cat.rss_feeds = rss_feeds
+        else:
+            # ``load_active_source_urls`` returns ``[]`` for RSS only when the
+            # registry is seeded but every row is disabled — the cold-boot
+            # path falls back to ``DEFAULT_RSS_FEEDS`` and never returns ``[]``
+            # for RSS. So an empty result here is an explicit operator choice
+            # ("RSS off"); honor it by emptying the feed list AND disabling the
+            # category, otherwise ``__post_init__``'s default feeds keep the
+            # fetcher running against the very URLs the operator turned off.
+            rss_cat.rss_feeds = []
+            rss_cat.enabled = False
 
     # Schedule scope overrides apply *after* the registry overlay so they
     # see the post-registry feed list when filtering by source_ids.
@@ -514,9 +524,11 @@ def apply_source_preferences(
         "rss": SourceCategory.RSS.value,
     }
 
-    # Apply enabled_categories: disable any category not in the list
+    # Apply enabled_categories: disable any category not in the list.
+    # An *explicit* empty list means "no categories enabled" — honor it.
+    # Only a missing key (``None``) means "no preference; leave defaults alone."
     enabled = source_prefs.get("enabled_categories")
-    if enabled and isinstance(enabled, list):
+    if isinstance(enabled, list):
         enabled_values = {category_map.get(c) for c in enabled if c in category_map}
         for cat_key, cat_config in config.source_categories.items():
             cat_config.enabled = cat_key in enabled_values
