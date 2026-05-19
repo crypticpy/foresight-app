@@ -97,22 +97,53 @@ class SourceDiversityMetrics:
         Compute diversity metrics from source category counts.
 
         Args:
-            sources_by_category: Count of sources per category
+            sources_by_category: Count of sources per category. Keys
+                that don't match a known ``SourceCategory`` are still
+                folded in (treated as their own bucket); missing
+                known-category keys are normalized to zero so the
+                variance / balance / entropy math is internally
+                consistent. The pre-fix implementation hardcoded the
+                denominator as ``5`` but iterated only over keys
+                present in the input dict — when the caller passed
+                fewer than 5 keys (every workstream scan and several
+                partial-failure paths in discovery did), the variance
+                sum was over k items but divided by 5, the max_std_dev
+                assumed a 5-bucket worst case that didn't exist, and
+                ``balance_score`` came out artificially inflated. We
+                also derive the bucket count from
+                ``SourceCategory`` rather than a magic ``5`` so the
+                next time the enum grows we don't have to chase
+                hardcoded denominators across this file.
 
         Returns:
-            SourceDiversityMetrics with all computed values
+            SourceDiversityMetrics with all computed values.
         """
-        total = sum(sources_by_category.values())
-        active_categories = [
-            cat for cat, count in sources_by_category.items() if count > 0
-        ]
+        # Local import to avoid a top-level cycle: ``discovery_config``
+        # imports from ``discovery_result_types`` for some signatures.
+        from .discovery_config import SourceCategory
+
+        known_category_values = [cat.value for cat in SourceCategory]
+        # Normalize: every known category gets a slot (zero if missing
+        # from the input), and any extra keys the caller provided are
+        # preserved at the end so this method stays a non-lossy summarizer.
+        normalized: Dict[str, int] = {
+            cat: int(sources_by_category.get(cat, 0)) for cat in known_category_values
+        }
+        for key, count in sources_by_category.items():
+            if key not in normalized:
+                normalized[key] = int(count)
+
+        total = sum(normalized.values())
+        active_categories = [cat for cat, count in normalized.items() if count > 0]
         num_active = len(active_categories)
-        num_total_categories = 5  # Total number of source categories
+        # Denominator drawn from the normalized bucket count — keeps the
+        # numerator (iteration below) and denominator counting the same
+        # universe. Falls back to 1 so we never divide by zero on a
+        # degenerate empty enum.
+        num_total_categories = max(len(normalized), 1)
 
         # Category coverage (0-1)
-        category_coverage = (
-            num_active / num_total_categories if num_total_categories > 0 else 0.0
-        )
+        category_coverage = num_active / num_total_categories
 
         # Balance score: 1 - normalized standard deviation
         # Perfect balance = 1.0, all in one category = 0.0
@@ -121,23 +152,29 @@ class SourceDiversityMetrics:
             variance = (
                 sum(
                     (count - mean_per_category) ** 2
-                    for count in sources_by_category.values()
+                    for count in normalized.values()
                 )
                 / num_total_categories
             )
             std_dev = math.sqrt(variance)
-            max_std_dev = mean_per_category * math.sqrt(
-                num_total_categories - 1
-            )  # Worst case: all in one category
-            balance_score = 1.0 - (std_dev / max_std_dev) if max_std_dev > 0 else 1.0
+            # Worst case: every source in a single category — std dev is
+            # ``mean * sqrt(n-1)``. Guard ``n == 1`` because then std_dev
+            # collapses to 0 and the score is trivially 1.0.
+            if num_total_categories > 1:
+                max_std_dev = mean_per_category * math.sqrt(num_total_categories - 1)
+                balance_score = (
+                    1.0 - (std_dev / max_std_dev) if max_std_dev > 0 else 1.0
+                )
+            else:
+                balance_score = 1.0
         else:
             balance_score = 0.0
 
         # Shannon entropy (normalized to 0-1)
-        # H = -sum(p * log(p)) / log(n) where n is number of categories
+        # H = -sum(p * log(p)) / log(n) where n is the bucket count.
         if total > 0 and num_active > 1:
             entropy = 0.0
-            for count in sources_by_category.values():
+            for count in normalized.values():
                 if count > 0:
                     p = count / total
                     entropy -= p * math.log(p)
@@ -151,17 +188,17 @@ class SourceDiversityMetrics:
         underrepresented = []
 
         if total > 0:
-            max_count = max(sources_by_category.values())
+            max_count = max(normalized.values())
             threshold = total / num_total_categories * 0.3  # 30% of expected average
 
-            for cat, count in sources_by_category.items():
+            for cat, count in normalized.items():
                 if count == max_count and max_count > 0:
                     dominant_category = cat
                 if count < threshold:
                     underrepresented.append(cat)
 
         return cls(
-            sources_by_category=sources_by_category,
+            sources_by_category=normalized,
             total_sources=total,
             categories_fetched=num_active,
             category_coverage=round(category_coverage, 3),
@@ -173,12 +210,21 @@ class SourceDiversityMetrics:
 
     def log_metrics(self, logger_instance: logging.Logger) -> None:
         """Log diversity metrics for observability."""
+        # Total bucket count derived from the live category set so the
+        # ``X/N`` denominator in the log matches whatever ``compute()``
+        # actually divided by — not a hardcoded ``5`` that drifts when
+        # the enum grows.
+        from .discovery_config import SourceCategory
+
+        total_buckets = max(
+            len(self.sources_by_category), len(SourceCategory), 1
+        )
         logger_instance.info(
             f"Source Diversity Metrics: "
             f"coverage={self.category_coverage:.1%}, "
             f"balance={self.balance_score:.2f}, "
             f"entropy={self.shannon_entropy:.2f}, "
-            f"categories={self.categories_fetched}/5"
+            f"categories={self.categories_fetched}/{total_buckets}"
         )
         if self.underrepresented_categories:
             logger_instance.warning(
@@ -220,13 +266,34 @@ class MultiSourceFetchResult:
 
     @property
     def category_diversity(self) -> float:
-        """Calculate diversity score (0-1) based on category distribution."""
+        """Calculate diversity score (0-1) based on category distribution.
+
+        Denominator is drawn from the live ``SourceCategory`` enum
+        rather than a hardcoded ``5`` so adding a new category to the
+        enum doesn't silently bias this score upward (the old code
+        would have made a 6th category's presence push the ratio above
+        the previous max of 1.0 / make a missing one look like 80%
+        coverage).
+
+        The denominator is also widened to match ``sources_by_category``
+        when callers supply extra (non-enum) buckets — e.g. workstream
+        scans add a ``"serper"`` bucket. Without the widening, six
+        active buckets against a denominator of five would push the
+        ratio above the documented ``[0, 1]`` range.
+        """
         if self.total_sources == 0:
             return 0.0
+        # Local import — see ``SourceDiversityMetrics.compute`` for the
+        # cycle rationale.
+        from .discovery_config import SourceCategory
+
         active_categories = sum(
             bool(count > 0) for count in self.sources_by_category.values()
         )
-        return active_categories / 5.0  # 5 categories total
+        denominator = max(
+            len(self.sources_by_category), len(SourceCategory), 1
+        )
+        return active_categories / denominator
 
 
 @dataclass
