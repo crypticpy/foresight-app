@@ -76,13 +76,60 @@ class _QueryBuilder:
         return _ExecuteResult(self._result_data)
 
 
-class _SupabaseStub:
-    def __init__(self, log: List[int], result_data: Any = None) -> None:
+class _RpcBuilder:
+    """Stand-in for ``supabase.rpc(...)``.
+
+    The atomic-summary RPC (``set_discovery_run_summary_key``) is the
+    only RPC ``discovery_progress`` calls. Record the calling thread
+    inside ``.execute()`` and capture the JSON payload so tests can
+    assert the RPC name + arguments.
+    """
+
+    def __init__(
+        self,
+        log: List[int],
+        result_data: Any,
+        captured_calls: List[Any],
+        name: str,
+        params: Any,
+    ) -> None:
         self._log = log
         self._result_data = result_data
+        self._captured_calls = captured_calls
+        self._name = name
+        self._params = params
+
+    def execute(self) -> _ExecuteResult:
+        self._log.append(threading.get_ident())
+        self._captured_calls.append((self._name, self._params))
+        return _ExecuteResult(self._result_data)
+
+
+class _SupabaseStub:
+    def __init__(
+        self,
+        log: List[int],
+        result_data: Any = None,
+        *,
+        rpc_result_data: Any = True,
+    ) -> None:
+        self._log = log
+        self._result_data = result_data
+        self._rpc_result_data = rpc_result_data
+        # Tests can read this after the call to assert RPC name + args.
+        self.rpc_calls: List[Any] = []
 
     def table(self, _name: str) -> _QueryBuilder:
         return _QueryBuilder(self._log, self._result_data)
+
+    def rpc(self, name: str, params: Any) -> _RpcBuilder:
+        return _RpcBuilder(
+            self._log,
+            self._rpc_result_data,
+            self.rpc_calls,
+            name,
+            params,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -147,9 +194,15 @@ class _RawSourceStub:
 
 
 def test_update_progress_runs_supabase_off_event_loop() -> None:
-    """``update_progress`` must execute Supabase calls off-loop."""
+    """``update_progress`` must execute the RPC off-loop.
+
+    After PR-E3 the helper is a single ``set_discovery_run_summary_key``
+    RPC — no SELECT, no UPDATE, no client-side merge. Pin that the one
+    remaining ``.execute()`` is still wrapped in ``asyncio.to_thread``
+    so the round-trip can't block the loop.
+    """
     log: List[int] = []
-    stub = _SupabaseStub(log, result_data={"summary_report": {}})
+    stub = _SupabaseStub(log, rpc_result_data=True)
     loop_tid = _loop_thread_id()
 
     _run(
@@ -162,13 +215,23 @@ def test_update_progress_runs_supabase_off_event_loop() -> None:
         )
     )
 
-    # Two execute() calls: the select + the update.
-    assert len(log) == 2
-    for tid in log:
-        assert tid != loop_tid, (
-            "Supabase .execute() ran on the event-loop thread — "
-            "asyncio.to_thread wrapping is missing."
-        )
+    # One execute() call: the atomic RPC.
+    assert len(log) == 1
+    assert log[0] != loop_tid, (
+        "RPC .execute() ran on the event-loop thread — "
+        "asyncio.to_thread wrapping is missing."
+    )
+    # Pin the RPC name + payload shape so a future rename or arg swap
+    # surfaces here instead of silently writing the wrong key.
+    assert len(stub.rpc_calls) == 1
+    name, params = stub.rpc_calls[0]
+    assert name == "set_discovery_run_summary_key"
+    assert params["p_run_id"] == "run-1"
+    assert params["p_key"] == "progress"
+    progress = params["p_value"]
+    assert progress["current_stage"] == "search"
+    assert progress["message"] == "m"
+    assert progress["stages"] == {"search": "in_progress"}
 
 
 def test_persist_discovered_source_runs_supabase_off_event_loop() -> None:
@@ -274,63 +337,16 @@ def test_update_source_outcome_runs_supabase_off_event_loop() -> None:
     assert log[0] != loop_tid
 
 
-def test_update_progress_handles_null_summary_report_column() -> None:
-    """JSONB ``summary_report = null`` must not crash the splat merge.
+def test_update_progress_handles_missing_run_row() -> None:
+    """The RPC returns ``false`` when no ``discovery_runs`` row matched.
 
-    Pre-fix: ``result.data.get("summary_report", {})`` only returned the
-    default when the key was absent. When the column was explicitly null
-    the helper got ``None``, then ``{**None, ...}`` raised TypeError and
-    the bare ``except`` swallowed it into a warning. Net effect: progress
-    silently never recorded for runs that initialized with null reports.
+    Pre-PR-E3 this case did a SELECT, found nothing, and issued a no-op
+    UPDATE on a missing row — wasting a round-trip and masking the bogus
+    run_id from the caller. Now the RPC reports ``false`` and the
+    helper logs + returns without further work.
     """
     log: List[int] = []
-    # Simulate the column being JSONB null — key present, value None.
-    stub = _SupabaseStub(log, result_data={"summary_report": None})
-
-    _run(
-        discovery_progress.update_progress(
-            stub,  # type: ignore[arg-type]
-            run_id="run-1",
-            stage="search",
-            message="m",
-            stages_status={"search": "in_progress"},
-        )
-    )
-
-    # Must still complete both Supabase calls (select + update). If the
-    # splat raised, the update would have been skipped and len(log) == 1.
-    assert len(log) == 2
-
-
-def test_update_progress_handles_non_dict_summary_report_column() -> None:
-    """Defensive: a corrupt non-dict ``summary_report`` must not crash."""
-    log: List[int] = []
-    stub = _SupabaseStub(log, result_data={"summary_report": "corrupt"})
-
-    _run(
-        discovery_progress.update_progress(
-            stub,  # type: ignore[arg-type]
-            run_id="run-1",
-            stage="search",
-            message="m",
-            stages_status={"search": "in_progress"},
-        )
-    )
-
-    assert len(log) == 2  # select + update both ran
-
-
-def test_update_progress_skips_write_when_row_missing() -> None:
-    """If the discovery_runs row is gone, do not issue a no-op UPDATE.
-
-    Pre-fix: ``result.data`` is None, ``current_report`` defaults to
-    ``{}``, and the helper still issued an UPDATE with ``.eq("id", ...)``
-    that matched zero rows. That silently consumed a round-trip and
-    masked the fact that the caller passed a bogus run_id. Now we log a
-    warning and return without writing.
-    """
-    log: List[int] = []
-    stub = _SupabaseStub(log, result_data=None)
+    stub = _SupabaseStub(log, rpc_result_data=False)
 
     _run(
         discovery_progress.update_progress(
@@ -342,8 +358,16 @@ def test_update_progress_skips_write_when_row_missing() -> None:
         )
     )
 
-    # Only the select ran — no wasted UPDATE on a missing row.
+    # Exactly one RPC call — the helper did not retry or fall back.
     assert len(log) == 1
+
+
+# The JSONB-null-column and non-dict-column edge cases that used to
+# live in this file moved into the RPC itself: the SQL function uses
+# ``COALESCE(summary_report, '{}'::jsonb)`` so the merge always sees a
+# valid jsonb object. Verifying that safety belongs at the SQL layer
+# (covered by inspection of the migration file); there is no Python
+# branch left to exercise.
 
 
 def test_update_progress_does_not_starve_concurrent_tasks() -> None:
@@ -354,22 +378,32 @@ def test_update_progress_does_not_starve_concurrent_tasks() -> None:
     the event-loop thread, the concurrent ``ticker`` coroutine would not
     get to run until the sleep returned. Off-loop, the ticker should
     accumulate ticks during the sleep window.
+
+    After PR-E3 the helper makes a single RPC instead of SELECT+UPDATE,
+    so we now exercise the slow path on ``rpc().execute()``.
     """
     import time as _time
 
     log: List[int] = []
 
-    class _SlowSupabase(_SupabaseStub):
-        def table(self, _name: str) -> _QueryBuilder:
-            return _SlowBuilder(self._log, self._result_data)
-
-    class _SlowBuilder(_QueryBuilder):
+    class _SlowRpc(_RpcBuilder):
         def execute(self) -> _ExecuteResult:
             _time.sleep(0.15)
             self._log.append(threading.get_ident())
-            return _ExecuteResult({"summary_report": {}})
+            self._captured_calls.append((self._name, self._params))
+            return _ExecuteResult(True)
 
-    stub = _SlowSupabase(log, result_data={"summary_report": {}})
+    class _SlowSupabase(_SupabaseStub):
+        def rpc(self, name: str, params: Any) -> _RpcBuilder:
+            return _SlowRpc(
+                self._log,
+                self._rpc_result_data,
+                self.rpc_calls,
+                name,
+                params,
+            )
+
+    stub = _SlowSupabase(log, rpc_result_data=True)
 
     async def driver() -> int:
         ticks = 0
@@ -396,9 +430,9 @@ def test_update_progress_does_not_starve_concurrent_tasks() -> None:
         return ticks
 
     ticks = _run(driver())
-    # Two slow execute() calls = 0.30s of off-loop work. The ticker fires
-    # every 10ms, so we should see well more than zero ticks during that
-    # window. If the loop was blocked, ticks would be ~0.
+    # 0.15s of off-loop RPC work. The ticker fires every 10ms, so we
+    # should see well more than zero ticks during that window. If the
+    # loop was blocked, ticks would be ~0.
     assert ticks > 5, (
         f"Concurrent ticker only ran {ticks} times during the Supabase "
         "round-trip — the event loop appears to have been blocked."
