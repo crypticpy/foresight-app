@@ -14,11 +14,17 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List
 
 import pytest
 
 from app.rag_engine import RAGEngine
+
+
+def _run(coro):
+    """Drive a coroutine to completion without requiring pytest-asyncio."""
+    return asyncio.run(coro)
 
 
 class _Resp:
@@ -49,35 +55,31 @@ class _RpcRecorder:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_tag_match_skipped_for_signal_scope():
+def test_tag_match_skipped_for_signal_scope():
     recorder = _RpcRecorder()
     engine = RAGEngine(recorder)
-    result = await engine._tag_match_cards("anything", scope="signal")
+    result = _run(engine._tag_match_cards("anything", scope="signal"))
     assert result == []
     assert recorder.calls == []  # RPC must not fire
 
 
-@pytest.mark.asyncio
-async def test_tag_match_skipped_for_workstream_scope():
+def test_tag_match_skipped_for_workstream_scope():
     recorder = _RpcRecorder()
     engine = RAGEngine(recorder)
-    result = await engine._tag_match_cards("anything", scope="workstream")
+    result = _run(engine._tag_match_cards("anything", scope="workstream"))
     assert result == []
     assert recorder.calls == []
 
 
-@pytest.mark.asyncio
-async def test_tag_match_skipped_for_blank_query():
+def test_tag_match_skipped_for_blank_query():
     recorder = _RpcRecorder()
     engine = RAGEngine(recorder)
-    result = await engine._tag_match_cards("   ", scope="global")
+    result = _run(engine._tag_match_cards("   ", scope="global"))
     assert result == []
     assert recorder.calls == []
 
 
-@pytest.mark.asyncio
-async def test_tag_match_reshapes_rpc_rows_to_card_dicts():
+def test_tag_match_reshapes_rpc_rows_to_card_dicts():
     recorder = _RpcRecorder()
     recorder.next_response = [
         {
@@ -99,7 +101,7 @@ async def test_tag_match_reshapes_rpc_rows_to_card_dicts():
         }
     ]
     engine = RAGEngine(recorder)
-    result = await engine._tag_match_cards("climate", scope="global")
+    result = _run(engine._tag_match_cards("climate", scope="global"))
     assert recorder.calls == [
         {
             "name": "tag_match_cards",
