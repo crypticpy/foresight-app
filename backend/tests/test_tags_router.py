@@ -1,0 +1,526 @@
+"""Tests for the tags router.
+
+Covers the v1 contract:
+  - POST apply: 404 on unknown card; 400 on empty/whitespace label;
+    idempotent (re-apply doesn't duplicate); workstream_id propagated.
+  - DELETE remove: idempotent for tags the user never applied; only removes
+    the caller's row (other users' applications stay).
+  - GET list_card_tags: viewer's tags first via the RPC.
+  - GET list_tags (autocomplete): ILIKE escapes %/_ metacharacters.
+
+The tests stub the supabase client with mocks; the RPC results are
+handcrafted to mimic the Postgres functions added in PR 2.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import uuid
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, List, Optional
+
+import pytest
+from fastapi import HTTPException
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _mock_request() -> Any:
+    """SimpleNamespace shaped enough for handler bodies; slowapi's wrapper
+    is skipped via ``limiter.enabled = False`` in tests that hit it."""
+    return SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        state=SimpleNamespace(),
+        scope={"type": "http"},
+        method="POST",
+        headers={},
+    )
+
+
+@pytest.fixture(autouse=True)
+def _disable_limiter(monkeypatch):
+    from app.deps import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+
+
+# ---------------------------------------------------------------------------
+# Mock supabase: table chain + rpc dispatcher
+# ---------------------------------------------------------------------------
+
+
+class _Resp:
+    def __init__(self, data=None, count: Optional[int] = None):
+        self.data = data
+        self.count = count
+
+
+class _Chain:
+    """Light supabase-py chain: select/eq/in_/limit/order/upsert/delete/range."""
+
+    def __init__(self, store: Dict[str, List[dict]], table: str):
+        self._store = store
+        self._table = table
+        self._filters: Dict[str, Any] = {}
+        self._pending_upsert: Optional[dict] = None
+        self._pending_delete = False
+        self._upsert_ignore = False
+
+    def select(self, *_a, **_kw):
+        return self
+
+    def insert(self, payload, **_kw):
+        self._pending_upsert = dict(payload)
+        self._upsert_ignore = False
+        return self
+
+    def upsert(self, payload, ignore_duplicates: bool = False, **_kw):
+        self._pending_upsert = dict(payload)
+        self._upsert_ignore = ignore_duplicates
+        return self
+
+    def delete(self):
+        self._pending_delete = True
+        return self
+
+    def eq(self, key, value):
+        self._filters[key] = value
+        return self
+
+    def in_(self, key, values):
+        self._filters[key] = list(values)
+        return self
+
+    def ilike(self, key, pattern):
+        self._filters[f"__ilike__{key}"] = pattern
+        return self
+
+    def limit(self, *_a, **_kw):
+        return self
+
+    def order(self, *_a, **_kw):
+        return self
+
+    def range(self, *_a, **_kw):
+        return self
+
+    def execute(self):
+        rows = self._store.setdefault(self._table, [])
+
+        if self._pending_upsert is not None:
+            payload = self._pending_upsert
+            pk = _pk_for(self._table)
+            if pk:
+                exists = any(
+                    all(row.get(k) == payload.get(k) for k in pk)
+                    for row in rows
+                )
+                if exists and self._upsert_ignore:
+                    self._pending_upsert = None
+                    return _Resp([], count=0)
+            rows.append(payload)
+            self._pending_upsert = None
+            return _Resp([payload], count=1)
+
+        if self._pending_delete:
+            kept = [r for r in rows if not _matches(r, self._filters)]
+            deleted = [r for r in rows if _matches(r, self._filters)]
+            self._store[self._table] = kept
+            self._pending_delete = False
+            return _Resp(deleted, count=len(deleted))
+
+        matched = [r for r in rows if _matches(r, self._filters)]
+        return _Resp(matched, count=len(matched))
+
+
+def _pk_for(table: str) -> List[str]:
+    return {
+        "tags": ["slug"],
+        "card_tags": ["card_id", "tag_id", "user_id"],
+    }.get(table, [])
+
+
+def _matches(row: dict, filters: Dict[str, Any]) -> bool:
+    for key, val in filters.items():
+        if key.startswith("__ilike__"):
+            # Approximate ILIKE: substring match between %s.
+            field = key[len("__ilike__") :]
+            pat = val.lower().strip("%")
+            if pat not in (row.get(field) or "").lower():
+                return False
+        elif isinstance(val, list):
+            if row.get(key) not in val:
+                return False
+        else:
+            if row.get(key) != val:
+                return False
+    return True
+
+
+class _MockSupabase:
+    def __init__(
+        self,
+        tables: Optional[Dict[str, List[dict]]] = None,
+        rpcs: Optional[Dict[str, Callable[[dict], Any]]] = None,
+    ):
+        self._tables = tables or {}
+        self._rpcs = rpcs or {}
+        self.last_upserts: List[dict] = []
+
+    def table(self, name: str) -> _Chain:
+        chain = _Chain(self._tables, name)
+        original = chain.execute
+
+        def wrapped():
+            if chain._pending_upsert is not None:
+                self.last_upserts.append(
+                    {"table": name, "payload": dict(chain._pending_upsert)}
+                )
+            return original()
+
+        chain.execute = wrapped
+        return chain
+
+    def rpc(self, name: str, params: dict):
+        impl = self._rpcs.get(name)
+        if impl is None:
+            raise AssertionError(f"unmocked rpc: {name}")
+
+        class _RpcChain:
+            def execute(_self):
+                return _Resp(impl(params))
+
+        return _RpcChain()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _ts() -> str:
+    return "2026-05-19T17:00:00+00:00"
+
+
+def _patch(monkeypatch, mock_sb):
+    from app.routers import tags as tags_module
+
+    monkeypatch.setattr(tags_module, "supabase", mock_sb)
+    return tags_module
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# POST /cards/{id}/tags
+# ---------------------------------------------------------------------------
+
+
+def test_apply_tag_404_when_card_missing(monkeypatch):
+    from app.models.tag import TagApplyRequest
+
+    user_id = _uuid()
+    mock_sb = _MockSupabase(tables={"cards": []})
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            tags_module.apply_tag_to_card(
+                request=_mock_request(),
+                card_id=_uuid(),
+                payload=TagApplyRequest(label="climate"),
+                current_user={"id": user_id},
+            )
+        )
+    assert exc.value.status_code == 404
+
+
+def test_apply_tag_400_on_empty_label(monkeypatch):
+    """find_or_create_tag returns NULL for empty slugs → 400."""
+    from app.models.tag import TagApplyRequest
+
+    user_id = _uuid()
+    card_id = _uuid()
+
+    mock_sb = _MockSupabase(
+        tables={"cards": [{"id": card_id}]},
+        rpcs={"find_or_create_tag": lambda _params: None},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            tags_module.apply_tag_to_card(
+                request=_mock_request(),
+                card_id=card_id,
+                # Pydantic min_length=1 means we exercise this via punctuation
+                # that normalizes to empty — labels like "!!!" → NULL slug.
+                payload=TagApplyRequest(label="!!!"),
+                current_user={"id": user_id},
+            )
+        )
+    assert exc.value.status_code == 400
+
+
+def test_apply_tag_idempotent(monkeypatch):
+    """Re-applying the same tag does not duplicate the row."""
+    from app.models.tag import TagApplyRequest
+
+    user_id = _uuid()
+    card_id = _uuid()
+    tag_id = _uuid()
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": user_id,
+        "created_at": _ts(),
+    }
+
+    def _rpc_find_or_create(_params):
+        return tag_row
+
+    def _rpc_card_tag_summary(_params):
+        return [
+            {
+                **tag_row,
+                "count": 1,
+                "applied_by_me": True,
+            }
+        ]
+
+    mock_sb = _MockSupabase(
+        tables={
+            "cards": [{"id": card_id}],
+            "tags": [tag_row],
+            "card_tags": [],
+        },
+        rpcs={
+            "find_or_create_tag": _rpc_find_or_create,
+            "card_tag_summary": _rpc_card_tag_summary,
+        },
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    payload = TagApplyRequest(label="climate")
+    user = {"id": user_id}
+
+    res1 = _run(
+        tags_module.apply_tag_to_card(
+            request=_mock_request(), card_id=card_id, payload=payload, current_user=user
+        )
+    )
+    res2 = _run(
+        tags_module.apply_tag_to_card(
+            request=_mock_request(), card_id=card_id, payload=payload, current_user=user
+        )
+    )
+
+    assert len(res1.tags) == 1
+    assert len(res2.tags) == 1
+    # card_tags table should not have grown a second row (ignore_duplicates).
+    assert len(mock_sb._tables["card_tags"]) == 1
+
+
+def test_apply_tag_propagates_workstream_id(monkeypatch):
+    from app.models.tag import TagApplyRequest
+
+    user_id = _uuid()
+    card_id = _uuid()
+    ws_id = _uuid()
+    tag_id = _uuid()
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": user_id,
+        "created_at": _ts(),
+    }
+
+    mock_sb = _MockSupabase(
+        tables={
+            "cards": [{"id": card_id}],
+            "card_tags": [],
+        },
+        rpcs={
+            "find_or_create_tag": lambda _params: tag_row,
+            "card_tag_summary": lambda _params: [
+                {**tag_row, "count": 1, "applied_by_me": True}
+            ],
+        },
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    _run(
+        tags_module.apply_tag_to_card(
+            request=_mock_request(),
+            card_id=card_id,
+            payload=TagApplyRequest(label="climate", workstream_id=ws_id),
+            current_user={"id": user_id},
+        )
+    )
+
+    assert mock_sb.last_upserts
+    upsert = mock_sb.last_upserts[-1]
+    assert upsert["table"] == "card_tags"
+    assert upsert["payload"]["workstream_id"] == ws_id
+    assert upsert["payload"]["user_id"] == user_id
+
+
+# ---------------------------------------------------------------------------
+# DELETE /cards/{id}/tags/{slug}
+# ---------------------------------------------------------------------------
+
+
+def test_remove_tag_only_deletes_own_row(monkeypatch):
+    """Deleting my row leaves other users' applications intact."""
+    me = _uuid()
+    other = _uuid()
+    card_id = _uuid()
+    tag_id = _uuid()
+
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": me,
+        "created_at": _ts(),
+    }
+    my_app = {"card_id": card_id, "tag_id": tag_id, "user_id": me}
+    other_app = {"card_id": card_id, "tag_id": tag_id, "user_id": other}
+
+    def _summary_after(_params):
+        # Reflect current store state.
+        rows = mock_sb._tables.get("card_tags", [])
+        users = {r["user_id"] for r in rows if r["tag_id"] == tag_id}
+        if not users:
+            return []
+        return [
+            {
+                **tag_row,
+                "count": len(users),
+                "applied_by_me": me in users,
+            }
+        ]
+
+    mock_sb = _MockSupabase(
+        tables={
+            "tags": [tag_row],
+            "card_tags": [my_app, other_app],
+        },
+        rpcs={"card_tag_summary": _summary_after},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.remove_tag_from_card(
+            card_id=card_id, slug="climate", current_user={"id": me}
+        )
+    )
+
+    remaining = mock_sb._tables["card_tags"]
+    assert len(remaining) == 1
+    assert remaining[0]["user_id"] == other
+    # Other user still has their application — chip persists.
+    assert res.tags[0].count == 1
+    assert res.tags[0].applied_by_me is False
+
+
+def test_remove_tag_idempotent_when_unknown(monkeypatch):
+    """Deleting a slug that doesn't exist returns the unchanged list."""
+    me = _uuid()
+    card_id = _uuid()
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [], "card_tags": []},
+        rpcs={"card_tag_summary": lambda _params: []},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.remove_tag_from_card(
+            card_id=card_id, slug="nonexistent", current_user={"id": me}
+        )
+    )
+    assert res.tags == []
+
+
+# ---------------------------------------------------------------------------
+# GET /cards/{id}/tags
+# ---------------------------------------------------------------------------
+
+
+def test_list_card_tags_preserves_rpc_order(monkeypatch):
+    """The router does not re-sort what the RPC returned."""
+    me = _uuid()
+    card_id = _uuid()
+
+    def _summary(_params):
+        # RPC orders "mine first" — viewer's tag first, then alphabetical.
+        return [
+            {
+                "id": _uuid(),
+                "slug": "mine-zulu",
+                "label": "mine zulu",
+                "created_by": me,
+                "created_at": _ts(),
+                "count": 1,
+                "applied_by_me": True,
+            },
+            {
+                "id": _uuid(),
+                "slug": "alpha",
+                "label": "alpha",
+                "created_by": _uuid(),
+                "created_at": _ts(),
+                "count": 3,
+                "applied_by_me": False,
+            },
+        ]
+
+    mock_sb = _MockSupabase(rpcs={"card_tag_summary": _summary})
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.list_card_tags(card_id=card_id, current_user={"id": me})
+    )
+    assert [t.slug for t in res.tags] == ["mine-zulu", "alpha"]
+    assert res.tags[0].applied_by_me is True
+    assert res.tags[1].applied_by_me is False
+
+
+# ---------------------------------------------------------------------------
+# GET /tags (autocomplete) — ILIKE escaping
+# ---------------------------------------------------------------------------
+
+
+def test_list_tags_escapes_ilike_metachars(monkeypatch):
+    """% and _ in the query don't pattern-match the rest of the dictionary."""
+    captured: Dict[str, Any] = {}
+
+    class _CapturingChain(_Chain):
+        def ilike(self, key, pattern):
+            captured["pattern"] = pattern
+            return super().ilike(key, pattern)
+
+    class _CapturingSupabase(_MockSupabase):
+        def table(self, name: str):
+            chain = _CapturingChain(self._tables, name)
+            return chain
+
+    mock_sb = _CapturingSupabase(tables={"tags": []})
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    _run(tags_module.list_tags(q="50%_off", limit=5, current_user={"id": _uuid()}))
+
+    assert "pattern" in captured
+    assert "\\%" in captured["pattern"]
+    assert "\\_" in captured["pattern"]
