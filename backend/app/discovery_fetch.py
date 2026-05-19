@@ -92,6 +92,22 @@ async def fetch_from_all_source_categories(
         SourceCategory.NEWS.value, SourceCategoryConfig()
     )
     if news_config.enabled:
+        # ``_apply_schedule_scope`` writes per-schedule URL lists into the
+        # ``rss_feeds`` field for every category (the field is reused as a
+        # generic URL slot — see SourceCategoryConfig). For non-RSS
+        # categories the registry rows are *source-level* URLs (feed roots,
+        # homepages, search endpoints) rather than article URLs, so the
+        # downstream fetcher can't simply fetch them as articles. Until the
+        # fetchers grow a "scope topic search to these source URLs" path,
+        # we warn and fall back to broad topic search rather than silently
+        # downgrading scheduled runs to homepage fetches.
+        if news_config.rss_feeds:
+            logger.warning(
+                "News category got %d scoped URLs from source_ids, but the "
+                "news fetcher doesn't yet scope topic search to a URL list; "
+                "ignoring source_ids scope for news.",
+                len(news_config.rss_feeds),
+            )
         tasks.append(_fetch_news_sources(topics, news_config.max_sources))
 
     # 3. Academic publications
@@ -99,6 +115,17 @@ async def fetch_from_all_source_categories(
         SourceCategory.ACADEMIC.value, SourceCategoryConfig()
     )
     if academic_config.enabled:
+        # Academic uses arXiv's search API rather than URL fetches, so
+        # source_ids scoping isn't meaningful. Warn if the operator
+        # configured URLs for the academic category — they'd be silently
+        # ignored otherwise.
+        if academic_config.rss_feeds:
+            logger.warning(
+                "Academic category got %d scoped URLs but arXiv search "
+                "doesn't take URL inputs; ignoring source_ids scope for "
+                "academic.",
+                len(academic_config.rss_feeds),
+            )
         tasks.append(_fetch_academic_sources(topics, academic_config.max_sources))
 
     # 4. Government sources
@@ -106,6 +133,14 @@ async def fetch_from_all_source_categories(
         SourceCategory.GOVERNMENT.value, SourceCategoryConfig()
     )
     if gov_config.enabled:
+        # Same as news above — gov registry rows are source-level URLs.
+        if gov_config.rss_feeds:
+            logger.warning(
+                "Government category got %d scoped URLs from source_ids, "
+                "but the government fetcher doesn't yet scope topic search "
+                "to a URL list; ignoring source_ids scope for government.",
+                len(gov_config.rss_feeds),
+            )
         tasks.append(_fetch_government_sources(topics, gov_config.max_sources))
 
     # 5. Tech blogs
@@ -113,6 +148,14 @@ async def fetch_from_all_source_categories(
         SourceCategory.TECH_BLOG.value, SourceCategoryConfig()
     )
     if tech_config.enabled:
+        # Same as news above — tech blog registry rows are source-level URLs.
+        if tech_config.rss_feeds:
+            logger.warning(
+                "Tech blog category got %d scoped URLs from source_ids, but "
+                "the tech blog fetcher doesn't yet scope topic search to a "
+                "URL list; ignoring source_ids scope for tech_blog.",
+                len(tech_config.rss_feeds),
+            )
         tasks.append(_fetch_tech_blog_sources(topics, tech_config.max_sources))
 
     # Execute all fetches concurrently
@@ -225,7 +268,7 @@ async def _fetch_rss_sources(
 async def _fetch_news_sources(
     topics: List[str], max_sources: int
 ) -> Tuple[List[RawSource], str]:
-    """Fetch sources from news outlets."""
+    """Fetch sources from news outlets via topic search."""
     try:
         articles = await fetch_news_articles(
             topics=topics[:3],  # Limit topics to avoid rate limiting
