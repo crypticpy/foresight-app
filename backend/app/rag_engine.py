@@ -406,8 +406,8 @@ class RAGEngine:
                     )
                     return resp.data or []
 
-                enrichment["workstream_cards"] = chunked_in_query(
-                    _fetch_cards, card_ids
+                enrichment["workstream_cards"] = await asyncio.to_thread(
+                    chunked_in_query, _fetch_cards, card_ids
                 )
             else:
                 enrichment["workstream_cards"] = []
@@ -1174,7 +1174,9 @@ class RAGEngine:
                         )
                         return resp.data or []
 
-                    rows = chunked_in_query(_title_match, list(accessible_ids))
+                    rows = await asyncio.to_thread(
+                        chunked_in_query, _title_match, list(accessible_ids)
+                    )
                     if rows:
                         return rows[0]
                 else:

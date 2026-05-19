@@ -1,5 +1,6 @@
 """Card review router -- pending count, single review, bulk review, dismiss."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -244,7 +245,9 @@ async def bulk_review_cards(
             resp = supabase.table("cards").select("id").in_("id", chunk).execute()
             return resp.data or []
 
-        existing_rows = chunked_in_query(_check_existing, card_ids)
+        existing_rows = await asyncio.to_thread(
+            chunked_in_query, _check_existing, card_ids
+        )
         existing_ids = {card["id"] for card in existing_rows}
 
         # Identify cards that don't exist
@@ -287,7 +290,9 @@ async def bulk_review_cards(
             )
             return resp.data or []
 
-        update_rows = chunked_in_query(_apply_update, valid_ids)
+        update_rows = await asyncio.to_thread(
+            chunked_in_query, _apply_update, valid_ids
+        )
 
         if not update_rows:
             # If batch update fails entirely, mark all as failed
