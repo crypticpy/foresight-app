@@ -29,7 +29,7 @@ from app.models.workstream import (
 from app.models.research import ResearchTask
 from app.research_service import ResearchService
 from app.card_artifacts import enrich_cards_with_collab
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -775,9 +775,7 @@ async def get_workstream_research_status(
             )
             return resp.data or []
 
-        active_data = await asyncio.to_thread(
-            chunked_in_query, _query_active, card_ids
-        )
+        active_data = await async_chunked_in_query(_query_active, card_ids)
 
         # Query recently completed tasks
         def _query_recent(chunk):
@@ -791,9 +789,7 @@ async def get_workstream_research_status(
             )
             return resp.data or []
 
-        recent_data = await asyncio.to_thread(
-            chunked_in_query, _query_recent, card_ids
-        )
+        recent_data = await async_chunked_in_query(_query_recent, card_ids)
     except Exception as e:
         logger.warning(f"Error querying research tasks: {e}")
         return WorkstreamResearchStatusResponse(tasks=[])
@@ -985,9 +981,7 @@ async def bulk_workstream_card_action(
         )
         return resp.data or []
 
-    rows = await asyncio.to_thread(
-        chunked_in_query, _fetch_bulk_rows, body.card_ids
-    )
+    rows = await async_chunked_in_query(_fetch_bulk_rows, body.card_ids)
     if len(rows) != len(set(body.card_ids)):
         # Some ids didn't match; surface that but still operate on the matched rows.
         logger.info(
@@ -1054,7 +1048,7 @@ async def bulk_workstream_card_action(
                 )
                 return None
 
-            await asyncio.to_thread(chunked_in_query, _bulk_set_watch, row_ids)
+            await async_chunked_in_query(_bulk_set_watch, row_ids)
         return {"updated": len(rows), "action": action, "is_watching": flag}
 
     if action == "set_status":
@@ -1099,7 +1093,7 @@ async def bulk_workstream_card_action(
                 )
                 return None
 
-            await asyncio.to_thread(chunked_in_query, _bulk_set_brief, row_ids)
+            await async_chunked_in_query(_bulk_set_brief, row_ids)
         return {"updated": len(rows), "action": action, "brief_status": new_brief}
 
     if action == "copy_share_links":

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.authz import accessible_workstream_ids
 from app.clone_service import ensure_user_clones_for_templates
 from app.helpers.search_utils import sanitize_ilike
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.openai_provider import (
     azure_openai_async_client,
     azure_openai_async_embedding_client,
@@ -406,8 +406,8 @@ class RAGEngine:
                     )
                     return resp.data or []
 
-                enrichment["workstream_cards"] = await asyncio.to_thread(
-                    chunked_in_query, _fetch_cards, card_ids
+                enrichment["workstream_cards"] = await async_chunked_in_query(
+                    _fetch_cards, card_ids
                 )
             else:
                 enrichment["workstream_cards"] = []
@@ -1174,8 +1174,8 @@ class RAGEngine:
                         )
                         return resp.data or []
 
-                    rows = await asyncio.to_thread(
-                        chunked_in_query, _title_match, list(accessible_ids)
+                    rows = await async_chunked_in_query(
+                        _title_match, list(accessible_ids)
                     )
                     if rows:
                         return rows[0]

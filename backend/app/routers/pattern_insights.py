@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.deps import supabase, get_current_user, _safe_error, openai_client
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["pattern_insights"])
@@ -70,8 +70,8 @@ async def get_pattern_insight_by_id(
                 )
                 return resp.data or []
 
-            insight["related_cards"] = await asyncio.to_thread(
-                chunked_in_query, _fetch_related, related_ids
+            insight["related_cards"] = await async_chunked_in_query(
+                _fetch_related, related_ids
             )
         else:
             insight["related_cards"] = []

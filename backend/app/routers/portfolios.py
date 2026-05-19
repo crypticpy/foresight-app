@@ -29,7 +29,7 @@ from app.models.portfolio import (
     ReorderItemsRequest,
 )
 from app.portfolio_export import render_portfolio_export
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["portfolios"])
@@ -182,8 +182,8 @@ async def list_portfolios(
         )
         return resp.data or []
 
-    count_rows = await asyncio.to_thread(
-        chunked_in_query, _fetch_counts, [r["id"] for r in rows]
+    count_rows = await async_chunked_in_query(
+        _fetch_counts, [r["id"] for r in rows]
     )
     counts: dict[str, int] = {}
     for r in count_rows:

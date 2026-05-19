@@ -14,7 +14,7 @@ from app.authz import (
 )
 from app.clone_service import ensure_user_clones_for_templates
 from app.deps import supabase, get_current_user, _safe_error
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.helpers.workstream_utils import (
     _filter_cards_for_workstream,
     _build_workstream_scan_config,
@@ -83,8 +83,8 @@ async def get_user_workstreams(current_user: dict = Depends(get_current_user)):
             )
             return resp.data or []
 
-        shared_data = await asyncio.to_thread(
-            chunked_in_query, _fetch_shared, list(member_role_by_ws)
+        shared_data = await async_chunked_in_query(
+            _fetch_shared, list(member_role_by_ws)
         )
         # Re-sort across chunks since each chunk was ordered independently.
         shared_data.sort(key=lambda r: r.get("created_at") or "", reverse=True)

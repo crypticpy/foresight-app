@@ -1,6 +1,5 @@
 """Classification validation router."""
 
-import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -9,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import supabase, get_current_user
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.models.classification_models import (
     ValidationSubmission,
     ValidationSubmissionResponse,
@@ -197,9 +196,7 @@ async def get_cards_pending_validation(
         )
         return resp.data or []
 
-    validated_rows = await asyncio.to_thread(
-        chunked_in_query, _fetch_validations, card_ids
-    )
+    validated_rows = await async_chunked_in_query(_fetch_validations, card_ids)
     validated_ids = {v["card_id"] for v in validated_rows if v.get("card_id")}
 
     return [c for c in cards_response.data if c["id"] not in validated_ids]

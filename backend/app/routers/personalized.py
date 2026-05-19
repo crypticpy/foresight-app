@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.deps import get_current_user, supabase
 from app.discovery_scoring import calculate_discovery_score
 from app.security import limiter
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 router = APIRouter(prefix="/api/v1", tags=["personalized"])
 
@@ -95,7 +95,7 @@ async def get_personalized_queue(
             )
             return resp.data or []
 
-        shared_rows = await asyncio.to_thread(chunked_in_query, _fetch_shared, shared_ids)
+        shared_rows = await async_chunked_in_query(_fetch_shared, shared_ids)
         # Dedupe — a workstream can hit two of own/org/shared in principle.
         seen = {ws["id"] for ws in workstreams if ws.get("id")}
         for ws in shared_rows:

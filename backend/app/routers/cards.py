@@ -34,7 +34,7 @@ from app.helpers.search_utils import (
     _extract_highlights,
 )
 from app.card_artifacts import enrich_cards_with_collab
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
@@ -369,8 +369,8 @@ async def search_cards(
                         )
                         return resp.data or []
 
-                    results = await asyncio.to_thread(
-                        chunked_in_query, _hydrate_matched, matched_ids
+                    results = await async_chunked_in_query(
+                        _hydrate_matched, matched_ids
                     )
                     for item in results:
                         item["search_relevance"] = similarity_map.get(item["id"], 0.0)
@@ -642,9 +642,7 @@ async def preview_filter_count(
             )
             return resp.data or []
 
-        full_cards = await asyncio.to_thread(
-            chunked_in_query, _hydrate_full, card_ids
-        )
+        full_cards = await async_chunked_in_query(_hydrate_full, card_ids)
 
         filtered_cards = []
         for card in full_cards:
