@@ -36,7 +36,7 @@ Usage:
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from supabase import Client
 import openai
@@ -109,7 +109,6 @@ from .discovery_fetch import fetch_from_all_source_categories
 from .discovery_progress import (
     persist_discovered_source,
     update_progress_simple,
-    update_source_dedup,
 )
 
 # Blocked-topic filtering extracted to ``discovery_blocked_topics`` in
@@ -914,127 +913,24 @@ class DiscoveryService:
                 api_token_usage_metrics=api_token_usage,
             )
 
-    async def _python_vector_search(
-        self,
-        query_embedding: List[float],
-        config: DiscoveryConfig,
-        suggested_name: str,
-        source: ProcessedSource,
-        enrichment_candidates: List[Tuple[ProcessedSource, str, float]],
-        new_concept_candidates: List[ProcessedSource],
-    ) -> str:
-        """
-        Python-based fallback for vector similarity search when RPC fails.
-
-        This fetches cards with embeddings from the database and calculates
-        cosine similarity in Python. Less efficient than DB-side computation
-        but works around schema/extension issues.
-
-        Args:
-            query_embedding: The source embedding to compare
-            config: Discovery configuration with thresholds
-            suggested_name: Suggested card name for logging
-            source: The source being processed
-            enrichment_candidates: List to append enrichment candidates
-            new_concept_candidates: List to append new concepts
-
-        Returns:
-            "enriched" if matched to existing card, "new" if new concept
-        """
-        # Fetch cards with embeddings (non-rejected only)
-        cards_result = (
-            self.supabase.table("cards")
-            .select("id, name, summary, pillar_id, horizon, embedding")
-            .neq("review_status", "rejected")
-            .not_.is_("embedding", "null")
-            .limit(100)
-            .execute()
-        )
-
-        if not cards_result.data:
-            logger.info("PYTHON FALLBACK: No cards with embeddings found - NEW CONCEPT")
-            new_concept_candidates.append(source)
-            if source.discovered_source_id:
-                await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
-            return "new"
-
-        # Calculate similarities using Python
-        best_match = None
-        best_similarity = 0.0
-
-        for card in cards_result.data:
-            card_embedding = card.get("embedding")
-            if not card_embedding:
-                continue
-
-            similarity = cosine_similarity(query_embedding, card_embedding)
-
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = card
-
-        if best_match and best_similarity >= config.similarity_threshold:
-            # Strong match - enrich existing card
-            logger.info(
-                f"PYTHON FALLBACK MATCH (strong): '{suggested_name}' -> '{best_match.get('name', 'unknown')}' "
-                f"(similarity: {best_similarity:.3f}) - ENRICHING"
-            )
-            enrichment_candidates.append((source, best_match["id"], best_similarity))
-            if source.discovered_source_id:
-                await update_source_dedup(self.supabase,
-                    source.discovered_source_id,
-                    "enrichment_candidate",
-                    best_match["id"],
-                    best_similarity,
-                )
-            return "enriched"
-
-        elif best_match and best_similarity >= config.weak_match_threshold:
-            # Weak match - use LLM to decide
-            decision = await self.ai_service.check_card_match(
-                source_summary=source.analysis.summary,
-                source_card_name=source.analysis.suggested_card_name,
-                existing_card_name=best_match["name"],
-                existing_card_summary=best_match.get("summary", ""),
-            )
-
-            if decision.get("is_match") and decision.get("confidence", 0) >= 0.6:
-                logger.info(
-                    f"PYTHON FALLBACK + LLM MATCH: '{suggested_name}' -> '{best_match['name']}' "
-                    f"(similarity: {best_similarity:.3f}, llm_conf: {decision.get('confidence', 0):.2f}) - ENRICHING"
-                )
-                enrichment_candidates.append(
-                    (source, best_match["id"], best_similarity)
-                )
-                if source.discovered_source_id:
-                    await update_source_dedup(self.supabase,
-                        source.discovered_source_id,
-                        "enrichment_candidate",
-                        best_match["id"],
-                        best_similarity,
-                    )
-                return "enriched"
-            else:
-                logger.info(
-                    f"PYTHON FALLBACK + LLM NO MATCH: '{suggested_name}' vs '{best_match['name']}' "
-                    f"(reason: {decision.get('reasoning', 'unknown')[:80]}) - NEW CONCEPT"
-                )
-                new_concept_candidates.append(source)
-                if source.discovered_source_id:
-                    await update_source_dedup(self.supabase,
-                        source.discovered_source_id, "unique"
-                    )
-                return "new"
-
-        else:
-            logger.info(
-                f"PYTHON FALLBACK NO MATCH: '{suggested_name}' - best similarity {best_similarity:.3f} "
-                f"below threshold {config.weak_match_threshold} - NEW CONCEPT"
-            )
-            new_concept_candidates.append(source)
-            if source.discovered_source_id:
-                await update_source_dedup(self.supabase,source.discovered_source_id, "unique")
-            return "new"
+    # ========================================================================
+    # Removed: _python_vector_search + _deduplicate_sources (PR-F4)
+    # ========================================================================
+    #
+    # Both methods are gone. The only call site of
+    # ``_python_vector_search`` was inside the dead
+    # ``_deduplicate_sources``; nothing called the latter. The
+    # production path is the stateless
+    # ``discovery_dedup.deduplicate_sources_with_metrics`` (extracted
+    # in PR-D10) and the matching ``asyncio.to_thread`` wrapping that
+    # landed in PR-F5.
+    #
+    # The dead methods also wrote per-row ``update_source_dedup`` on
+    # each branch. ``discovery_dedup`` intentionally does NOT call
+    # those today — those rows don't gate any UI surface. If a
+    # future change wants per-row dedup observability back, port
+    # the hook onto ``discovery_dedup``, not back onto this file —
+    # same playbook as the PR-F3 triage hooks.
 
     # ========================================================================
     # Step 4: Triage Sources
@@ -1049,247 +945,6 @@ class DiscoveryService:
     # over to ``discovery_triage`` in the same PR so the dead-code
     # deletion didn't regress operator-facing source-row state.
 
-    async def _deduplicate_sources(
-        self, sources: List[ProcessedSource], config: DiscoveryConfig
-    ) -> DeduplicationResult:
-        """
-        Deduplicate sources against existing cards using multi-tier matching:
-        1. Exact URL match
-        2. Name similarity match
-        3. Vector similarity match
-        4. LLM decision for weak matches
-
-        PHILOSOPHY: Prefer enrichment over creation. When in doubt, add to existing card.
-
-        Args:
-            sources: Processed sources to deduplicate
-            config: Run configuration
-
-        Returns:
-            DeduplicationResult with categorized sources
-        """
-        unique_sources = []
-        duplicate_count = 0
-        enrichment_candidates = []
-        new_concept_candidates = []
-
-        # Pre-fetch existing card names for name-based matching
-        try:
-            existing_cards = (
-                self.supabase.table("cards")
-                .select("id, name, summary")
-                .neq("review_status", "rejected")
-                .execute()
-            )
-            card_name_map = (
-                {c["id"]: c for c in existing_cards.data} if existing_cards.data else {}
-            )
-            logger.info(f"Loaded {len(card_name_map)} existing cards for deduplication")
-        except Exception as e:
-            logger.warning(f"Could not load existing cards for name matching: {e}")
-            card_name_map = {}
-
-        for source in sources:
-            try:
-                suggested_name = (
-                    source.analysis.suggested_card_name if source.analysis else ""
-                )
-                logger.debug(
-                    f"Deduplicating: '{suggested_name}' from {source.raw.url[:50]}..."
-                )
-
-                # STEP 1: Check for existing URL first
-                url_check = (
-                    self.supabase.table("sources")
-                    .select("id")
-                    .eq("url", source.raw.url)
-                    .execute()
-                )
-
-                if url_check.data:
-                    duplicate_count += 1
-                    logger.info(f"URL duplicate found: {source.raw.url[:60]}")
-                    if source.discovered_source_id:
-                        await update_source_dedup(self.supabase,
-                            source.discovered_source_id, "duplicate"
-                        )
-                    continue
-
-                # STEP 2: Name-based matching (fast, no AI call needed)
-                name_match_found = False
-                if suggested_name and card_name_map:
-                    for card_id, card_data in card_name_map.items():
-                        name_sim = calculate_name_similarity(
-                            suggested_name, card_data["name"]
-                        )
-                        if name_sim >= config.name_similarity_threshold:
-                            logger.info(
-                                f"NAME MATCH: '{suggested_name}' -> '{card_data['name']}' "
-                                f"(similarity: {name_sim:.2f}) - ENRICHING"
-                            )
-                            enrichment_candidates.append((source, card_id, name_sim))
-                            if source.discovered_source_id:
-                                await update_source_dedup(self.supabase,
-                                    source.discovered_source_id,
-                                    "enrichment_candidate",
-                                    card_id,
-                                    name_sim,
-                                )
-                            name_match_found = True
-                            break
-
-                if name_match_found:
-                    unique_sources.append(source)
-                    continue
-
-                # STEP 3: Vector similarity search against existing cards
-                try:
-                    match_result = self.supabase.rpc(
-                        "find_similar_cards",
-                        {
-                            "query_embedding": source.embedding,
-                            "match_threshold": config.weak_match_threshold,
-                            "match_count": 5,  # Get more candidates for better matching
-                        },
-                    ).execute()
-
-                    if match_result.data:
-                        top_match = match_result.data[0]
-                        similarity = top_match.get("similarity", 0)
-
-                        if similarity >= config.similarity_threshold:
-                            # Strong vector match - enrich existing card
-                            logger.info(
-                                f"VECTOR MATCH (strong): '{suggested_name}' -> '{top_match.get('name', 'unknown')}' "
-                                f"(similarity: {similarity:.3f}) - ENRICHING"
-                            )
-                            enrichment_candidates.append(
-                                (source, top_match["id"], similarity)
-                            )
-                            if source.discovered_source_id:
-                                await update_source_dedup(self.supabase,
-                                    source.discovered_source_id,
-                                    "enrichment_candidate",
-                                    top_match["id"],
-                                    similarity,
-                                )
-                        elif similarity >= config.weak_match_threshold:
-                            # Weak match - use LLM to decide (biased toward enrichment)
-                            card = (
-                                self.supabase.table("cards")
-                                .select("name, summary")
-                                .eq("id", top_match["id"])
-                                .single()
-                                .execute()
-                            )
-
-                            if card.data:
-                                decision = await self.ai_service.check_card_match(
-                                    source_summary=source.analysis.summary,
-                                    source_card_name=source.analysis.suggested_card_name,
-                                    existing_card_name=card.data["name"],
-                                    existing_card_summary=card.data.get("summary", ""),
-                                )
-
-                                # Lower threshold from 0.7 to 0.6 - prefer enrichment
-                                if (
-                                    decision.get("is_match")
-                                    and decision.get("confidence", 0) >= 0.6
-                                ):
-                                    logger.info(
-                                        f"LLM MATCH: '{suggested_name}' -> '{card.data['name']}' "
-                                        f"(vector: {similarity:.3f}, llm_conf: {decision.get('confidence', 0):.2f}) - ENRICHING"
-                                    )
-                                    enrichment_candidates.append(
-                                        (source, top_match["id"], similarity)
-                                    )
-                                    if source.discovered_source_id:
-                                        await update_source_dedup(self.supabase,
-                                            source.discovered_source_id,
-                                            "enrichment_candidate",
-                                            top_match["id"],
-                                            similarity,
-                                        )
-                                else:
-                                    logger.info(
-                                        f"LLM NO MATCH: '{suggested_name}' vs '{card.data['name']}' "
-                                        f"(reason: {decision.get('reasoning', 'unknown')[:80]}) - NEW CONCEPT"
-                                    )
-                                    new_concept_candidates.append(source)
-                                    if source.discovered_source_id:
-                                        await update_source_dedup(self.supabase,
-                                            source.discovered_source_id, "unique"
-                                        )
-                            else:
-                                new_concept_candidates.append(source)
-                                if source.discovered_source_id:
-                                    await update_source_dedup(self.supabase,
-                                        source.discovered_source_id, "unique"
-                                    )
-                        else:
-                            logger.info(
-                                f"NO MATCH: '{suggested_name}' - best vector similarity {similarity:.3f} "
-                                f"below threshold {config.weak_match_threshold} - NEW CONCEPT"
-                            )
-                            new_concept_candidates.append(source)
-                            if source.discovered_source_id:
-                                await update_source_dedup(self.supabase,
-                                    source.discovered_source_id, "unique"
-                                )
-                    else:
-                        logger.info(
-                            f"NO MATCHES FOUND: '{suggested_name}' - NEW CONCEPT"
-                        )
-                        new_concept_candidates.append(source)
-                        if source.discovered_source_id:
-                            await update_source_dedup(self.supabase,
-                                source.discovered_source_id, "unique"
-                            )
-
-                except Exception as e:
-                    # Vector search RPC failed - use Python fallback
-                    logger.warning(
-                        f"Vector search RPC failed for '{suggested_name}': {e}"
-                    )
-                    logger.info("Falling back to Python-based similarity search...")
-
-                    # Python fallback: fetch cards with embeddings and calculate similarity locally
-                    try:
-                        await self._python_vector_search(
-                            source.embedding,
-                            config,
-                            suggested_name,
-                            source,
-                            enrichment_candidates,
-                            new_concept_candidates,
-                        )
-                    except Exception as fallback_error:
-                        logger.error(f"Python fallback also failed: {fallback_error}")
-                        new_concept_candidates.append(source)
-                        if source.discovered_source_id:
-                            await update_source_dedup(self.supabase,
-                                source.discovered_source_id, "unique"
-                            )
-
-                unique_sources.append(source)
-
-            except Exception as e:
-                logger.warning(f"Deduplication failed for {source.raw.url}: {e}")
-                continue
-
-        # Summary logging
-        logger.info(
-            f"Deduplication complete: {len(sources)} sources -> "
-            f"{duplicate_count} duplicates, {len(enrichment_candidates)} enrichments, "
-            f"{len(new_concept_candidates)} new concepts"
-        )
-
-        return DeduplicationResult(
-            unique_sources=unique_sources,
-            duplicate_count=duplicate_count,
-            enrichment_candidates=enrichment_candidates,
-            new_concept_candidates=new_concept_candidates,
-        )
 
     # ========================================================================
     # Step 7: Create or Enrich Cards
