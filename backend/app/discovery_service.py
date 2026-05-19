@@ -42,7 +42,7 @@ from supabase import Client
 import openai
 
 from .query_generator import QueryGenerator
-from .ai_service import AIService, TriageResult
+from .ai_service import AIService
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
 from . import domain_reputation_service
@@ -109,10 +109,7 @@ from .discovery_fetch import fetch_from_all_source_categories
 from .discovery_progress import (
     persist_discovered_source,
     update_progress_simple,
-    update_source_analysis,
     update_source_dedup,
-    update_source_outcome,
-    update_source_triage,
 )
 
 # Blocked-topic filtering extracted to ``discovery_blocked_topics`` in
@@ -1042,133 +1039,15 @@ class DiscoveryService:
     # ========================================================================
     # Step 4: Triage Sources
     # ========================================================================
-
-    async def _triage_sources(self, sources: List[RawSource]) -> List[ProcessedSource]:
-        """
-        Triage sources for municipal relevance.
-
-        Args:
-            sources: Raw sources from search
-
-        Returns:
-            List of processed sources that passed triage
-        """
-        processed = []
-        triage_threshold = 0.6
-
-        for source in sources:
-            try:
-                # Skip sources without content for full triage
-                if not source.content:
-                    # Auto-pass URL-only sources with lower confidence
-                    triage = TriageResult(
-                        is_relevant=True,
-                        confidence=0.65,
-                        primary_pillar=getattr(source, "pillar_code", None),
-                        reason="Auto-passed (no content)",
-                    )
-                else:
-                    triage = await self.ai_service.triage_source(
-                        title=source.title, content=source.content
-                    )
-
-                # Pre-print relevance penalty (Task 2.6): soft penalty, not a hard block
-                if getattr(source, "is_preprint", False) and triage.confidence > 0:
-                    original_confidence = triage.confidence
-                    triage.confidence = max(0.0, triage.confidence - 0.2)
-                    logger.debug(
-                        f"Pre-print penalty applied: {source.url} "
-                        f"confidence {original_confidence:.2f} -> {triage.confidence:.2f}"
-                    )
-
-                # Domain reputation confidence adjustment (Task 2.7)
-                try:
-                    reputation = domain_reputation_service.get_reputation(
-                        self.supabase, source.url or ""
-                    )
-                    adj = domain_reputation_service.get_confidence_adjustment(
-                        reputation
-                    )
-                    if adj != 0.0:
-                        pre_adj_confidence = triage.confidence
-                        triage.confidence = max(0.0, min(1.0, triage.confidence + adj))
-                        logger.debug(
-                            f"Domain reputation adjustment: {source.url} "
-                            f"adj={adj:+.2f} confidence "
-                            f"{pre_adj_confidence:.2f} -> {triage.confidence:.2f}"
-                        )
-                except Exception as e:
-                    logger.debug(f"Domain reputation lookup failed (non-fatal): {e}")
-
-                # Determine triage pass/fail
-                passed_triage = (
-                    triage.is_relevant and triage.confidence >= triage_threshold
-                )
-
-                # Record triage result for domain reputation stats (Task 2.7)
-                try:
-                    from urllib.parse import urlparse as _urlparse
-
-                    if _domain := _urlparse(source.url or "").netloc:
-                        domain_reputation_service.record_triage_result(
-                            self.supabase, _domain, passed=passed_triage
-                        )
-                except Exception as e:
-                    logger.debug(f"Domain triage recording failed (non-fatal): {e}")
-
-                if passed_triage:
-                    # Update discovered_sources with triage passed
-                    if source.discovered_source_id:
-                        await update_source_triage(self.supabase,
-                            source.discovered_source_id, triage, True
-                        )
-
-                    # Full analysis
-                    analysis = await self.ai_service.analyze_source(
-                        title=source.title,
-                        content=source.content or "",
-                        source_name=source.source_name,
-                        published_at=datetime.now(timezone.utc).isoformat(),
-                    )
-
-                    # Update discovered_sources with analysis
-                    if source.discovered_source_id:
-                        await update_source_analysis(self.supabase,
-                            source.discovered_source_id, analysis
-                        )
-
-                    # Generate embedding
-                    embed_text = f"{source.title} {analysis.summary}"
-                    embedding = await self.ai_service.generate_embedding(embed_text)
-
-                    processed_source = ProcessedSource(
-                        raw=source,
-                        triage=triage,
-                        analysis=analysis,
-                        embedding=embedding,
-                        discovered_source_id=source.discovered_source_id,
-                    )
-                    processed.append(processed_source)
-                else:
-                    # Update discovered_sources with triage failed
-                    if source.discovered_source_id:
-                        await update_source_triage(self.supabase,
-                            source.discovered_source_id, triage, False
-                        )
-
-            except Exception as e:
-                logger.warning(f"Triage/analysis failed for {source.url}: {e}")
-                # Mark error in discovered_sources
-                if source.discovered_source_id:
-                    await update_source_outcome(self.supabase,
-                        source.discovered_source_id,
-                        "error",
-                        error_message=str(e),
-                        error_stage="triage",
-                    )
-                continue
-
-        return processed
+    #
+    # The legacy ``_triage_sources`` method that lived here was removed in
+    # PR-F2 — it had drifted from the live path (which is the stateless
+    # ``triage_sources_with_metrics`` in ``discovery_triage``) and was no
+    # longer called from anywhere. The observability hooks that were
+    # unique to the legacy version (``update_source_triage`` /
+    # ``update_source_analysis`` / ``update_source_outcome``) were ported
+    # over to ``discovery_triage`` in the same PR so the dead-code
+    # deletion didn't regress operator-facing source-row state.
 
     async def _deduplicate_sources(
         self, sources: List[ProcessedSource], config: DiscoveryConfig
