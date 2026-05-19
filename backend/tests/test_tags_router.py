@@ -502,6 +502,111 @@ def test_list_card_tags_preserves_rpc_order(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# POST /cards/tags-batch — multi-card hydration for list views
+# ---------------------------------------------------------------------------
+
+
+def test_list_card_tags_batch_groups_by_card(monkeypatch):
+    """Rows for multiple cards are grouped into the response dict; cards
+    with no tags are omitted entirely."""
+    from app.models.tag import CardTagsBatchRequest
+
+    me = _uuid()
+    card_a = _uuid()
+    card_b = _uuid()
+    card_c = _uuid()  # has no tags; must be absent from response
+    t1, t2, t3 = _uuid(), _uuid(), _uuid()
+
+    def _batch(_params):
+        # Mirrors the SQL RPC: ordered by card_id, applied_by_me desc, label asc.
+        return [
+            {
+                "card_id": card_a,
+                "id": t1,
+                "slug": "mine",
+                "label": "mine",
+                "created_by": me,
+                "created_at": _ts(),
+                "count": 2,
+                "applied_by_me": True,
+            },
+            {
+                "card_id": card_a,
+                "id": t2,
+                "slug": "alpha",
+                "label": "alpha",
+                "created_by": _uuid(),
+                "created_at": _ts(),
+                "count": 5,
+                "applied_by_me": False,
+            },
+            {
+                "card_id": card_b,
+                "id": t3,
+                "slug": "policy",
+                "label": "policy",
+                "created_by": _uuid(),
+                "created_at": _ts(),
+                "count": 1,
+                "applied_by_me": False,
+            },
+        ]
+
+    mock_sb = _MockSupabase(rpcs={"card_tags_batch": _batch})
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.list_card_tags_batch(
+            payload=CardTagsBatchRequest(card_ids=[card_a, card_b, card_c]),
+            current_user={"id": me},
+        )
+    )
+
+    assert set(res.tags_by_card.keys()) == {card_a, card_b}
+    assert [t.slug for t in res.tags_by_card[card_a]] == ["mine", "alpha"]
+    assert res.tags_by_card[card_a][0].applied_by_me is True
+    assert res.tags_by_card[card_b][0].slug == "policy"
+
+
+def test_list_card_tags_batch_short_circuits_empty_input(monkeypatch):
+    """No card_ids → empty payload without hitting the database."""
+    from app.models.tag import CardTagsBatchRequest
+
+    mock_sb = _MockSupabase(
+        rpcs={"card_tags_batch": lambda _p: pytest.fail("RPC should not run")}
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.list_card_tags_batch(
+            payload=CardTagsBatchRequest(card_ids=[]),
+            current_user={"id": _uuid()},
+        )
+    )
+    assert res.tags_by_card == {}
+
+
+def test_list_card_tags_batch_rejects_oversize(monkeypatch):
+    """Over the batch limit → 400, not a silently truncated query."""
+    from app.models.tag import CardTagsBatchRequest, TAG_BATCH_CARD_LIMIT
+
+    mock_sb = _MockSupabase(
+        rpcs={"card_tags_batch": lambda _p: pytest.fail("RPC should not run")}
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    too_many = [_uuid() for _ in range(TAG_BATCH_CARD_LIMIT + 1)]
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            tags_module.list_card_tags_batch(
+                payload=CardTagsBatchRequest(card_ids=too_many),
+                current_user={"id": _uuid()},
+            )
+        )
+    assert exc.value.status_code == 400
+
+
 def test_list_tags_escapes_ilike_metachars(monkeypatch):
     """% and _ in the query don't pattern-match the rest of the dictionary."""
     captured: Dict[str, Any] = {}

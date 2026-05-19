@@ -36,9 +36,22 @@ export interface TagDetailResponse {
   total: number;
 }
 
+export interface CardTagsBatchResponse {
+  // Keyed by card_id (UUID string). Cards with no tags are omitted, so
+  // callers must treat missing as empty list.
+  tags_by_card: Record<string, TagOnCard[]>;
+}
+
 // Soft cap matched to backend models/tag.py — viewer sees their own tags first,
 // then alphabetical, up to this many in the compact display.
 export const TAG_DISPLAY_LIMIT = 10;
+
+// Mini-view cap for card tiles — fewer chips than the detail panel because
+// tiles have far less horizontal room.
+export const TAG_MINI_DISPLAY_LIMIT = 3;
+
+// Match the backend cap in models/tag.py. Callers must page above this.
+export const TAG_BATCH_CARD_LIMIT = 250;
 
 async function apiRequest<T>(
   endpoint: string,
@@ -119,4 +132,16 @@ export function removeTagFromCard(token: string, cardId: string, slug: string) {
     token,
     { method: "DELETE" },
   );
+}
+
+/**
+ * Hydrate tag chips across a list view in one round-trip. The backend
+ * omits cards with no tags from `tags_by_card`, so callers should treat
+ * missing keys as empty lists.
+ */
+export function getCardTagsBatch(token: string, cardIds: string[]) {
+  return apiRequest<CardTagsBatchResponse>("/api/v1/cards/tags-batch", token, {
+    method: "POST",
+    body: JSON.stringify({ card_ids: cardIds }),
+  });
 }

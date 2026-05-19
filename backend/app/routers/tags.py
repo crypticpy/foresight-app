@@ -26,12 +26,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.deps import supabase, get_current_user
 from app.models.tag import (
     CardTagListResponse,
+    CardTagsBatchRequest,
+    CardTagsBatchResponse,
     PopularTagsResponse,
     Tag,
     TagApplyRequest,
     TagListResponse,
     TagOnCard,
     TagWithUsage,
+    TAG_BATCH_CARD_LIMIT,
 )
 from app.security import limiter
 from fastapi import Request
@@ -160,6 +163,67 @@ async def get_tag_detail(
         "card_ids": card_ids,
         "total": cards_res.count or 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/cards/tags-batch — hydrate tag chips across a viewport
+# ---------------------------------------------------------------------------
+
+
+@router.post("/cards/tags-batch", response_model=CardTagsBatchResponse)
+async def list_card_tags_batch(
+    payload: CardTagsBatchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> CardTagsBatchResponse:
+    """Return tags for many cards in a single trip.
+
+    Used by list views (Signals, Discover) so each card tile can render
+    its mini tag badges without N round-trips. The response omits cards
+    that have no tags — callers should treat absence as an empty list.
+
+    Same ordering as ``/cards/{card_id}/tags``: the caller's own
+    applications first (alphabetical), then everyone else's
+    (alphabetical) within each card_id group.
+    """
+    if not payload.card_ids:
+        return CardTagsBatchResponse(tags_by_card={})
+
+    if len(payload.card_ids) > TAG_BATCH_CARD_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Batch size {len(payload.card_ids)} exceeds limit of "
+                f"{TAG_BATCH_CARD_LIMIT}. Page the request from the client."
+            ),
+        )
+
+    # Postgres receives a UUID[]; we pass strings and rely on the implicit
+    # cast on the RPC signature. PostgREST serializes List[str] as a JSON
+    # array which uuid[] accepts.
+    card_ids = [str(cid) for cid in payload.card_ids]
+
+    res = await asyncio.to_thread(
+        lambda: supabase.rpc(
+            "card_tags_batch",
+            {"p_card_ids": card_ids, "p_viewer_user_id": current_user["id"]},
+        ).execute()
+    )
+
+    tags_by_card: dict[str, list[TagOnCard]] = {}
+    for row in res.data or []:
+        card_id = row["card_id"]
+        tags_by_card.setdefault(card_id, []).append(
+            TagOnCard(
+                id=row["id"],
+                slug=row["slug"],
+                label=row["label"],
+                created_by=row.get("created_by"),
+                created_at=row["created_at"],
+                count=row.get("count") or 0,
+                applied_by_me=bool(row.get("applied_by_me")),
+            )
+        )
+    return CardTagsBatchResponse(tags_by_card=tags_by_card)
 
 
 # ---------------------------------------------------------------------------

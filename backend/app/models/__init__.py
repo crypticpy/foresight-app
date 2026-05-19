@@ -309,13 +309,17 @@ from .lens import (
 )
 
 from .tag import (
+    TAG_BATCH_CARD_LIMIT,
     TAG_DISPLAY_LIMIT,
     TAG_LABEL_MAX,
+    TAG_MINI_DISPLAY_LIMIT,
     Tag,
     TagOnCard,
     TagWithUsage,
     TagApplyRequest,
     CardTagListResponse,
+    CardTagsBatchRequest,
+    CardTagsBatchResponse,
     TagListResponse,
     PopularTagsResponse,
 )
@@ -581,13 +585,17 @@ __all__ = [
     "effective_anchor_scores",
     "effective_array",
     # tag
+    "TAG_BATCH_CARD_LIMIT",
     "TAG_DISPLAY_LIMIT",
     "TAG_LABEL_MAX",
+    "TAG_MINI_DISPLAY_LIMIT",
     "Tag",
     "TagOnCard",
     "TagWithUsage",
     "TagApplyRequest",
     "CardTagListResponse",
+    "CardTagsBatchRequest",
+    "CardTagsBatchResponse",
     "TagListResponse",
     "PopularTagsResponse",
     # workstream_collab
