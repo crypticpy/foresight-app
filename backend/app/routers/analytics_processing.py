@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends
 
@@ -37,6 +37,18 @@ from app.models.processing_metrics import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
+
+
+def _round_or_none(value: Optional[float], digits: int = 2) -> Optional[float]:
+    """Round a metric, distinguishing 0.0 from "no data".
+
+    Use this instead of ``round(x, n) if x else None`` for percentage /
+    average metrics: the truthy form silently converts 0.0 to None,
+    which makes 0% accuracy and 0% error rate render as "—" on the
+    dashboard. ``None`` stays None; every other numeric (including
+    0.0 and negative numbers) round-trips.
+    """
+    return None if value is None else round(value, digits)
 
 
 @router.get("/metrics/processing", response_model=ProcessingMetrics)
@@ -166,18 +178,24 @@ async def get_processing_metrics(
         failed_tasks=len(failed_tasks),
         queued_tasks=len(queued_tasks),
         processing_tasks=len(processing_tasks),
-        avg_processing_time_seconds=(
-            round(avg_processing_time, 2) if avg_processing_time else None
-        ),
+        # ``_round_or_none`` keeps 0.0 as a real value. With the old
+        # truthy guard a "no slow tasks" period would render as
+        # "no data" on the dashboard.
+        avg_processing_time_seconds=_round_or_none(avg_processing_time),
     )
 
     # -------------------------------------------------------------------------
     # Classification Accuracy Metrics
     # -------------------------------------------------------------------------
+    # Scope validations to the same ``days`` window the response reports
+    # under ``period_start``/``period_days``. Without the filter this
+    # block was all-time accuracy on a windowed response — a real
+    # behavior change worth flagging in the PR description.
     validations_response = await asyncio.to_thread(
         lambda: supabase.table("classification_validations")
         .select("is_correct")
         .not_.is_("is_correct", "null")
+        .gte("created_at", period_start_iso)
         .execute()
     )
 
@@ -191,9 +209,11 @@ async def get_processing_metrics(
     classification_metrics = ClassificationMetrics(
         total_validations=total_validations,
         correct_count=correct_count,
-        accuracy_percentage=round(accuracy, 2) if accuracy else None,
+        # 0.0% accuracy (every validation wrong) is a real value,
+        # not "no data".
+        accuracy_percentage=_round_or_none(accuracy),
         target_accuracy=85.0,
-        meets_target=accuracy >= 85.0 if accuracy else False,
+        meets_target=accuracy is not None and accuracy >= 85.0,
     )
 
     # -------------------------------------------------------------------------
@@ -246,5 +266,7 @@ async def get_processing_metrics(
         cards_generated_in_period=cards_generated,
         cards_with_all_scores=cards_with_all_scores,
         total_errors=total_errors,
-        error_rate_percentage=round(error_rate, 2) if error_rate else None,
+        # 0.0% error rate (a perfectly clean period) is a real
+        # value, not "no data".
+        error_rate_percentage=_round_or_none(error_rate),
     )
