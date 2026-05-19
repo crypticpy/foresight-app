@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.deps import supabase, get_current_user, _safe_error, openai_client
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["pattern_insights"])
@@ -56,17 +57,20 @@ async def get_pattern_insight_by_id(
         insight = result.data[0]
 
         if related_ids := insight.get("related_card_ids", []):
-            cards_result = (
-                supabase.table("cards")
-                .select(
-                    "id, name, slug, summary, pillar_id, stage_id, horizon, "
-                    "novelty_score, maturity_score, impact_score, relevance_score, "
-                    "velocity_score, signal_quality_score, updated_at"
+            def _fetch_related(chunk):
+                resp = (
+                    supabase.table("cards")
+                    .select(
+                        "id, name, slug, summary, pillar_id, stage_id, horizon, "
+                        "novelty_score, maturity_score, impact_score, relevance_score, "
+                        "velocity_score, signal_quality_score, updated_at"
+                    )
+                    .in_("id", chunk)
+                    .execute()
                 )
-                .in_("id", related_ids)
-                .execute()
-            )
-            insight["related_cards"] = cards_result.data or []
+                return resp.data or []
+
+            insight["related_cards"] = chunked_in_query(_fetch_related, related_ids)
         else:
             insight["related_cards"] = []
 

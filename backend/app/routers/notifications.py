@@ -15,6 +15,7 @@ from app.models.notification import (
 )
 from app.models.workstream_collab import MarkNotificationsReadRequest, NotificationItem
 from app.digest_service import DigestService
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["notifications"])
@@ -52,14 +53,28 @@ async def mark_notifications_read(
 
     def mark() -> dict:
         now = datetime.now(timezone.utc).isoformat()
-        query = (
+        if request.ids:
+            # Chunked so a large id list (a user marking a backlog of
+            # notifications read in one click) doesn't blow past the
+            # .in_() URL-length guard.
+            def _mark_chunk(chunk):
+                resp = (
+                    supabase.table("collaboration_notifications")
+                    .update({"read_at": now})
+                    .eq("user_id", current_user["id"])
+                    .in_("id", chunk)
+                    .execute()
+                )
+                return resp.data or []
+
+            rows = chunked_in_query(_mark_chunk, request.ids)
+            return {"updated": len(rows)}
+        result = (
             supabase.table("collaboration_notifications")
             .update({"read_at": now})
             .eq("user_id", current_user["id"])
+            .execute()
         )
-        if request.ids:
-            query = query.in_("id", request.ids)
-        result = query.execute()
         return {"updated": len(result.data or [])}
 
     return await asyncio.to_thread(mark)

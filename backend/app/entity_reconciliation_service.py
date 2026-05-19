@@ -40,6 +40,7 @@ from typing import Any, Iterable
 from openai import AsyncOpenAI
 
 from app.deps import supabase as default_supabase
+from app.supabase_in_guard import chunked_in_query
 from app.openai_provider import (
     get_embedding_deployment,
     openai_async_client as default_openai_client,
@@ -385,13 +386,17 @@ async def _link_mentions(
         return 0
 
     def update() -> int:
-        response = (
-            supabase.table("entity_mentions")
-            .update({"entity_id": entity_id})
-            .in_("id", ids)
-            .execute()
-        )
-        return len(response.data or [])
+        def _chunk_update(chunk):
+            resp = (
+                supabase.table("entity_mentions")
+                .update({"entity_id": entity_id})
+                .in_("id", chunk)
+                .execute()
+            )
+            return resp.data or []
+
+        rows = chunked_in_query(_chunk_update, ids)
+        return len(rows)
 
     return await asyncio.to_thread(update)
 

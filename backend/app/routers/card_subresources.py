@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.deps import supabase, get_current_user, _safe_error
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import SAFE_IN_LIMIT, chunked_in_query
 from app.supabase_retry import execute_with_h2_retry
 from app.models.history import (
     ScoreHistory,
@@ -347,7 +347,9 @@ async def get_related_cards(
         )
         return resp.data or []
 
-    related_rows = chunked_in_query(_fetch_related, list(related_card_ids))
+    related_rows = await asyncio.to_thread(
+        chunked_in_query, _fetch_related, list(related_card_ids)
+    )
 
     # Create a lookup map for cards
     cards_map = {card["id"]: card for card in related_rows}
@@ -633,22 +635,27 @@ async def _load_workstream_card_map(
     if not workstreams:
         return {}
     ws_ids = [ws["id"] for ws in workstreams]
-    resp = await execute_with_h2_retry(
-        lambda: supabase.table("workstream_cards")
-        .select("card_id, workstream_id")
-        .in_("workstream_id", ws_ids)
-        .execute()
-    )
-    rows = resp.data or []
     name_by_id = {ws["id"]: ws["name"] for ws in workstreams}
     out: Dict[str, List[str]] = {}
-    for row in rows:
-        cid = row.get("card_id")
-        if not cid:
-            continue
-        out.setdefault(cid, []).append(
-            name_by_id.get(row.get("workstream_id"), "Unknown")
+
+    # Chunk workstream IDs to stay under the IN-clause URL guard. We can't
+    # feed the helper directly to ``chunked_in_query`` here because each
+    # chunk's call still needs the H2-GOAWAY retry wrapper.
+    for start in range(0, len(ws_ids), SAFE_IN_LIMIT):
+        chunk = ws_ids[start : start + SAFE_IN_LIMIT]
+        resp = await execute_with_h2_retry(
+            lambda c=chunk: supabase.table("workstream_cards")
+            .select("card_id, workstream_id")
+            .in_("workstream_id", c)
+            .execute()
         )
+        for row in resp.data or []:
+            cid = row.get("card_id")
+            if not cid:
+                continue
+            out.setdefault(cid, []).append(
+                name_by_id.get(row.get("workstream_id"), "Unknown")
+            )
     return out
 
 
@@ -894,19 +901,22 @@ async def _fetch_cards_page(
     if not page_ids:
         return []
 
-    def fetch() -> List[dict]:
+    def _fetch_page_chunk(chunk):
         # No need to reapply filters: page_ids is already the filtered set.
         return (
             supabase.table("cards")
             .select("*")
-            .in_("id", page_ids)
+            .in_("id", chunk)
             .eq("status", "active")
             .execute()
             .data
             or []
         )
 
-    rows = await asyncio.to_thread(fetch)
+    # page_ids can hit MAX_SIGNALS_PAGE_LIMIT (100), which is over the
+    # .in_() URL-length guard's threshold. Chunk so the guard doesn't
+    # fire for power users requesting page_size=100.
+    rows = await asyncio.to_thread(chunked_in_query, _fetch_page_chunk, page_ids)
     # Postgres returned the slice in arbitrary order; reapply our explicit one.
     order_idx = {cid: i for i, cid in enumerate(page_ids)}
     rows.sort(key=lambda r: order_idx.get(r.get("id"), len(order_idx)))

@@ -68,6 +68,8 @@ from typing import Any, Dict, List
 import numpy as np
 from supabase import Client
 
+from .supabase_in_guard import chunked_in_query
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -177,20 +179,18 @@ def _fetch_sources_with_embeddings(
     if not source_ids:
         return []
 
-    # Supabase PostgREST `in_` filter accepts a CSV list.
-    # Fetch in batches if the list is very large to avoid URL length limits.
-    batch_size = 200
-    results: List[Dict[str, Any]] = []
-    for i in range(0, len(source_ids), batch_size):
-        batch = source_ids[i : i + batch_size]
+    # Chunk via the IN-clause URL guard helper so we never exceed
+    # Cloudflare's request-line limit on large source-id batches.
+    def _fetch(chunk):
         resp = (
             supabase.table("sources")
             .select("id, card_id, embedding")
-            .in_("id", batch)
+            .in_("id", chunk)
             .execute()
         )
-        results.extend(resp.data or [])
-    return results
+        return resp.data or []
+
+    return chunked_in_query(_fetch, list(source_ids))
 
 
 def _update_story_cluster_ids(

@@ -12,6 +12,8 @@ from typing import Any, Literal
 from fastapi import HTTPException, status
 from supabase import Client
 
+from .supabase_in_guard import SAFE_IN_LIMIT
+
 
 ADMIN_ROLES = {"admin", "service_role"}
 WORKSTREAM_OWNER_TYPE_ORG = "org"
@@ -288,28 +290,33 @@ def require_card_research_access(
         row["workstream_id"] for row in (wsc_response.data or []) if row.get("workstream_id")
     ]
     if workstream_ids:
-        editable = (
-            supabase.table("workstreams")
-            .select("id")
-            .in_("id", workstream_ids)
-            .eq("user_id", user["id"])
-            .limit(1)
-            .execute()
-        )
-        if editable.data:
-            return
+        # Chunk to stay under the IN-clause URL guard; short-circuit on the
+        # first chunk that produces a match since both legs are "any-one"
+        # existence checks.
+        for start in range(0, len(workstream_ids), SAFE_IN_LIMIT):
+            chunk = workstream_ids[start : start + SAFE_IN_LIMIT]
+            editable = (
+                supabase.table("workstreams")
+                .select("id")
+                .in_("id", chunk)
+                .eq("user_id", user["id"])
+                .limit(1)
+                .execute()
+            )
+            if editable.data:
+                return
 
-        member_response = (
-            supabase.table("workstream_members")
-            .select("role")
-            .in_("workstream_id", workstream_ids)
-            .eq("user_id", user["id"])
-            .in_("role", ["owner", "editor"])
-            .limit(1)
-            .execute()
-        )
-        if member_response.data:
-            return
+            member_response = (
+                supabase.table("workstream_members")
+                .select("role")
+                .in_("workstream_id", chunk)
+                .eq("user_id", user["id"])
+                .in_("role", ["owner", "editor"])
+                .limit(1)
+                .execute()
+            )
+            if member_response.data:
+                return
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

@@ -44,6 +44,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from .query_generator import QueryConfig
+from .supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -462,14 +463,17 @@ def _apply_schedule_scope(
     from app.deps import supabase
 
     try:
-        rows = (
-            supabase.table("discovery_sources_registry")
-            .select("id,category,url,enabled")
-            .in_("id", source_ids)
-            .execute()
-            .data
-            or []
-        )
+        def _fetch_sources(chunk):
+            return (
+                supabase.table("discovery_sources_registry")
+                .select("id,category,url,enabled")
+                .in_("id", chunk)
+                .execute()
+                .data
+                or []
+            )
+
+        rows = chunked_in_query(_fetch_sources, list(source_ids))
     except Exception:
         logger.exception(
             "Failed to resolve schedule source_ids; ignoring source-id filter"

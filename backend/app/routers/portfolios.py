@@ -29,6 +29,7 @@ from app.models.portfolio import (
     ReorderItemsRequest,
 )
 from app.portfolio_export import render_portfolio_export
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["portfolios"])
@@ -172,14 +173,20 @@ async def list_portfolios(
     if not rows:
         return []
 
-    counts_res = await asyncio.to_thread(
-        lambda: supabase.table("portfolio_items")
-        .select("portfolio_id")
-        .in_("portfolio_id", [r["id"] for r in rows])
-        .execute()
+    def _fetch_counts(chunk):
+        resp = (
+            supabase.table("portfolio_items")
+            .select("portfolio_id")
+            .in_("portfolio_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    count_rows = await asyncio.to_thread(
+        chunked_in_query, _fetch_counts, [r["id"] for r in rows]
     )
     counts: dict[str, int] = {}
-    for r in counts_res.data or []:
+    for r in count_rows:
         counts[r["portfolio_id"]] = counts.get(r["portfolio_id"], 0) + 1
 
     return [_row_to_portfolio(r, item_count=counts.get(r["id"], 0)) for r in rows]

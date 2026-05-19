@@ -1002,24 +1002,44 @@ async def search_mentions(
                 # Empty set for a non-admin = nothing to show; admin sentinel
                 # (None) skips the filter entirely.
                 if accessible_ids is None or accessible_ids:
-                    def _run_workstream_query():
-                        # Wrap the sync Supabase build+execute in to_thread to
-                        # avoid blocking the event loop (the ACL lookup above
-                        # already offloads its query; this kept the actual
-                        # autocomplete read on the loop).
-                        query = (
-                            supabase.table("workstreams")
-                            .select("id, name")
-                            .ilike("name", search_term)
-                            .order("name")
-                            .limit(remaining)
-                        )
-                        if accessible_ids is not None:
-                            query = query.in_("id", list(accessible_ids))
-                        return query.execute()
+                    if accessible_ids is None:
+                        # Admin: no ACL filter, single query.
+                        def _run_admin_query():
+                            return (
+                                supabase.table("workstreams")
+                                .select("id, name")
+                                .ilike("name", search_term)
+                                .order("name")
+                                .limit(remaining)
+                                .execute()
+                            )
 
-                    ws_result = await asyncio.to_thread(_run_workstream_query)
-                    for ws in ws_result.data or []:
+                        ws_result = await asyncio.to_thread(_run_admin_query)
+                        ws_rows = ws_result.data or []
+                    else:
+                        # Non-admin: chunk the accessible_ids filter so a
+                        # power-user with hundreds of workstreams stays under
+                        # the IN-clause URL guard.
+                        def _fetch_chunk(chunk):
+                            resp = (
+                                supabase.table("workstreams")
+                                .select("id, name")
+                                .ilike("name", search_term)
+                                .in_("id", chunk)
+                                .order("name")
+                                .limit(remaining)
+                                .execute()
+                            )
+                            return resp.data or []
+
+                        ws_rows = await asyncio.to_thread(
+                            chunked_in_query, _fetch_chunk, list(accessible_ids)
+                        )
+                        # Re-sort and cap across chunks.
+                        ws_rows.sort(key=lambda r: (r.get("name") or "").lower())
+                        ws_rows = ws_rows[:remaining]
+
+                    for ws in ws_rows:
                         results.append(
                             {
                                 "id": ws["id"],

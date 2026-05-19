@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.authz import require_workstream_access
+from app.supabase_in_guard import chunked_in_query
 
 
 EMAIL_MENTION_RE = re.compile(r"@([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
@@ -35,20 +36,37 @@ def extract_mentions(supabase: Client, body: str, workstream_id: str | None) -> 
     if not emails:
         return sorted(mentioned_ids)
 
-    query = supabase.table("users").select("id, email").in_("email", list(emails))
-    users = query.execute()
-    user_ids = {row["id"] for row in users.data or [] if row.get("id")}
+    def _fetch_users(chunk):
+        resp = (
+            supabase.table("users")
+            .select("id, email")
+            .in_("email", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    user_rows = chunked_in_query(_fetch_users, list(emails))
+    user_ids = {row["id"] for row in user_rows if row.get("id")}
     if not workstream_id:
         return sorted(mentioned_ids | user_ids)
 
-    members = (
-        supabase.table("workstream_members")
-        .select("user_id")
-        .eq("workstream_id", workstream_id)
-        .in_("user_id", list(user_ids) or ["00000000-0000-0000-0000-000000000000"])
-        .execute()
-    )
-    member_ids = {row["user_id"] for row in members.data or [] if row.get("user_id")}
+    # PostgREST treats `.in_("user_id", [])` as "match everything" — preserve
+    # the sentinel UUID so an empty resolved-user set doesn't accidentally
+    # pull every workstream member.
+    member_lookup_ids = list(user_ids) or ["00000000-0000-0000-0000-000000000000"]
+
+    def _fetch_members(chunk):
+        resp = (
+            supabase.table("workstream_members")
+            .select("user_id")
+            .eq("workstream_id", workstream_id)
+            .in_("user_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    member_rows = chunked_in_query(_fetch_members, member_lookup_ids)
+    member_ids = {row["user_id"] for row in member_rows if row.get("user_id")}
 
     owner = (
         supabase.table("workstreams")

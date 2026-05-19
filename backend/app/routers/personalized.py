@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.deps import get_current_user, supabase
 from app.discovery_scoring import calculate_discovery_score
 from app.security import limiter
+from app.supabase_in_guard import chunked_in_query
 
 router = APIRouter(prefix="/api/v1", tags=["personalized"])
 
@@ -84,16 +85,20 @@ async def get_personalized_queue(
         if row.get("workstream_id")
     ]
     if shared_ids:
-        shared_ws_resp = await asyncio.to_thread(
-            lambda: supabase.table("workstreams")
-            .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
-            .in_("id", shared_ids)
-            .eq("is_active", True)
-            .execute()
-        )
+        def _fetch_shared(chunk):
+            resp = (
+                supabase.table("workstreams")
+                .select("id, pillar_ids, goal_ids, keywords, horizon, is_active")
+                .in_("id", chunk)
+                .eq("is_active", True)
+                .execute()
+            )
+            return resp.data or []
+
+        shared_rows = await asyncio.to_thread(chunked_in_query, _fetch_shared, shared_ids)
         # Dedupe — a workstream can hit two of own/org/shared in principle.
         seen = {ws["id"] for ws in workstreams if ws.get("id")}
-        for ws in shared_ws_resp.data or []:
+        for ws in shared_rows:
             if ws.get("id") and ws["id"] not in seen:
                 workstreams.append(ws)
                 seen.add(ws["id"])
