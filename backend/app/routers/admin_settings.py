@@ -246,9 +246,13 @@ SETTING_DEFINITIONS: list[dict[str, Any]] = [
         "key": "FORESIGHT_ENABLE_COLLABORATION",
         "group_name": "features",
         "label": "Collaboration",
-        "description": "Enable workstream collaboration features.",
+        "description": "Enable workstream collaboration features (card discussions).",
         "value_type": "boolean",
-        "default": False,
+        # On by default — admins can opt out via the admin settings UI or by
+        # setting FORESIGHT_ENABLE_COLLABORATION=false on the API service.
+        # Keep this in sync with feature_flags.collaboration_enabled() and
+        # routers.config.get_config() which both default this flag to True.
+        "default": True,
     },
     {
         "key": "FORESIGHT_ENABLE_GUEST_ACCOUNTS",

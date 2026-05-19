@@ -12,13 +12,14 @@ def env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def require_feature_enabled(flag_name: str) -> None:
-    if not env_flag(flag_name):
+def require_feature_enabled(flag_name: str, *, default: bool = False) -> None:
+    if not env_flag(flag_name, default):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 def collaboration_enabled() -> None:
-    require_feature_enabled("FORESIGHT_ENABLE_COLLABORATION")
+    # Discussions are on by default — admins can disable via FORESIGHT_ENABLE_COLLABORATION=false.
+    require_feature_enabled("FORESIGHT_ENABLE_COLLABORATION", default=True)
 
 
 def guest_accounts_enabled() -> None:
