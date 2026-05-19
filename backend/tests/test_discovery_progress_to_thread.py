@@ -274,6 +274,78 @@ def test_update_source_outcome_runs_supabase_off_event_loop() -> None:
     assert log[0] != loop_tid
 
 
+def test_update_progress_handles_null_summary_report_column() -> None:
+    """JSONB ``summary_report = null`` must not crash the splat merge.
+
+    Pre-fix: ``result.data.get("summary_report", {})`` only returned the
+    default when the key was absent. When the column was explicitly null
+    the helper got ``None``, then ``{**None, ...}`` raised TypeError and
+    the bare ``except`` swallowed it into a warning. Net effect: progress
+    silently never recorded for runs that initialized with null reports.
+    """
+    log: List[int] = []
+    # Simulate the column being JSONB null — key present, value None.
+    stub = _SupabaseStub(log, result_data={"summary_report": None})
+
+    _run(
+        discovery_progress.update_progress(
+            stub,  # type: ignore[arg-type]
+            run_id="run-1",
+            stage="search",
+            message="m",
+            stages_status={"search": "in_progress"},
+        )
+    )
+
+    # Must still complete both Supabase calls (select + update). If the
+    # splat raised, the update would have been skipped and len(log) == 1.
+    assert len(log) == 2
+
+
+def test_update_progress_handles_non_dict_summary_report_column() -> None:
+    """Defensive: a corrupt non-dict ``summary_report`` must not crash."""
+    log: List[int] = []
+    stub = _SupabaseStub(log, result_data={"summary_report": "corrupt"})
+
+    _run(
+        discovery_progress.update_progress(
+            stub,  # type: ignore[arg-type]
+            run_id="run-1",
+            stage="search",
+            message="m",
+            stages_status={"search": "in_progress"},
+        )
+    )
+
+    assert len(log) == 2  # select + update both ran
+
+
+def test_update_progress_skips_write_when_row_missing() -> None:
+    """If the discovery_runs row is gone, do not issue a no-op UPDATE.
+
+    Pre-fix: ``result.data`` is None, ``current_report`` defaults to
+    ``{}``, and the helper still issued an UPDATE with ``.eq("id", ...)``
+    that matched zero rows. That silently consumed a round-trip and
+    masked the fact that the caller passed a bogus run_id. Now we log a
+    warning and return without writing.
+    """
+    log: List[int] = []
+    stub = _SupabaseStub(log, result_data=None)
+
+    _run(
+        discovery_progress.update_progress(
+            stub,  # type: ignore[arg-type]
+            run_id="missing-run",
+            stage="search",
+            message="m",
+            stages_status={"search": "in_progress"},
+        )
+    )
+
+    # Only the select ran — no wasted UPDATE on a missing row.
+    assert len(log) == 1
+
+
 def test_update_progress_does_not_starve_concurrent_tasks() -> None:
     """A blocking Supabase call must not starve other asyncio tasks.
 
