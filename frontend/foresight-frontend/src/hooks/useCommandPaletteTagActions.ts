@@ -40,7 +40,13 @@ export function useCommandPaletteTagActions(
     async (q: string) => {
       const seq = ++requestSeq.current;
       const token = await getAuthToken();
-      if (!token) return;
+      if (!token) {
+        // No token → can't fetch. Drop any stale results that came in
+        // before the token expired, and stay on the latest seq so a
+        // late response from a prior request can't repopulate them.
+        if (seq === requestSeq.current && mounted.current) setActions([]);
+        return;
+      }
       try {
         const res = await searchTags(token, q, RESULT_LIMIT);
         if (seq !== requestSeq.current || !mounted.current) return;
@@ -67,8 +73,10 @@ export function useCommandPaletteTagActions(
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < MIN_QUERY_LEN) {
-      // Clear stale tag suggestions when the user shortens the query so
-      // unrelated tags don't linger in the list.
+      // Bump the sequence so any in-flight request loses its race when
+      // it resolves — otherwise the user can clear the input and still
+      // see late results land for the now-stale query.
+      requestSeq.current += 1;
       setActions([]);
       return;
     }

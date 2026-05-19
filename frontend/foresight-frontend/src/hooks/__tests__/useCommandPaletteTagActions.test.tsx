@@ -111,6 +111,20 @@ describe("useCommandPaletteTagActions", () => {
     expect(result.current).toEqual([]);
   });
 
+  it("makes no API call and produces no actions when getAuthToken returns null", async () => {
+    const search = vi.spyOn(tagsApi, "searchTags");
+    const navigate = vi.fn();
+    const getNullToken = async () => null;
+    const { result } = renderHook(() =>
+      useCommandPaletteTagActions("climate", navigate, getNullToken),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(260);
+    });
+    expect(search).not.toHaveBeenCalled();
+    expect(result.current).toEqual([]);
+  });
+
   it("encodeURIComponent-safe slug paths", async () => {
     vi.spyOn(tagsApi, "searchTags").mockResolvedValue({
       tags: [tag("with space")],
