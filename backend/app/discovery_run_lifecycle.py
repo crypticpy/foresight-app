@@ -54,28 +54,34 @@ async def create_run_record(supabase: Client, config: DiscoveryConfig) -> str:
     no-ops).
     """
     run_id = str(uuid.uuid4())
+    record = {
+        "id": run_id,
+        "status": DiscoveryStatus.RUNNING.value,
+        "triggered_by": "manual",
+        "pillars_scanned": config.pillars_filter or [],
+        "priorities_scanned": config.horizons_filter or [],
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "summary_report": {
+            "config": {
+                "max_queries_per_run": config.max_queries_per_run,
+                "max_sources_per_query": config.max_sources_per_query,
+                "max_sources_total": config.max_sources_total,
+                "auto_approve_threshold": config.auto_approve_threshold,
+                "similarity_threshold": config.similarity_threshold,
+                "dry_run": config.dry_run,
+            }
+        },
+    }
 
     try:
-        supabase.table("discovery_runs").insert(
-            {
-                "id": run_id,
-                "status": DiscoveryStatus.RUNNING.value,
-                "triggered_by": "manual",
-                "pillars_scanned": config.pillars_filter or [],
-                "priorities_scanned": config.horizons_filter or [],
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "summary_report": {
-                    "config": {
-                        "max_queries_per_run": config.max_queries_per_run,
-                        "max_sources_per_query": config.max_sources_per_query,
-                        "max_sources_total": config.max_sources_total,
-                        "auto_approve_threshold": config.auto_approve_threshold,
-                        "similarity_threshold": config.similarity_threshold,
-                        "dry_run": config.dry_run,
-                    }
-                },
-            }
-        ).execute()
+        # supabase-py is synchronous; .execute() would block the event
+        # loop until the network round-trip returned. The pipeline calls
+        # this at run-start and depends on the loop staying responsive
+        # for the heartbeat coroutine that starts right after, so push
+        # the insert onto a worker thread.
+        await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs").insert(record).execute()
+        )
     except Exception as e:
         # Log but don't fail - table might not exist yet
         logger.warning(f"Could not create run record (table may not exist): {e}")
@@ -98,8 +104,10 @@ async def update_run_record(
     try:
         existing_report: Dict[str, Any] = {}
         try:
-            existing = (
-                supabase.table("discovery_runs")
+            # supabase-py is sync — wrap to keep the event loop free for
+            # the heartbeat coroutine that's running alongside.
+            existing = await asyncio.to_thread(
+                lambda: supabase.table("discovery_runs")
                 .select("summary_report")
                 .eq("id", run_id)
                 .single()
