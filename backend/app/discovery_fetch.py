@@ -186,12 +186,21 @@ async def fetch_from_all_source_categories(
 async def _fetch_rss_sources(
     feed_urls: List[str], max_sources: int
 ) -> Tuple[List[RawSource], str]:
-    """Fetch sources from RSS/Atom feeds."""
+    """Fetch sources from RSS/Atom feeds.
+
+    Uses ceiling division for the per-feed article cap so we never
+    request 0 articles per feed when ``max_sources < len(feed_urls)``
+    (a common case with small per-category budgets and 10–20 default
+    RSS feeds). Caller already clamps the total to ``max_sources``
+    with ``articles[:max_sources]`` below.
+    """
+    if max_sources <= 0 or not feed_urls:
+        return [], SourceCategory.RSS.value
     try:
         articles = await fetch_rss_sources(
             feed_urls=feed_urls,
-            max_articles_per_feed=(
-                max_sources // len(feed_urls) if feed_urls else 10
+            max_articles_per_feed=max(
+                1, (max_sources + len(feed_urls) - 1) // len(feed_urls)
             ),
         )
 
