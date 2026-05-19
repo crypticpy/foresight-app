@@ -415,11 +415,20 @@ def test_search_paginates_prefetch_for_power_user(monkeypatch):
         f"{conv_range_calls[1]['range']}"
     )
 
-    # The messages query must have been scoped via .in_() containing
-    # `total` conversation ids — proving the loop concatenated both pages.
+    # The messages query must have been scoped via .in_() and the union of
+    # all chunks must contain every owned conversation id — proving the
+    # loop concatenated both pages and the chunked .in_() helper fanned out
+    # over every id (rather than truncating to a single SAFE_IN_LIMIT-sized
+    # chunk).
     msg_calls = [c for c in big_stub.calls if c["table"] == "chat_messages"]
-    assert len(msg_calls) == 1
-    assert len(msg_calls[0]["in"]["conversation_id"]) == total, (
-        f"chat_messages scope received {len(msg_calls[0]['in']['conversation_id'])} "
-        f"ids, expected {total} (both pages concatenated)."
+    assert len(msg_calls) >= 1, "chat_messages query was never issued"
+    scoped_ids = {
+        cid
+        for call in msg_calls
+        for cid in call["in"]["conversation_id"]
+    }
+    assert len(scoped_ids) == total, (
+        f"chat_messages scope union covered {len(scoped_ids)} ids, "
+        f"expected {total} (both pages concatenated). chunked_in_query "
+        f"may have stopped short of the full id set."
     )

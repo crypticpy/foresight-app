@@ -34,6 +34,7 @@ from app.helpers.search_utils import (
     _extract_highlights,
 )
 from app.card_artifacts import enrich_cards_with_collab
+from app.supabase_in_guard import chunked_in_query
 from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
@@ -359,13 +360,18 @@ async def search_cards(
                         "opportunity_score, status, created_at, updated_at, "
                         "signal_quality_score, top25_relevance, origin, is_exploratory"
                     )
-                    cards_response = await asyncio.to_thread(
-                        lambda: supabase.table("cards")
-                        .select(_SEARCH_HYDRATE_COLS)
-                        .in_("id", matched_ids)
-                        .execute()
+                    def _hydrate_matched(chunk):
+                        resp = (
+                            supabase.table("cards")
+                            .select(_SEARCH_HYDRATE_COLS)
+                            .in_("id", chunk)
+                            .execute()
+                        )
+                        return resp.data or []
+
+                    results = await asyncio.to_thread(
+                        chunked_in_query, _hydrate_matched, matched_ids
                     )
-                    results = cards_response.data or []
                     for item in results:
                         item["search_relevance"] = similarity_map.get(item["id"], 0.0)
                     # Preserve similarity ordering
@@ -626,13 +632,19 @@ async def preview_filter_count(
     # Apply keyword filtering (need to fetch full text for this)
     if filters.keywords and cards:
         card_ids = [c["id"] for c in cards]
-        full_response = await asyncio.to_thread(
-            lambda: supabase.table("cards")
-            .select("id, name, summary, description, pillar_id, horizon, stage_id")
-            .in_("id", card_ids)
-            .execute()
+
+        def _hydrate_full(chunk):
+            resp = (
+                supabase.table("cards")
+                .select("id, name, summary, description, pillar_id, horizon, stage_id")
+                .in_("id", chunk)
+                .execute()
+            )
+            return resp.data or []
+
+        full_cards = await asyncio.to_thread(
+            chunked_in_query, _hydrate_full, card_ids
         )
-        full_cards = full_response.data or []
 
         filtered_cards = []
         for card in full_cards:

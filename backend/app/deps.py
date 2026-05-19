@@ -44,6 +44,16 @@ supabase: Optional[Client] = None
 if _supabase_url and _supabase_service_key:
     supabase = create_client(_supabase_url, _supabase_service_key)
 
+# Install the .in_() URL-length guard at process start. See
+# app/supabase_in_guard.py for background — without this, a single
+# `.in_("id", [<300+ UUIDs>])` call URL-encodes past Cloudflare's ~8KB
+# request-line limit and the endpoint 500s with an HTML-400-as-JSON parse
+# error (request_id 5d2a2767-... in prod). The guard fails loud at the
+# call site instead of letting the bug class slip back in.
+from app.supabase_in_guard import install_in_guard as _install_in_guard  # noqa: E402
+
+_install_in_guard()
+
 # ---------------------------------------------------------------------------
 # OpenAI alias
 # ---------------------------------------------------------------------------
