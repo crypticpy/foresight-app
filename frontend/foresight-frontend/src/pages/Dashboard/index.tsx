@@ -14,7 +14,9 @@ import { useDashboardData } from "../../hooks/useDashboardData";
 import { useToast } from "../../components/ui/Toast";
 import { CommandPalette } from "../../components/CommandPalette";
 import { useCommandPaletteShortcut } from "../../hooks/useCommandPaletteShortcut";
+import { useCommandPaletteTagActions } from "../../hooks/useCommandPaletteTagActions";
 import { buildDashboardCommandActions } from "../../lib/dashboard-commands";
+import { getAuthToken } from "../../lib/auth";
 import { buildSparklineByMetric } from "../../lib/dashboard-utils";
 import { WhatChangedStrip } from "../../components/dashboard/WhatChangedStrip";
 import { AskForesightBar } from "../../components/Chat/AskForesightBar";
@@ -43,6 +45,7 @@ export default function Dashboard() {
     refresh,
   } = useDashboardData(user?.id);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
 
   const sparklineByMetric = useMemo(
     () => buildSparklineByMetric(lensOverview?.sparklines),
@@ -64,9 +67,18 @@ export default function Dashboard() {
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   useCommandPaletteShortcut(openPalette);
 
-  const paletteActions = useMemo(
+  const staticActions = useMemo(
     () => buildDashboardCommandActions(navigate, handleRefresh),
     [navigate, handleRefresh],
+  );
+  const tagActions = useCommandPaletteTagActions(
+    paletteQuery,
+    navigate,
+    getAuthToken,
+  );
+  const paletteActions = useMemo(
+    () => [...staticActions, ...tagActions],
+    [staticActions, tagActions],
   );
 
   if (loading) return <DashboardSkeleton />;
@@ -83,6 +95,7 @@ export default function Dashboard() {
         open={paletteOpen}
         onClose={closePalette}
         actions={paletteActions}
+        onQueryChange={setPaletteQuery}
       />
 
       <WhatChangedStrip

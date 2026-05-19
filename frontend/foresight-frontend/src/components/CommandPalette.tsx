@@ -38,6 +38,13 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   actions: CommandAction[];
+  /**
+   * Observe the current query string. Hosts that want to inject async
+   * results (e.g. tag-name search) wire this to a debounced API call and
+   * push matching `CommandAction`s back through `actions` on the next
+   * render. Optional — leave unset for purely static action lists.
+   */
+  onQueryChange?: (query: string) => void;
 }
 
 /**
@@ -56,8 +63,14 @@ export function CommandPalette({
   open,
   onClose,
   actions,
+  onQueryChange,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
+  // Notify the host whenever the user-visible query string changes so
+  // async sources (tag search, etc.) can refetch in parallel.
+  useEffect(() => {
+    onQueryChange?.(query);
+  }, [query, onQueryChange]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   // Mirror of `selectedIndex` so the Enter handler can read the latest value
   // even when the prior ArrowDown's setState hasn't flushed yet (rapid input).
