@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -42,6 +43,9 @@ export const TagEditor: React.FC<TagEditorProps> = ({
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestSeq = useRef(0);
+  const listboxId = useId();
+  const optionId = (idx: number) => `${listboxId}-opt-${idx}`;
 
   const existingSet = useMemo(
     () => new Set(existingSlugs.map((s) => s.toLowerCase())),
@@ -60,21 +64,26 @@ export const TagEditor: React.FC<TagEditorProps> = ({
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  // Debounced autocomplete fetch.
+  // Debounced autocomplete fetch. Each fire bumps requestSeq so a slow
+  // response for an older query cannot overwrite suggestions for the
+  // current input (the typing-faster-than-network race).
   useEffect(() => {
     if (!open) return;
     const handle = setTimeout(async () => {
+      const seq = ++requestSeq.current;
       setLoading(true);
       try {
         const token = await getAuthToken();
         if (!token) return;
         const res = await searchTags(token, value, SUGGESTION_LIMIT);
+        if (seq !== requestSeq.current) return;
         setSuggestions(res.tags);
         setActiveIdx(0);
       } catch {
+        if (seq !== requestSeq.current) return;
         setSuggestions([]);
       } finally {
-        setLoading(false);
+        if (seq === requestSeq.current) setLoading(false);
       }
     }, DEBOUNCE_MS);
     return () => clearTimeout(handle);
@@ -157,10 +166,18 @@ export const TagEditor: React.FC<TagEditorProps> = ({
           aria-label="Add tag"
           aria-autocomplete="list"
           aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-activedescendant={
+            open && (suggestions.length > 0 || showCreate)
+              ? optionId(activeIdx)
+              : undefined
+          }
+          role="combobox"
         />
       </div>
       {open && (suggestions.length > 0 || showCreate || loading) && (
         <ul
+          id={listboxId}
           className="absolute z-30 mt-1 max-h-60 w-64 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-surface-hover dark:bg-dark-surface-elevated"
           role="listbox"
         >
@@ -175,6 +192,7 @@ export const TagEditor: React.FC<TagEditorProps> = ({
             return (
               <li
                 key={tag.id}
+                id={optionId(idx)}
                 role="option"
                 aria-selected={active}
                 aria-disabled={already}
@@ -202,6 +220,7 @@ export const TagEditor: React.FC<TagEditorProps> = ({
           })}
           {showCreate && (
             <li
+              id={optionId(suggestions.length)}
               role="option"
               aria-selected={activeIdx === suggestions.length}
               className={cn(

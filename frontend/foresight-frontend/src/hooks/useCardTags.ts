@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyTagToCard,
   getCardTags,
@@ -23,6 +23,23 @@ export function useCardTags(
     saving: false,
     error: null,
   });
+
+  // Track mount status so async mutation callbacks don't setState on an
+  // unmounted hook (user navigates away mid-flight).
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const safeSetState = useCallback(
+    (updater: (s: UseCardTagsState) => UseCardTagsState) => {
+      if (mounted.current) setState(updater);
+    },
+    [],
+  );
 
   // Hydrate from server. Re-runs on cardId change.
   useEffect(() => {
@@ -55,18 +72,18 @@ export function useCardTags(
       if (!cardId) return;
       const token = await getAuthToken();
       if (!token) return;
-      setState((s) => ({ ...s, saving: true, error: null }));
+      safeSetState((s) => ({ ...s, saving: true, error: null }));
       try {
         const res = await applyTagToCard(token, cardId, label, workstreamId);
-        setState((s) => ({ ...s, tags: res.tags, saving: false }));
+        safeSetState((s) => ({ ...s, tags: res.tags, saving: false }));
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : "Failed to apply tag";
-        setState((s) => ({ ...s, saving: false, error: message }));
+        safeSetState((s) => ({ ...s, saving: false, error: message }));
         throw err;
       }
     },
-    [cardId, getAuthToken],
+    [cardId, getAuthToken, safeSetState],
   );
 
   const remove = useCallback(
@@ -74,18 +91,18 @@ export function useCardTags(
       if (!cardId) return;
       const token = await getAuthToken();
       if (!token) return;
-      setState((s) => ({ ...s, saving: true, error: null }));
+      safeSetState((s) => ({ ...s, saving: true, error: null }));
       try {
         const res = await removeTagFromCard(token, cardId, slug);
-        setState((s) => ({ ...s, tags: res.tags, saving: false }));
+        safeSetState((s) => ({ ...s, tags: res.tags, saving: false }));
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : "Failed to remove tag";
-        setState((s) => ({ ...s, saving: false, error: message }));
+        safeSetState((s) => ({ ...s, saving: false, error: message }));
         throw err;
       }
     },
-    [cardId, getAuthToken],
+    [cardId, getAuthToken, safeSetState],
   );
 
   return {
