@@ -55,6 +55,7 @@ from app.routers.share_links import router as share_links_router
 from app.routers.lens import router as lens_router
 from app.routers.personalized import router as personalized_router
 from app.routers.tags import router as tags_router
+from app.routers.admin_tags import router as admin_tags_router
 
 load_dotenv()
 
@@ -243,6 +244,7 @@ def create_app() -> FastAPI:
     application.include_router(lens_router)
     application.include_router(personalized_router)
     application.include_router(tags_router)
+    application.include_router(admin_tags_router)
 
     return application
 
