@@ -17,6 +17,7 @@ from app.comment_service import (
 from app.authz import require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import collaboration_enabled
+from app.supabase_in_guard import chunked_in_query
 from app.models.workstream_collab import (
     CommentCreate,
     CommentReactionToggle,
@@ -36,22 +37,35 @@ def _comment_profiles(rows: list[dict]) -> dict[str, dict]:
     user_ids = sorted({row["author_id"] for row in rows if row.get("author_id")})
     if not user_ids:
         return {}
-    res = supabase.table("users").select("id, display_name").in_("id", user_ids).execute()
-    return {row["id"]: row for row in res.data or []}
+
+    def _fetch(chunk):
+        resp = (
+            supabase.table("users")
+            .select("id, display_name")
+            .in_("id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    return {row["id"]: row for row in chunked_in_query(_fetch, user_ids)}
 
 
 def _reaction_maps(comment_ids: list[str], user_id: str) -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     if not comment_ids:
         return {}, {}
-    rows = (
-        supabase.table("comment_reactions")
-        .select("comment_id, user_id, emoji")
-        .in_("comment_id", comment_ids)
-        .execute()
-    )
+
+    def _fetch(chunk):
+        resp = (
+            supabase.table("comment_reactions")
+            .select("comment_id, user_id, emoji")
+            .in_("comment_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
     counts: dict[str, dict[str, int]] = {}
     mine: dict[str, list[str]] = {}
-    for row in rows.data or []:
+    for row in chunked_in_query(_fetch, comment_ids):
         comment_id = row["comment_id"]
         emoji = row["emoji"]
         counts.setdefault(comment_id, {})

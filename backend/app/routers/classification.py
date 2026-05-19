@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import supabase, get_current_user
+from app.supabase_in_guard import chunked_in_query
 from app.models.classification_models import (
     ValidationSubmission,
     ValidationSubmissionResponse,
@@ -185,18 +186,18 @@ async def get_cards_pending_validation(
 
     # Get card IDs that already have validations
     card_ids = [c["id"] for c in cards_response.data]
-    validated_response = (
-        supabase.table("classification_validations")
-        .select("card_id")
-        .in_("card_id", card_ids)
-        .execute()
-    )
 
-    validated_ids = (
-        {v["card_id"] for v in validated_response.data}
-        if validated_response.data
-        else set()
-    )
+    def _fetch_validations(chunk):
+        resp = (
+            supabase.table("classification_validations")
+            .select("card_id")
+            .in_("card_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    validated_rows = chunked_in_query(_fetch_validations, card_ids)
+    validated_ids = {v["card_id"] for v in validated_rows if v.get("card_id")}
 
     return [c for c in cards_response.data if c["id"] not in validated_ids]
 

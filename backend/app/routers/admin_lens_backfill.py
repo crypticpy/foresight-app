@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, supabase
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
@@ -84,29 +85,39 @@ async def trigger_lens_backfill(
     capped_limit = max(1, min(body.limit, 500))
 
     select_cols = "id, name, summary, pillar_id, horizon, stage_id"
-    query = supabase.table("cards").select(select_cols).limit(capped_limit)
+    version_filter = f'classifier_version.is.null,classifier_version.neq."{target_version}"'
 
-    if body.card_ids:
-        query = query.in_("id", body.card_ids)
-        if not body.force:
-            query = query.or_(
-                f'classifier_version.is.null,classifier_version.neq."{target_version}"'
-            )
-    elif not body.force:
-        query = query.or_(
-            f'classifier_version.is.null,classifier_version.neq."{target_version}"'
-        )
+    def _build_query(card_id_chunk: Optional[list[str]] = None):
+        q = supabase.table("cards").select(select_cols).limit(capped_limit)
+        if card_id_chunk is not None:
+            q = q.in_("id", card_id_chunk)
+            if not body.force:
+                q = q.or_(version_filter)
+        elif not body.force:
+            q = q.or_(version_filter)
+        return q
 
     try:
-        cards_resp = await asyncio.to_thread(query.execute)
+        if body.card_ids:
+            # Fan out the explicit-ids path so a large admin list doesn't
+            # trip the .in_() URL-length guard. Per-chunk limit is the
+            # global cap; we stop early once we've collected enough.
+            def _run_chunk(chunk):
+                return _build_query(chunk).execute().data or []
+
+            cards = await asyncio.to_thread(
+                chunked_in_query, _run_chunk, body.card_ids
+            )
+            cards = cards[:capped_limit]
+        else:
+            resp = await asyncio.to_thread(_build_query().execute)
+            cards = resp.data or []
     except Exception as exc:
         logger.exception("Lens backfill candidate query failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_safe_error("lens backfill candidate lookup", exc),
         ) from exc
-
-    cards = cards_resp.data or []
     if not cards:
         return {
             "status": "skipped",

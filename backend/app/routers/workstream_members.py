@@ -9,6 +9,7 @@ from app.activity_log import record_activity, record_audit_event
 from app.authz import require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import collaboration_enabled
+from app.supabase_in_guard import chunked_in_query
 from app.models.workstream_collab import (
     WorkstreamMember,
     WorkstreamMemberCreate,
@@ -25,8 +26,17 @@ router = APIRouter(
 def _profile_lookup(user_ids: list[str]) -> dict[str, dict]:
     if not user_ids:
         return {}
-    res = supabase.table("users").select("id, email, display_name").in_("id", user_ids).execute()
-    return {row["id"]: row for row in res.data or []}
+
+    def _fetch(chunk):
+        resp = (
+            supabase.table("users")
+            .select("id, email, display_name")
+            .in_("id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    return {row["id"]: row for row in chunked_in_query(_fetch, user_ids)}
 
 
 def _serialize_member(row: dict, profiles: dict[str, dict]) -> WorkstreamMember:

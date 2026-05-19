@@ -44,6 +44,7 @@ from app.deps import (
     limiter,
     supabase,
 )
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
@@ -184,13 +185,16 @@ async def list_guest_users(current_user: dict = Depends(get_current_user)):
             user_id: [] for user_id in user_ids
         }
         if user_ids:
-            memberships = (
-                supabase.table("workstream_members")
-                .select("user_id, role, workstream_id, workstreams(name)")
-                .in_("user_id", user_ids)
-                .execute()
-            )
-            for membership in memberships.data or []:
+            def _fetch_memberships(chunk):
+                resp = (
+                    supabase.table("workstream_members")
+                    .select("user_id, role, workstream_id, workstreams(name)")
+                    .in_("user_id", chunk)
+                    .execute()
+                )
+                return resp.data or []
+
+            for membership in chunked_in_query(_fetch_memberships, user_ids):
                 memberships_by_user.setdefault(membership["user_id"], []).append(
                     membership
                 )

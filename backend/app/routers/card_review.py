@@ -12,6 +12,7 @@ from app.helpers.score_history import (
     _record_stage_history,
 )
 from app.models.review import CardReviewRequest, BulkReviewRequest, CardDismissRequest
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -237,15 +238,14 @@ async def bulk_review_cards(
     failed = []
 
     try:
-        # Step 1: Verify all cards exist in a single query
-        existing_cards = (
-            supabase.table("cards").select("id").in_("id", card_ids).execute()
-        )
-        existing_ids = (
-            {card["id"] for card in existing_cards.data}
-            if existing_cards.data
-            else set()
-        )
+        # Step 1: Verify all cards exist. Fan out across chunks so a max-sized
+        # bulk request (100 cards) doesn't blow past the .in_() URL-length guard.
+        def _check_existing(chunk):
+            resp = supabase.table("cards").select("id").in_("id", chunk).execute()
+            return resp.data or []
+
+        existing_rows = chunked_in_query(_check_existing, card_ids)
+        existing_ids = {card["id"] for card in existing_rows}
 
         # Identify cards that don't exist
         missing_ids = set(card_ids) - existing_ids
@@ -276,19 +276,27 @@ async def bulk_review_cards(
                 "updated_at": now,
             }
 
-        # Step 3: Batch update all valid cards in a single query
-        update_response = (
-            supabase.table("cards").update(update_data).in_("id", valid_ids).execute()
-        )
+        # Step 3: Batch update all valid cards. Chunked for the same
+        # URL-length-guard reason as Step 1.
+        def _apply_update(chunk):
+            resp = (
+                supabase.table("cards")
+                .update(update_data)
+                .in_("id", chunk)
+                .execute()
+            )
+            return resp.data or []
 
-        if not update_response.data:
+        update_rows = chunked_in_query(_apply_update, valid_ids)
+
+        if not update_rows:
             # If batch update fails entirely, mark all as failed
             for card_id in valid_ids:
                 failed.append({"id": card_id, "error": "Batch update failed"})
             return {"processed": 0, "failed": failed}
 
         # Get the IDs that were actually updated
-        updated_ids = [card["id"] for card in update_response.data]
+        updated_ids = [card["id"] for card in update_rows]
         processed_count = len(updated_ids)
 
         # Check for any cards that weren't updated (shouldn't happen but handle gracefully)

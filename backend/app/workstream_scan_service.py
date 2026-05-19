@@ -37,6 +37,7 @@ import openai
 from .ai_service import AIService, AnalysisResult, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
+from .supabase_in_guard import chunked_in_query
 from . import domain_reputation_service
 from .openai_provider import get_chat_mini_deployment
 from .source_fetchers import (
@@ -1134,14 +1135,21 @@ Example: ["query 1", "query 2", ...]"""
                 if url_check.data:
                     # Check if any of these source cards are already in the workstream
                     existing_card_ids = {r["card_id"] for r in url_check.data}
-                    ws_cards = (
-                        self.supabase.table("workstream_cards")
-                        .select("card_id")
-                        .eq("workstream_id", config.workstream_id)
-                        .in_("card_id", list(existing_card_ids))
-                        .execute()
+
+                    def _check_ws(chunk, ws_id=config.workstream_id):
+                        resp = (
+                            self.supabase.table("workstream_cards")
+                            .select("card_id")
+                            .eq("workstream_id", ws_id)
+                            .in_("card_id", chunk)
+                            .execute()
+                        )
+                        return resp.data or []
+
+                    ws_card_rows = chunked_in_query(
+                        _check_ws, list(existing_card_ids)
                     )
-                    if ws_cards.data:
+                    if ws_card_rows:
                         duplicate_count += 1
                         continue
 

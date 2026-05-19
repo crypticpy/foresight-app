@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 from supabase import Client
 
 from app.openai_provider import get_chat_mini_deployment
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -236,21 +237,29 @@ class DigestService:
             )
             workstreams = ws_resp.data or []
             if ws_map := {ws["id"]: ws["name"] for ws in workstreams}:
-                # Get cards added to workstreams since last digest
-                wc_resp = (
-                    self.supabase.table("workstream_cards")
-                    .select(
-                        "card_id, workstream_id, created_at, "
-                        "cards!inner(name, summary, pillar, horizon, stage)"
+                # Get cards added to workstreams since last digest.
+                # Chunk to keep the IN clause under Cloudflare's URL limit
+                # for power users with many workstreams.
+                def _fetch_ws_cards(chunk):
+                    resp = (
+                        self.supabase.table("workstream_cards")
+                        .select(
+                            "card_id, workstream_id, created_at, "
+                            "cards!inner(name, summary, pillar, horizon, stage)"
+                        )
+                        .in_("workstream_id", chunk)
+                        .gte("created_at", since.isoformat())
+                        .order("created_at", desc=True)
+                        .limit(MAX_NEW_SIGNALS)
+                        .execute()
                     )
-                    .in_("workstream_id", list(ws_map.keys()))
-                    .gte("created_at", since.isoformat())
-                    .order("created_at", desc=True)
-                    .limit(MAX_NEW_SIGNALS)
-                    .execute()
-                )
+                    return resp.data or []
 
-                for wc in wc_resp.data or []:
+                wc_rows = chunked_in_query(_fetch_ws_cards, list(ws_map.keys()))
+                # Re-sort and cap across chunks
+                wc_rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+
+                for wc in wc_rows[:MAX_NEW_SIGNALS]:
                     card = wc.get("cards", {})
                     results.append(
                         {
@@ -558,13 +567,18 @@ class DigestService:
                 .execute()
             )
             if ws_ids := [ws["id"] for ws in (ws_resp.data or [])]:
-                wc_resp = (
-                    self.supabase.table("workstream_cards")
-                    .select("card_id")
-                    .in_("workstream_id", ws_ids)
-                    .execute()
-                )
-                for wc in wc_resp.data or []:
+                # Chunk to stay under the IN-clause URL guard limit
+                # when a user has hundreds of workstreams.
+                def _fetch_wc(chunk):
+                    resp = (
+                        self.supabase.table("workstream_cards")
+                        .select("card_id")
+                        .in_("workstream_id", chunk)
+                        .execute()
+                    )
+                    return resp.data or []
+
+                for wc in chunked_in_query(_fetch_wc, ws_ids):
                     card_ids.add(wc["card_id"])
 
         except Exception as e:

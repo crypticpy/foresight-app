@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from app.deps import supabase
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -308,11 +309,15 @@ def _fan_out_to_one_clone(
         # unseen cards land at the top of the new batch and weekly runs are
         # reproducible.
         new_card_id_list = list(new_card_ids)
-        card_rows = _paginate(
-            lambda: supabase.table("cards")
-            .select("id, created_at")
-            .in_("id", new_card_id_list)
-        )
+
+        def _fetch_chunk(chunk):
+            return _paginate(
+                lambda: supabase.table("cards")
+                .select("id, created_at")
+                .in_("id", chunk)
+            )
+
+        card_rows = chunked_in_query(_fetch_chunk, new_card_id_list)
         card_rows.sort(
             key=lambda r: ((r.get("created_at") or ""), (r.get("id") or ""))
         )

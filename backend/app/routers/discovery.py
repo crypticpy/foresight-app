@@ -16,6 +16,7 @@ from app.cost_guardrail import (
     check_budget_or_skip,
 )
 from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
+from app.supabase_in_guard import chunked_in_query
 from app.models.discovery_models import (
     DiscoveryConfigRequest,
     DiscoveryRun,
@@ -48,14 +49,20 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
 
     logger.info(f"Distributing {len(new_card_ids)} new cards to auto_add workstreams")
 
-    # Fetch the new cards
-    cards_response = await asyncio.to_thread(
-        lambda: supabase.table("cards")
-        .select("id, pillar_id, goal_id, stage_id, horizon, name, summary, description")
-        .in_("id", new_card_ids)
-        .execute()
+    # Fetch the new cards. Chunked because a productive discovery run can
+    # produce more than SAFE_IN_LIMIT new cards in a single distribution call.
+    def _fetch_new_cards(chunk):
+        resp = (
+            supabase.table("cards")
+            .select("id, pillar_id, goal_id, stage_id, horizon, name, summary, description")
+            .in_("id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    new_cards = await asyncio.to_thread(
+        chunked_in_query, _fetch_new_cards, new_card_ids
     )
-    new_cards = cards_response.data or []
     if not new_cards:
         return
 

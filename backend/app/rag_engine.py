@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.authz import accessible_workstream_ids
 from app.clone_service import ensure_user_clones_for_templates
 from app.helpers.search_utils import sanitize_ilike
+from app.supabase_in_guard import chunked_in_query
 from app.openai_provider import (
     azure_openai_async_client,
     azure_openai_async_embedding_client,
@@ -393,16 +394,21 @@ class RAGEngine:
         try:
             card_ids = await self._fetch_workstream_card_ids(workstream_id)
             if card_ids:
-                cards_result = (
-                    self.supabase.table("cards")
-                    .select(
-                        "id, slug, name, summary, pillar_id, horizon, stage_id, "
-                        "impact_score, relevance_score, velocity_score"
+                def _fetch_cards(chunk):
+                    resp = (
+                        self.supabase.table("cards")
+                        .select(
+                            "id, slug, name, summary, pillar_id, horizon, stage_id, "
+                            "impact_score, relevance_score, velocity_score"
+                        )
+                        .in_("id", chunk)
+                        .execute()
                     )
-                    .in_("id", card_ids)
-                    .execute()
+                    return resp.data or []
+
+                enrichment["workstream_cards"] = chunked_in_query(
+                    _fetch_cards, card_ids
                 )
-                enrichment["workstream_cards"] = cards_result.data or []
             else:
                 enrichment["workstream_cards"] = []
         except Exception:
@@ -1152,16 +1158,35 @@ class RAGEngine:
                     return result.data[0]
 
             if title:
-                query = (
-                    self.supabase.table("workstreams")
-                    .select("id, name, description")
-                    .ilike("name", f"%{sanitize_ilike(title)}%")
-                )
+                title_filter = f"%{sanitize_ilike(title)}%"
                 if accessible_ids is not None:
-                    query = query.in_("id", list(accessible_ids))
-                result = query.limit(1).execute()
-                if result.data:
-                    return result.data[0]
+                    # Chunk the access-id filter so an admin or power user
+                    # with a long workstream list doesn't trip the .in_()
+                    # guard. Return the first match across chunks.
+                    def _title_match(chunk):
+                        resp = (
+                            self.supabase.table("workstreams")
+                            .select("id, name, description")
+                            .ilike("name", title_filter)
+                            .in_("id", chunk)
+                            .limit(1)
+                            .execute()
+                        )
+                        return resp.data or []
+
+                    rows = chunked_in_query(_title_match, list(accessible_ids))
+                    if rows:
+                        return rows[0]
+                else:
+                    result = (
+                        self.supabase.table("workstreams")
+                        .select("id, name, description")
+                        .ilike("name", title_filter)
+                        .limit(1)
+                        .execute()
+                    )
+                    if result.data:
+                        return result.data[0]
         except Exception:
             logger.warning(
                 "Workstream lookup failed for id=%s title=%s",
