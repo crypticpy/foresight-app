@@ -21,6 +21,7 @@ the production pipeline does not use).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List, Tuple
 
@@ -63,11 +64,16 @@ async def deduplicate_sources_with_metrics(
 
     for source in sources:
         try:
-            # Check for existing URL first
-            url_check = (
-                supabase.table("sources")
+            # Check for existing URL first. supabase-py is sync; running
+            # .execute() directly here would block the event loop for the
+            # length of the round-trip — once per source. Push every
+            # Supabase call in this loop off-loop so the worker heartbeat
+            # and other concurrent tasks (gather'd lens cascades, brief
+            # generation) keep ticking.
+            url_check = await asyncio.to_thread(
+                lambda src=source: supabase.table("sources")
                 .select("id")
-                .eq("url", source.raw.url)
+                .eq("url", src.raw.url)
                 .execute()
             )
 
@@ -77,14 +83,16 @@ async def deduplicate_sources_with_metrics(
 
             # Vector similarity search against existing cards
             try:
-                match_result = supabase.rpc(
-                    "find_similar_cards",
-                    {
-                        "query_embedding": source.embedding,
-                        "match_threshold": config.weak_match_threshold,
-                        "match_count": 3,
-                    },
-                ).execute()
+                match_result = await asyncio.to_thread(
+                    lambda src=source: supabase.rpc(
+                        "find_similar_cards",
+                        {
+                            "query_embedding": src.embedding,
+                            "match_threshold": config.weak_match_threshold,
+                            "match_count": 3,
+                        },
+                    ).execute()
+                )
 
                 if match_result.data:
                     top_match = match_result.data[0]
@@ -97,10 +105,12 @@ async def deduplicate_sources_with_metrics(
                         )
                     elif similarity >= config.weak_match_threshold:
                         # Weak match - use LLM to decide
-                        card = (
-                            supabase.table("cards")
+                        card = await asyncio.to_thread(
+                            lambda match_id=top_match["id"]: supabase.table(
+                                "cards"
+                            )
                             .select("name, summary")
-                            .eq("id", top_match["id"])
+                            .eq("id", match_id)
                             .single()
                             .execute()
                         )
