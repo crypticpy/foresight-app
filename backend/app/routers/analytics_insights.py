@@ -38,6 +38,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
 
 
+# Sentinel value written to ``cached_insights.pillar_filter`` when the
+# caller didn't request a specific pillar (the "all pillars" view).
+# PostgreSQL treats NULL ≠ NULL under uniqueness, so the original
+# schema's ``UNIQUE(pillar_filter, insight_limit, cache_date)`` never
+# matched on ON CONFLICT for the NULL-pillar row and every regeneration
+# accumulated a duplicate. Migration
+# ``20260519000002_cached_insights_all_sentinel.sql`` coalesced existing
+# NULLs into this sentinel and enforces NOT NULL going forward.
+ALL_PILLARS_SENTINEL = "__all__"
+
+
+def _pillar_cache_key(pillar_id: Optional[str]) -> str:
+    """Normalize a possibly-None pillar id into a non-NULL cache key.
+
+    Pillar codes match ``^[A-Z]{2}$`` (validated upstream by FastAPI's
+    Query regex), so the sentinel can never collide with a real value.
+    """
+    return pillar_id if pillar_id else ALL_PILLARS_SENTINEL
+
+
 # Strategic Insights Prompt for AI Generation
 INSIGHTS_GENERATION_PROMPT = """You are a strategic foresight analyst for the City of Austin municipal government.
 
@@ -164,30 +184,21 @@ async def get_analytics_insights(
         # -------------------------------------------------------------------------
         if not force_refresh:
             try:
-                # PostgREST ``.eq("col", None)`` becomes ``col=eq.null`` which
-                # NEVER matches NULL rows (PostgreSQL's NULL ≠ NULL semantics).
-                # The upsert below stores ``pillar_filter: pillar_id`` so when
-                # ``pillar_id`` is None (the "all pillars" default view) the
-                # row is written but the lookup can never find it. Use
-                # ``.is_("pillar_filter", "null")`` for the NULL case so the
-                # default view actually hits its cache.
-                base_query = (
-                    supabase.table("cached_insights")
-                    .select("insights_json, generated_at, card_data_hash")
-                )
-                if pillar_id is None:
-                    pillar_filter_query = base_query.is_("pillar_filter", "null")
-                else:
-                    pillar_filter_query = base_query.eq("pillar_filter", pillar_id)
-                # ``UNIQUE(pillar_filter, insight_limit, cache_date)`` permits
-                # multiple NULL ``pillar_filter`` rows in PostgreSQL, so the
-                # upsert can leave behind legacy duplicates for the
-                # "all-pillars" view. Order by ``generated_at`` so a force
-                # refresh (or any newer entry) wins; otherwise ``.limit(1)``
-                # can return an older valid row and serve stale insights even
-                # after the hash invalidation path regenerates the cache.
+                # The write path stores ``_pillar_cache_key(pillar_id)`` —
+                # either the pillar code or the ``__all__`` sentinel. Both
+                # sides use the same translation so ``.eq`` always matches.
+                # The pre-fix code used ``.is_(..., "null")`` because the
+                # column held NULL; PR #193 layered an ``.order("generated_at"
+                # desc).limit(1)`` defense to dodge NULL-duplicate rows. With
+                # the sentinel + NOT NULL enforced by migration
+                # ``20260519000002_cached_insights_all_sentinel.sql`` the
+                # duplicates can no longer occur, but we keep the ordering
+                # in case any legacy duplicates survive in environments
+                # where the migration hasn't run yet.
                 cache_response = await asyncio.to_thread(
-                    lambda: pillar_filter_query
+                    lambda: supabase.table("cached_insights")
+                    .select("insights_json, generated_at, card_data_hash")
+                    .eq("pillar_filter", _pillar_cache_key(pillar_id))
                     .eq("insight_limit", limit)
                     .eq("cache_date", date_type.today().isoformat())
                     .gt("expires_at", datetime.now(timezone.utc).isoformat())
@@ -316,12 +327,18 @@ async def get_analytics_insights(
                 "fallback_message": fallback_message,
             }
 
-            # Upsert cache entry
+            # Upsert cache entry. ``_pillar_cache_key`` substitutes
+            # ``__all__`` for None so ``ON CONFLICT
+            # (pillar_filter, insight_limit, cache_date)`` actually matches
+            # the prior all-pillars row. With NULL the upsert silently
+            # appended a duplicate every regeneration (PostgreSQL NULL ≠
+            # NULL under uniqueness) — see migration
+            # ``20260519000002_cached_insights_all_sentinel.sql``.
             await asyncio.to_thread(
                 lambda: supabase.table("cached_insights")
                 .upsert(
                     {
-                        "pillar_filter": pillar_id,
+                        "pillar_filter": _pillar_cache_key(pillar_id),
                         "insight_limit": limit,
                         "cache_date": date_type.today().isoformat(),
                         "insights_json": cache_json,
