@@ -33,7 +33,11 @@ from supabase import Client
 from . import domain_reputation_service
 from .ai_service import AIService, TriageResult
 from .research_service import ProcessedSource, RawSource
-from .discovery_progress import update_source_outcome
+from .discovery_progress import (
+    update_source_analysis,
+    update_source_outcome,
+    update_source_triage,
+)
 from .safety.injection import (
     record_injection_incident,
     scan_text as scan_for_injection,
@@ -215,6 +219,23 @@ async def triage_sources_with_metrics(
             except Exception as e:
                 logger.debug(f"Domain triage recording failed (non-fatal): {e}")
 
+            # Persist the triage decision onto ``discovered_sources`` so the
+            # observability UI can show *why* a source was kept or dropped.
+            # Skipped silently if the source wasn't persisted (workstream
+            # scans, ad-hoc invocations without a registry-row id).
+            if source.discovered_source_id:
+                try:
+                    await update_source_triage(
+                        supabase,
+                        source.discovered_source_id,
+                        triage,
+                        passed_triage,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"update_source_triage failed (non-fatal): {e}"
+                    )
+
             if passed_triage:
                 # Full analysis
                 analysis = await ai_service.analyze_source(
@@ -229,6 +250,22 @@ async def triage_sources_with_metrics(
                 )
                 output_tokens = 500  # Estimated output tokens for analysis
                 analysis_tokens_total += input_tokens + output_tokens
+
+                # Persist the analysis result onto ``discovered_sources``
+                # so the operator-facing UI can show extracted entities /
+                # summary / pillar without having to wait for card
+                # creation. Mirrors the dead ``_triage_sources`` path.
+                if source.discovered_source_id:
+                    try:
+                        await update_source_analysis(
+                            supabase,
+                            source.discovered_source_id,
+                            analysis,
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"update_source_analysis failed (non-fatal): {e}"
+                        )
 
                 # Generate embedding
                 embed_text = f"{source.title} {analysis.summary}"
@@ -247,6 +284,23 @@ async def triage_sources_with_metrics(
 
         except Exception as e:
             logger.warning(f"Triage/analysis failed for {source.url}: {e}")
+            # Record the pipeline-stage failure onto ``discovered_sources``
+            # so the row reflects why it dropped out, instead of looking
+            # like the source vanished silently. Mirrors the dead
+            # ``_triage_sources`` path.
+            if source.discovered_source_id:
+                try:
+                    await update_source_outcome(
+                        supabase,
+                        source.discovered_source_id,
+                        "error",
+                        error_message=str(e),
+                        error_stage="triage",
+                    )
+                except Exception as hook_err:
+                    logger.debug(
+                        f"update_source_outcome failed (non-fatal): {hook_err}"
+                    )
             continue
 
     if injection_block_count:
