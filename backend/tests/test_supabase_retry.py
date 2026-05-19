@@ -14,12 +14,16 @@ Verifies that:
 - The httpcore-leaked equivalents of WriteError / ReadError are caught too.
 - A non-H2 exception is NOT retried — it bubbles immediately so callers
   don't silently mask real bugs.
-- Two consecutive H2 failures re-raise the second exception.
+- The default config is 3 total attempts (2 retries) — sized so the
+  httpcore pool has time to evict a connection that just received GOAWAY.
+- Exhausting all retries re-raises the final exception.
+- Backoff grows exponentially between retries (0.5 s → 1.0 s by default).
 """
 
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import patch
 
 import httpcore
 import httpx
@@ -146,7 +150,73 @@ def test_non_h2_exception_is_not_retried():
     assert calls == 1
 
 
-def test_two_consecutive_h2_failures_raise():
+def test_default_runs_three_attempts_before_giving_up():
+    """Prod failure pin: 5 parallel callers each saw the SAME GOAWAY-doomed
+    connection on attempts 1 *and* 2 because the pool hadn't recycled it
+    yet. With 3 default attempts the third one has time to land on a fresh
+    connection. If a future change drops this back to 2 attempts the test
+    fails and we know we regressed the prod fix.
+    """
+    calls = 0
+
+    def builder():
+        nonlocal calls
+        calls += 1
+        raise httpx.RemoteProtocolError(f"attempt {calls}")
+
+    with pytest.raises(httpx.RemoteProtocolError, match="attempt 3"):
+        asyncio.run(execute_with_h2_retry(builder, backoff_seconds=0))
+    assert calls == 3
+
+
+def test_recovers_on_third_attempt():
+    """Two failures then success — the prod-observed pattern where the dead
+    connection finally evicts after the first retry's backoff.
+    """
+    calls = 0
+
+    def builder():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.RemoteProtocolError(f"attempt {calls}")
+        return "recovered"
+
+    result = asyncio.run(execute_with_h2_retry(builder, backoff_seconds=0))
+    assert result == "recovered"
+    assert calls == 3
+
+
+def test_backoff_is_exponential():
+    """Pin the backoff schedule: first retry sleeps base, second sleeps 2x.
+
+    A flat backoff was the original config and proved insufficient — five
+    parallel callers retrying after the same 250 ms all hit the still-dead
+    connection. Exponential backoff (0.5 → 1.0) guarantees the second
+    retry happens long enough after the first that the httpcore pool has
+    closed the broken connection.
+    """
+    calls = 0
+    sleeps: list[float] = []
+
+    def builder():
+        nonlocal calls
+        calls += 1
+        raise httpx.RemoteProtocolError("dead")
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    with patch("app.supabase_retry.asyncio.sleep", new=fake_sleep):
+        with pytest.raises(httpx.RemoteProtocolError):
+            asyncio.run(execute_with_h2_retry(builder, backoff_seconds=0.5))
+
+    assert calls == 3
+    assert sleeps == [0.5, 1.0]
+
+
+def test_retries_param_is_honored():
+    """``retries=1`` still works for callers that opted into the old shape."""
     calls = 0
 
     def builder():
@@ -155,5 +225,7 @@ def test_two_consecutive_h2_failures_raise():
         raise httpx.RemoteProtocolError(f"attempt {calls}")
 
     with pytest.raises(httpx.RemoteProtocolError, match="attempt 2"):
-        asyncio.run(execute_with_h2_retry(builder, backoff_seconds=0))
+        asyncio.run(
+            execute_with_h2_retry(builder, retries=1, backoff_seconds=0)
+        )
     assert calls == 2
