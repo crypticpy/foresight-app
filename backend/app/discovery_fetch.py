@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .discovery_config import (
     DEFAULT_RSS_FEEDS,
@@ -158,7 +158,15 @@ async def fetch_from_all_source_categories(
             )
         tasks.append(_fetch_tech_blog_sources(topics, tech_config.max_sources))
 
-    # Execute all fetches concurrently
+    # Execute all fetches concurrently.
+    #
+    # Each inner ``_fetch_*_sources`` wraps its own try/except and returns
+    # a 3-tuple ``(sources, category, error)`` where ``error`` is ``None``
+    # on success or a short string on failure. ``return_exceptions=True``
+    # is kept as defense in depth — if a fetcher ever raises before its
+    # ``try`` block (e.g. due to an import or signature bug), we still
+    # capture the failure rather than letting one bad fetcher kill the
+    # whole gather and lose every other category's results.
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Process results
@@ -182,13 +190,22 @@ async def fetch_from_all_source_categories(
         result = results[result_idx]
         result_idx += 1
 
-        if isinstance(result, Exception):
-            error_msg = f"Category {category} fetch failed: {str(result)}"
+        if isinstance(result, BaseException):
+            # An exception escaped the inner try/except (or one wasn't
+            # there). Record it against this category and move on.
+            error_msg = f"Category {category} fetch raised: {result!r}"
             logger.warning(error_msg)
             errors_by_category[category].append(error_msg)
             continue
 
-        sources, category_name = result
+        sources, _category_name, fetch_error = result
+        if fetch_error:
+            # Per-fetcher caught failure — surface the reason so the
+            # run-level errors list shows *why* a category came back
+            # empty rather than conflating "fetcher crashed" with
+            # "category returned zero matches".
+            errors_by_category[category].append(fetch_error)
+
         for source in sources:
             if source.url and source.url not in seen_urls:
                 seen_urls.add(source.url)
@@ -226,9 +243,19 @@ async def fetch_from_all_source_categories(
     )
 
 
+# ``FetchOutcome`` is the unified per-category return shape: a list of
+# sources, the category value (for the orchestrator's bookkeeping), and an
+# optional error string. ``None`` means success. A non-``None`` string is
+# the short failure reason that gets surfaced into
+# ``MultiSourceFetchResult.errors_by_category`` and from there into the
+# run-level errors list. The pre-fix tuple was ``(sources, category)``,
+# which silently dropped the failure reason on the floor.
+FetchOutcome = Tuple[List[RawSource], str, Optional[str]]
+
+
 async def _fetch_rss_sources(
     feed_urls: List[str], max_sources: int
-) -> Tuple[List[RawSource], str]:
+) -> FetchOutcome:
     """Fetch sources from RSS/Atom feeds.
 
     Uses ceiling division for the per-feed article cap so we never
@@ -238,7 +265,7 @@ async def _fetch_rss_sources(
     with ``articles[:max_sources]`` below.
     """
     if max_sources <= 0 or not feed_urls:
-        return [], SourceCategory.RSS.value
+        return [], SourceCategory.RSS.value, None
     try:
         articles = await fetch_rss_sources(
             feed_urls=feed_urls,
@@ -258,16 +285,16 @@ async def _fetch_rss_sources(
             )
             sources.append(source)
 
-        return sources, SourceCategory.RSS.value
+        return sources, SourceCategory.RSS.value, None
 
     except Exception as e:
         logger.warning(f"RSS fetch failed: {e}")
-        return [], SourceCategory.RSS.value
+        return [], SourceCategory.RSS.value, f"RSS fetch failed: {e}"
 
 
 async def _fetch_news_sources(
     topics: List[str], max_sources: int
-) -> Tuple[List[RawSource], str]:
+) -> FetchOutcome:
     """Fetch sources from news outlets via topic search."""
     try:
         articles = await fetch_news_articles(
@@ -286,16 +313,16 @@ async def _fetch_news_sources(
             )
             sources.append(source)
 
-        return sources, SourceCategory.NEWS.value
+        return sources, SourceCategory.NEWS.value, None
 
     except Exception as e:
         logger.warning(f"News fetch failed: {e}")
-        return [], SourceCategory.NEWS.value
+        return [], SourceCategory.NEWS.value, f"News fetch failed: {e}"
 
 
 async def _fetch_academic_sources(
     topics: List[str], max_sources: int
-) -> Tuple[List[RawSource], str]:
+) -> FetchOutcome:
     """Fetch sources from academic publications (arXiv)."""
     try:
         # Combine topics into search query
@@ -315,16 +342,16 @@ async def _fetch_academic_sources(
             )
             sources.append(source)
 
-        return sources, SourceCategory.ACADEMIC.value
+        return sources, SourceCategory.ACADEMIC.value, None
 
     except Exception as e:
         logger.warning(f"Academic fetch failed: {e}")
-        return [], SourceCategory.ACADEMIC.value
+        return [], SourceCategory.ACADEMIC.value, f"Academic fetch failed: {e}"
 
 
 async def _fetch_government_sources(
     topics: List[str], max_sources: int
-) -> Tuple[List[RawSource], str]:
+) -> FetchOutcome:
     """Fetch sources from government websites (.gov domains)."""
     try:
         documents = await fetch_government_sources(
@@ -343,16 +370,16 @@ async def _fetch_government_sources(
             )
             sources.append(source)
 
-        return sources, SourceCategory.GOVERNMENT.value
+        return sources, SourceCategory.GOVERNMENT.value, None
 
     except Exception as e:
         logger.warning(f"Government fetch failed: {e}")
-        return [], SourceCategory.GOVERNMENT.value
+        return [], SourceCategory.GOVERNMENT.value, f"Government fetch failed: {e}"
 
 
 async def _fetch_tech_blog_sources(
     topics: List[str], max_sources: int
-) -> Tuple[List[RawSource], str]:
+) -> FetchOutcome:
     """Fetch sources from tech blogs."""
     try:
         articles = await fetch_tech_blog_articles(
@@ -370,8 +397,8 @@ async def _fetch_tech_blog_sources(
             )
             sources.append(source)
 
-        return sources, SourceCategory.TECH_BLOG.value
+        return sources, SourceCategory.TECH_BLOG.value, None
 
     except Exception as e:
         logger.warning(f"Tech blog fetch failed: {e}")
-        return [], SourceCategory.TECH_BLOG.value
+        return [], SourceCategory.TECH_BLOG.value, f"Tech blog fetch failed: {e}"
