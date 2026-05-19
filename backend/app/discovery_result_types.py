@@ -294,8 +294,25 @@ class APITokenUsage:
     # These are rough estimates for monitoring purposes
     estimated_cost_usd: float = 0.0
 
+    # The set of operations this dataclass tracks per-bucket. Kept as a
+    # class-level constant so callers (and tests) can introspect it
+    # without re-typing the strings.
+    _VALID_OPERATIONS = frozenset(
+        {"triage", "analysis", "embedding", "card_match"}
+    )
+
     def add_tokens(self, operation: str, tokens: int) -> None:
-        """Add tokens for a specific operation."""
+        """Add tokens for a specific operation.
+
+        Raises:
+            ValueError: if ``operation`` is not one of ``triage``,
+                ``analysis``, ``embedding``, ``card_match``. The previous
+                implementation silently incremented ``total_tokens`` while
+                skipping the per-bucket counter on a typo, which let the
+                buckets drift below the total without any error — every
+                downstream cost waterfall was then unauditable. We'd
+                rather a typo crash the run loudly than rot the metrics.
+        """
         if operation == "triage":
             self.triage_tokens += tokens
         elif operation == "analysis":
@@ -304,6 +321,12 @@ class APITokenUsage:
             self.embedding_tokens += tokens
         elif operation == "card_match":
             self.card_match_tokens += tokens
+        else:
+            raise ValueError(
+                f"APITokenUsage.add_tokens: unknown operation "
+                f"{operation!r}. Valid: "
+                f"{', '.join(sorted(self._VALID_OPERATIONS))}."
+            )
         self.total_tokens += tokens
         # Rough cost estimate: $0.03 per 1K tokens (GPT-4 average)
         self.estimated_cost_usd = self.total_tokens * 0.00003

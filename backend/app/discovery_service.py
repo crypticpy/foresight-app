@@ -657,7 +657,7 @@ class DiscoveryService:
                 {"queries_generated": len(queries), "sources_found": len(raw_sources)},
             )
             step_start = datetime.now(timezone.utc)
-            triaged_sources, triage_tokens = await triage_sources_with_metrics(
+            triaged_sources, triage_token_breakdown = await triage_sources_with_metrics(
                 self.supabase,
                 self.ai_service,
                 validated_sources,
@@ -666,7 +666,16 @@ class DiscoveryService:
             processing_time.triage_seconds = (
                 datetime.now(timezone.utc) - step_start
             ).total_seconds()
-            api_token_usage.add_tokens("triage", triage_tokens)
+            # ``triage_sources_with_metrics`` returns a per-operation
+            # breakdown (triage / analysis / embedding) — attribute each
+            # bucket separately. The previous code lumped all three into
+            # the ``triage`` bucket via a single ``add_tokens("triage",
+            # total)`` call, which silently inflated triage_tokens and
+            # left analysis_tokens / embedding_tokens at zero in every
+            # recorded run, making the per-operation cost waterfall
+            # meaningless.
+            for op, count in triage_token_breakdown.items():
+                api_token_usage.add_tokens(op, count)
             logger.info(
                 f"Triaged to {len(triaged_sources)} relevant sources in {processing_time.triage_seconds:.2f}s"
             )
