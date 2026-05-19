@@ -17,6 +17,7 @@ behavior of the original instance-method versions on ``DiscoveryService``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -69,9 +70,12 @@ async def update_progress(
         if stats:
             progress["stats"] = stats
 
-        # Read current summary_report
-        result = (
-            supabase.table("discovery_runs")
+        # Read current summary_report. The Supabase Python client is sync;
+        # calling .execute() directly here would block the event loop and
+        # serialize every other async task in the pipeline. Wrap in
+        # asyncio.to_thread so the network round-trip happens off-loop.
+        result = await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs")
             .select("summary_report")
             .eq("id", run_id)
             .single()
@@ -84,10 +88,13 @@ async def update_progress(
         # Merge progress into summary_report
         updated_report = {**current_report, "progress": progress}
 
-        # Update the record
-        supabase.table("discovery_runs").update(
-            {"summary_report": updated_report}
-        ).eq("id", run_id).execute()
+        # Update the record (also off-loop — see note above).
+        await asyncio.to_thread(
+            lambda: supabase.table("discovery_runs")
+            .update({"summary_report": updated_report})
+            .eq("id", run_id)
+            .execute()
+        )
 
         logger.debug(f"Progress update: {stage} - {message}")
     except Exception as e:
@@ -138,12 +145,16 @@ async def persist_discovered_source(
     try:
         domain = urlparse(source.url).netloc if source.url else None
 
-        # Look up domain reputation ID (Task 2.7)
+        # Look up domain reputation ID (Task 2.7). The reputation service
+        # talks to Supabase synchronously, so run it off-loop.
         _domain_rep_id = None
         try:
-            if _rep := domain_reputation_service.get_reputation(
-                supabase, source.url or ""
-            ):
+            _rep = await asyncio.to_thread(
+                domain_reputation_service.get_reputation,
+                supabase,
+                source.url or "",
+            )
+            if _rep:
                 _domain_rep_id = _rep.get("id")
         except Exception as exc:
             # Non-fatal — missing rep just means no quality bonus on the row.
@@ -172,7 +183,9 @@ async def persist_discovered_source(
         if _domain_rep_id:
             record["domain_reputation_id"] = _domain_rep_id
 
-        result = supabase.table("discovered_sources").insert(record).execute()
+        result = await asyncio.to_thread(
+            lambda: supabase.table("discovered_sources").insert(record).execute()
+        )
         if result.data:
             return result.data[0]["id"]
     except Exception as e:
@@ -188,16 +201,21 @@ async def update_source_triage(
 ) -> None:
     """Update source with triage results."""
     try:
-        supabase.table("discovered_sources").update(
-            {
-                "triage_is_relevant": triage.is_relevant,
-                "triage_confidence": triage.confidence,
-                "triage_primary_pillar": triage.primary_pillar,
-                "triage_reason": triage.reason,
-                "triaged_at": datetime.now(timezone.utc).isoformat(),
-                "processing_status": "triaged" if passed else "filtered_triage",
-            }
-        ).eq("id", source_id).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("discovered_sources")
+            .update(
+                {
+                    "triage_is_relevant": triage.is_relevant,
+                    "triage_confidence": triage.confidence,
+                    "triage_primary_pillar": triage.primary_pillar,
+                    "triage_reason": triage.reason,
+                    "triaged_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_status": "triaged" if passed else "filtered_triage",
+                }
+            )
+            .eq("id", source_id)
+            .execute()
+        )
     except Exception as e:
         logger.warning(f"Could not update source triage: {e}")
 
@@ -214,32 +232,37 @@ async def update_source_analysis(
             for e in (analysis.entities or [])
         ]
 
-        supabase.table("discovered_sources").update(
-            {
-                "analysis_summary": analysis.summary,
-                "analysis_key_excerpts": analysis.key_excerpts,
-                "analysis_pillars": analysis.pillars,
-                "analysis_goals": analysis.goals,
-                "analysis_steep_categories": analysis.steep_categories,
-                "analysis_anchors": analysis.anchors,
-                "analysis_horizon": analysis.horizon,
-                "analysis_suggested_stage": analysis.suggested_stage,
-                "analysis_triage_score": analysis.triage_score,
-                "analysis_credibility": analysis.credibility,
-                "analysis_novelty": analysis.novelty,
-                "analysis_likelihood": analysis.likelihood,
-                "analysis_impact": analysis.impact,
-                "analysis_relevance": analysis.relevance,
-                "analysis_time_to_awareness_months": analysis.time_to_awareness_months,
-                "analysis_time_to_prepare_months": analysis.time_to_prepare_months,
-                "analysis_suggested_card_name": analysis.suggested_card_name,
-                "analysis_is_new_concept": analysis.is_new_concept,
-                "analysis_reasoning": analysis.reasoning,
-                "analysis_entities": entities_json,
-                "analyzed_at": datetime.now(timezone.utc).isoformat(),
-                "processing_status": "analyzed",
-            }
-        ).eq("id", source_id).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("discovered_sources")
+            .update(
+                {
+                    "analysis_summary": analysis.summary,
+                    "analysis_key_excerpts": analysis.key_excerpts,
+                    "analysis_pillars": analysis.pillars,
+                    "analysis_goals": analysis.goals,
+                    "analysis_steep_categories": analysis.steep_categories,
+                    "analysis_anchors": analysis.anchors,
+                    "analysis_horizon": analysis.horizon,
+                    "analysis_suggested_stage": analysis.suggested_stage,
+                    "analysis_triage_score": analysis.triage_score,
+                    "analysis_credibility": analysis.credibility,
+                    "analysis_novelty": analysis.novelty,
+                    "analysis_likelihood": analysis.likelihood,
+                    "analysis_impact": analysis.impact,
+                    "analysis_relevance": analysis.relevance,
+                    "analysis_time_to_awareness_months": analysis.time_to_awareness_months,
+                    "analysis_time_to_prepare_months": analysis.time_to_prepare_months,
+                    "analysis_suggested_card_name": analysis.suggested_card_name,
+                    "analysis_is_new_concept": analysis.is_new_concept,
+                    "analysis_reasoning": analysis.reasoning,
+                    "analysis_entities": entities_json,
+                    "analyzed_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_status": "analyzed",
+                }
+            )
+            .eq("id", source_id)
+            .execute()
+        )
     except Exception as e:
         logger.warning(f"Could not update source analysis: {e}")
 
@@ -259,15 +282,20 @@ async def update_source_dedup(
             "enrichment_candidate": "deduplicated",
         }.get(status, "deduplicated")
 
-        supabase.table("discovered_sources").update(
-            {
-                "dedup_status": status,
-                "dedup_matched_card_id": matched_card_id,
-                "dedup_similarity_score": similarity,
-                "deduplicated_at": datetime.now(timezone.utc).isoformat(),
-                "processing_status": processing_status,
-            }
-        ).eq("id", source_id).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("discovered_sources")
+            .update(
+                {
+                    "dedup_status": status,
+                    "dedup_matched_card_id": matched_card_id,
+                    "dedup_similarity_score": similarity,
+                    "deduplicated_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_status": processing_status,
+                }
+            )
+            .eq("id", source_id)
+            .execute()
+        )
     except Exception as e:
         logger.warning(f"Could not update source dedup: {e}")
 
@@ -292,8 +320,11 @@ async def update_source_outcome(
             update["error_message"] = error_message
             update["error_stage"] = error_stage
 
-        supabase.table("discovered_sources").update(update).eq(
-            "id", source_id
-        ).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("discovered_sources")
+            .update(update)
+            .eq("id", source_id)
+            .execute()
+        )
     except Exception as e:
         logger.warning(f"Could not update source outcome: {e}")
