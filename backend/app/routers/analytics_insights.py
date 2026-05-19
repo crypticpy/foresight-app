@@ -65,10 +65,21 @@ Keep each insight concise (2-3 sentences) and actionable. Focus on municipal rel
 
 
 def _compute_card_data_hash(cards: list) -> str:
-    """Compute a hash of card data to detect changes for cache invalidation."""
+    """Compute a hash of card data to detect changes for cache invalidation.
+
+    Includes every score field that feeds the ``combined_score`` ranking
+    used by ``get_analytics_insights`` (velocity, impact, relevance,
+    novelty). Previously only ``velocity_score`` and ``impact_score``
+    were hashed, so re-scoring a card's relevance or novelty alone left
+    the 24-hour cache stale and served the old insights.
+    """
     data_str = "|".join(
         [
-            f"{c.get('id', '')}:{c.get('velocity_score', 0)}:{c.get('impact_score', 0)}"
+            (
+                f"{c.get('id', '')}:{c.get('velocity_score', 0)}:"
+                f"{c.get('impact_score', 0)}:{c.get('relevance_score', 0)}:"
+                f"{c.get('novelty_score', 0)}"
+            )
             for c in sorted(cards, key=lambda x: x.get("id", ""))
         ]
     )
@@ -153,10 +164,23 @@ async def get_analytics_insights(
         # -------------------------------------------------------------------------
         if not force_refresh:
             try:
-                cache_response = await asyncio.to_thread(
-                    lambda: supabase.table("cached_insights")
+                # PostgREST ``.eq("col", None)`` becomes ``col=eq.null`` which
+                # NEVER matches NULL rows (PostgreSQL's NULL ≠ NULL semantics).
+                # The upsert below stores ``pillar_filter: pillar_id`` so when
+                # ``pillar_id`` is None (the "all pillars" default view) the
+                # row is written but the lookup can never find it. Use
+                # ``.is_("pillar_filter", "null")`` for the NULL case so the
+                # default view actually hits its cache.
+                base_query = (
+                    supabase.table("cached_insights")
                     .select("insights_json, generated_at, card_data_hash")
-                    .eq("pillar_filter", pillar_id)
+                )
+                if pillar_id is None:
+                    pillar_filter_query = base_query.is_("pillar_filter", "null")
+                else:
+                    pillar_filter_query = base_query.eq("pillar_filter", pillar_id)
+                cache_response = await asyncio.to_thread(
+                    lambda: pillar_filter_query
                     .eq("insight_limit", limit)
                     .eq("cache_date", date_type.today().isoformat())
                     .gt("expires_at", datetime.now(timezone.utc).isoformat())
@@ -278,7 +302,7 @@ async def get_analytics_insights(
         # -------------------------------------------------------------------------
         try:
             cache_json = {
-                "insights": [i.dict() for i in insights],
+                "insights": [i.model_dump() for i in insights],
                 "ai_available": ai_available,
                 "period_analyzed": period_analyzed,
                 "fallback_message": fallback_message,
