@@ -264,8 +264,16 @@ def test_build_discovery_config_categories_to_scan_disables_others(monkeypatch):
     monkeypatch.setattr(
         discovery_config, "load_discovery_admin_overrides", lambda: {}
     )
+    # Return defaults for RSS — an empty result for RSS now means "operator
+    # disabled every RSS row" and would (correctly) turn the category off,
+    # which would mask the categories_to_scan filtering this test pins. Use
+    # a non-empty fixture for RSS so the test exercises only the schedule-
+    # scope filter, not the empty-registry-disable path (which is covered in
+    # ``test_admin_sources.test_build_discovery_config_honors_all_rss_disabled``).
     monkeypatch.setattr(
-        discovery_config, "load_active_source_urls", lambda category: []
+        discovery_config,
+        "load_active_source_urls",
+        lambda category: ["https://example.test/feed"] if category == "rss" else [],
     )
     cfg = discovery_service.build_discovery_config(categories_to_scan=["rss"])
     cats = cfg.source_categories
