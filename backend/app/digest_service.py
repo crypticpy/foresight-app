@@ -19,7 +19,6 @@ Usage:
     await service.send_digest_email(to_email, digest["subject"], digest["html"])
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -32,7 +31,7 @@ from typing import Any, Dict, List, Optional
 from supabase import Client
 
 from app.openai_provider import get_chat_mini_deployment
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +255,8 @@ class DigestService:
                     )
                     return resp.data or []
 
-                wc_rows = await asyncio.to_thread(
-                    chunked_in_query, _fetch_ws_cards, list(ws_map.keys())
+                wc_rows = await async_chunked_in_query(
+                    _fetch_ws_cards, list(ws_map.keys())
                 )
                 # Re-sort and cap across chunks
                 wc_rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
@@ -581,7 +580,7 @@ class DigestService:
                     )
                     return resp.data or []
 
-                for wc in await asyncio.to_thread(chunked_in_query, _fetch_wc, ws_ids):
+                for wc in await async_chunked_in_query(_fetch_wc, ws_ids):
                     card_ids.add(wc["card_id"])
 
         except Exception as e:

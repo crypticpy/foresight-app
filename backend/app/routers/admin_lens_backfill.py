@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from app.authz import require_admin
 from app.deps import _safe_error, get_current_user, supabase
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
@@ -105,9 +105,7 @@ async def trigger_lens_backfill(
             def _run_chunk(chunk):
                 return _build_query(chunk).execute().data or []
 
-            cards = await asyncio.to_thread(
-                chunked_in_query, _run_chunk, body.card_ids
-            )
+            cards = await async_chunked_in_query(_run_chunk, body.card_ids)
             cards = cards[:capped_limit]
         else:
             resp = await asyncio.to_thread(_build_query().execute)

@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import _safe_error, get_current_user, supabase
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.models.analytics import (
     PersonalStats,
     PillarAffinity,
@@ -237,8 +237,8 @@ async def get_personal_stats(current_user: dict = Depends(get_current_user)):
                 )
                 return resp.data or []
 
-            pillar_rows = await asyncio.to_thread(
-                chunked_in_query, _fetch_pillars, all_card_ids
+            pillar_rows = await async_chunked_in_query(
+                _fetch_pillars, all_card_ids
             )
             card_pillars = {
                 c["id"]: c.get("pillar_id") for c in pillar_rows

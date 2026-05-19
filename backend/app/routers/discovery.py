@@ -16,7 +16,7 @@ from app.cost_guardrail import (
     check_budget_or_skip,
 )
 from app.deps import supabase, get_current_user, _safe_error, openai_client, limiter
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.models.discovery_models import (
     DiscoveryConfigRequest,
     DiscoveryRun,
@@ -60,9 +60,7 @@ async def _distribute_cards_to_auto_add_workstreams(new_card_ids: List[str]):
         )
         return resp.data or []
 
-    new_cards = await asyncio.to_thread(
-        chunked_in_query, _fetch_new_cards, new_card_ids
-    )
+    new_cards = await async_chunked_in_query(_fetch_new_cards, new_card_ids)
     if not new_cards:
         return
 

@@ -26,7 +26,7 @@ from app.chat_service import (
 )
 from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import azure_openai_async_client, get_chat_mini_deployment
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
@@ -448,7 +448,7 @@ async def search_chat_conversations(
                         fresh.append(m)
                 return fresh
 
-            await asyncio.to_thread(chunked_in_query, _search_messages, user_conv_ids)
+            await async_chunked_in_query(_search_messages, user_conv_ids)
             msg_conv_ids = list(seen_msg_ids)
 
         # Fetch those conversations (with ownership check, defense in depth)
@@ -465,8 +465,8 @@ async def search_chat_conversations(
                 )
                 return resp.data or []
 
-            msg_conversations = await asyncio.to_thread(
-                chunked_in_query, _fetch_msg_convs, msg_conv_ids
+            msg_conversations = await async_chunked_in_query(
+                _fetch_msg_convs, msg_conv_ids
             )
             # Re-sort across chunks since per-chunk ordering doesn't
             # carry across the merge.
@@ -1032,8 +1032,8 @@ async def search_mentions(
                             )
                             return resp.data or []
 
-                        ws_rows = await asyncio.to_thread(
-                            chunked_in_query, _fetch_chunk, list(accessible_ids)
+                        ws_rows = await async_chunked_in_query(
+                            _fetch_chunk, list(accessible_ids)
                         )
                         # Re-sort and cap across chunks.
                         ws_rows.sort(key=lambda r: (r.get("name") or "").lower())

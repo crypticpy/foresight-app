@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.deps import supabase, get_current_user, _safe_error
-from app.supabase_in_guard import SAFE_IN_LIMIT, chunked_in_query
+from app.supabase_in_guard import SAFE_IN_LIMIT, async_chunked_in_query
 from app.supabase_retry import execute_with_h2_retry
 from app.models.history import (
     ScoreHistory,
@@ -347,8 +347,8 @@ async def get_related_cards(
         )
         return resp.data or []
 
-    related_rows = await asyncio.to_thread(
-        chunked_in_query, _fetch_related, list(related_card_ids)
+    related_rows = await async_chunked_in_query(
+        _fetch_related, list(related_card_ids)
     )
 
     # Create a lookup map for cards
@@ -639,8 +639,8 @@ async def _load_workstream_card_map(
     out: Dict[str, List[str]] = {}
 
     # Chunk workstream IDs to stay under the IN-clause URL guard. We can't
-    # feed the helper directly to ``chunked_in_query`` here because each
-    # chunk's call still needs the H2-GOAWAY retry wrapper.
+    # feed the helper directly to ``async_chunked_in_query`` here because
+    # each chunk's call still needs the H2-GOAWAY retry wrapper.
     for start in range(0, len(ws_ids), SAFE_IN_LIMIT):
         chunk = ws_ids[start : start + SAFE_IN_LIMIT]
         resp = await execute_with_h2_retry(
@@ -916,7 +916,7 @@ async def _fetch_cards_page(
     # page_ids can hit MAX_SIGNALS_PAGE_LIMIT (100), which is over the
     # .in_() URL-length guard's threshold. Chunk so the guard doesn't
     # fire for power users requesting page_size=100.
-    rows = await asyncio.to_thread(chunked_in_query, _fetch_page_chunk, page_ids)
+    rows = await async_chunked_in_query(_fetch_page_chunk, page_ids)
     # Postgres returned the slice in arbitrary order; reapply our explicit one.
     order_idx = {cid: i for i, cid in enumerate(page_ids)}
     rows.sort(key=lambda r: order_idx.get(r.get("id"), len(order_idx)))

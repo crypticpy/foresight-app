@@ -30,7 +30,7 @@ from app.openai_provider import (
     azure_openai_async_embedding_client,
     get_embedding_deployment,
 )
-from app.supabase_in_guard import chunked_in_query
+from app.supabase_in_guard import async_chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +489,7 @@ async def _tool_list_workstreams(
         )
         return resp.data or []
 
-    count_rows = await asyncio.to_thread(chunked_in_query, _fetch_ws_counts, ws_ids)
+    count_rows = await async_chunked_in_query(_fetch_ws_counts, ws_ids)
     counts: Dict[str, int] = {}
     for row in count_rows:
         counts[row["workstream_id"]] = counts.get(row["workstream_id"], 0) + 1

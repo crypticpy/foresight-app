@@ -29,6 +29,7 @@ constant change here; the right answer is almost always chunking or an RPC.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable, Iterable, List, Optional, TypeVar
 
@@ -150,3 +151,22 @@ def chunked_in_query(
         if rows:
             out.extend(rows)
     return out
+
+
+async def async_chunked_in_query(
+    build_query: Callable[[List[Any]], Optional[Iterable[T]]],
+    values: Iterable[Any],
+    *,
+    chunk_size: int = SAFE_IN_LIMIT,
+) -> List[T]:
+    """Async wrapper for :func:`chunked_in_query`.
+
+    The Supabase sync client blocks the event loop, so async route handlers
+    must run :func:`chunked_in_query` via ``asyncio.to_thread``. This helper
+    centralizes that wrap so callsites read ``await async_chunked_in_query(
+    build, values)`` instead of the noisier ``await asyncio.to_thread(
+    chunked_in_query, build, values)``.
+    """
+    return await asyncio.to_thread(
+        chunked_in_query, build_query, values, chunk_size=chunk_size
+    )

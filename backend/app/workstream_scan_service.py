@@ -37,7 +37,7 @@ import openai
 from .ai_service import AIService, AnalysisResult, TriageResult
 from .research_service import RawSource, ProcessedSource
 from .source_validator import SourceValidator
-from .supabase_in_guard import chunked_in_query
+from .supabase_in_guard import async_chunked_in_query
 from . import domain_reputation_service
 from .openai_provider import get_chat_mini_deployment
 from .source_fetchers import (
@@ -1146,8 +1146,8 @@ Example: ["query 1", "query 2", ...]"""
                         )
                         return resp.data or []
 
-                    ws_card_rows = await asyncio.to_thread(
-                        chunked_in_query, _check_ws, list(existing_card_ids)
+                    ws_card_rows = await async_chunked_in_query(
+                        _check_ws, list(existing_card_ids)
                     )
                     if ws_card_rows:
                         duplicate_count += 1
