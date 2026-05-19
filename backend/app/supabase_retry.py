@@ -14,9 +14,16 @@ surfaces one of a small family of transient transport errors:
   before the response finished streaming back.
 
 All three are the same class of problem from the application's point of
-view: a transient blip on an idempotent read. A single retry with a tiny
-backoff converts the blip into a near-invisible recovery rather than
-surfacing as a 500.
+view: a transient blip on an idempotent read.
+
+The retry strategy needs to allow time for httpcore's pool to evict the
+dead connection. Observed in prod (request_id 8b96d03a on /me/signals/stats):
+five parallel ``execute_with_h2_retry`` calls all hit
+``RemoteProtocolError: ConnectionTerminated`` simultaneously, retried 250 ms
+later, and all five retries hit the same dead connection because the pool
+hadn't finished tearing it down. We now use **two retries with exponential
+backoff** (500 ms → 1000 ms = ~1.5 s of total wait) so httpcore has time
+to recycle the connection before the last attempt.
 
 USE THIS ONLY FOR READS — write paths must surface failures so the caller can
 decide whether the retry is safe.
@@ -61,17 +68,20 @@ except ImportError:  # pragma: no cover - httpx always ships httpcore
 async def execute_with_h2_retry(
     builder: Callable[[], T],
     *,
-    retries: int = 1,
-    backoff_seconds: float = 0.25,
+    retries: int = 2,
+    backoff_seconds: float = 0.5,
 ) -> T:
-    """Run a Supabase query in a worker thread with one retry on H2 drop.
+    """Run a Supabase query in a worker thread with retries on H2 drops.
 
     Args:
         builder: zero-arg sync callable that builds AND executes the query
             (e.g. ``lambda: supabase.table("foo").select("*").execute()``).
             Invoked via ``asyncio.to_thread`` so it must not touch the loop.
-        retries: number of *additional* attempts after the first try (default 1).
-        backoff_seconds: sleep between attempts.
+        retries: number of *additional* attempts after the first try
+            (default 2 → 3 total attempts). Sized so the httpcore pool has
+            time to evict a connection that just received GOAWAY.
+        backoff_seconds: base sleep between attempts; doubled each retry
+            (default 0.5 → 0.5 s, then 1.0 s).
 
     Returns whatever ``builder`` returns.
     """
@@ -80,13 +90,23 @@ async def execute_with_h2_retry(
             return await asyncio.to_thread(builder)
         except _H2_ERRORS as exc:
             if attempt >= retries:
+                logger.warning(
+                    "Supabase transient transport error exhausted %d attempts: %s",
+                    retries + 1,
+                    exc.__class__.__name__,
+                )
                 raise
+            # Exponential backoff lets httpcore tear down the dead H2
+            # connection before the next attempt picks one up.
+            sleep_seconds = backoff_seconds * (2**attempt)
             logger.info(
-                "Supabase transient transport error on attempt %d/%d: %s — retrying",
+                "Supabase transient transport error on attempt %d/%d: %s — "
+                "retrying in %.2fs",
                 attempt + 1,
                 retries + 1,
                 exc.__class__.__name__,
+                sleep_seconds,
             )
-            await asyncio.sleep(backoff_seconds)
+            await asyncio.sleep(sleep_seconds)
     # Unreachable: the loop body always returns or raises.
     raise RuntimeError("execute_with_h2_retry exited loop unexpectedly")
