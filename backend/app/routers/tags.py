@@ -200,10 +200,19 @@ async def get_tag_detail(
 
     cards: list[TagDetailCard] = []
     if card_ids:
+        # The RPC already filters to status='active', but the hydration
+        # runs in a separate snapshot — a card could flip to archived
+        # between the two calls. Reapplying the filter here is defense-
+        # in-depth against dead-link tiles in that race. It can't
+        # reintroduce the "page shrinks below limit" bug (#223) because
+        # the RPC already bounded the page to active cards — at worst
+        # this drops a card or two that race-flipped, never a contiguous
+        # archived-band that would shift offsets.
         cards_res = await asyncio.to_thread(
             lambda: supabase.table("cards")
             .select(_TAG_DETAIL_CARD_FIELDS)
             .in_("id", card_ids)
+            .eq("status", "active")
             .execute()
         )
         # Preserve the RPC's ordering — `in_(...)` returns rows in
