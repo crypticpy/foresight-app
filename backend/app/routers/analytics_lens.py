@@ -13,7 +13,7 @@ aggregator mounts it under the shared ``/api/v1`` prefix via
 ``router.include_router(...)``. Keep the prefix in exactly one place (the
 aggregator) so the URL surface doesn't drift.
 
-Each query is paginated through ``_fetch_all_paginated`` so the active
+Each query is paginated through ``fetch_all_paginated`` so the active
 corpus and 14-day windows can scale past PostgREST's 1000-row cap without
 silently undercounting.
 """
@@ -24,10 +24,11 @@ import asyncio
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.analytics_pagination import fetch_all_paginated
 from app.deps import _safe_error, get_current_user, supabase
 from app.models.analytics import (
     AnchorOverview,
@@ -47,7 +48,6 @@ from app.models.lens import (
     effective_anchor_scores,
     effective_array,
 )
-from app.supabase_retry import execute_with_h2_retry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
@@ -60,38 +60,6 @@ LENS_HIGH_ANCHOR_SCORE = 70
 LENS_FLAG_RELEVANCE = 60
 # Cap on the issue-tag chip cloud — keeps the response payload bounded.
 LENS_TOP_ISSUE_TAGS = 12
-
-
-async def _fetch_all_paginated(
-    builder_factory: Callable[[], Any], page_size: int = 1000
-) -> list:
-    """Fetch every row for a Supabase query, paginating in ``page_size`` chunks.
-
-    PostgREST applies a server-side row cap (typically 1000) to a single
-    ``.execute()``, so a naive call against an unbounded query silently
-    truncates the result. We page with ``.range(start, end)`` until a partial
-    page comes back. ``builder_factory`` returns a fresh query builder so
-    filters/order are reapplied cleanly per page.
-
-    Each page is dispatched via ``execute_with_h2_retry`` so that a transient
-    HTTP/2 GOAWAY on Supabase's shared connection retries once rather than
-    bubbling as a 500.
-    """
-    rows: list = []
-    start = 0
-    while True:
-        # Default arg binds ``start`` for the thread closure.
-        resp = await execute_with_h2_retry(
-            lambda s=start: builder_factory()
-            .range(s, s + page_size - 1)
-            .execute()
-        )
-        page = resp.data or []
-        rows.extend(page)
-        if len(page) < page_size:
-            break
-        start += page_size
-    return rows
 
 
 def _parse_iso_ts(raw) -> Optional[datetime]:
@@ -201,7 +169,7 @@ async def get_lens_overview(
     window_iso = window_start.isoformat()
 
     try:
-        # Each query is paginated through `_fetch_all_paginated` so the active
+        # Each query is paginated through `fetch_all_paginated` so the active
         # corpus and 14-day windows can scale past PostgREST's 1000-row cap
         # without silently undercounting.
         (
@@ -214,7 +182,7 @@ async def get_lens_overview(
             user_ws_cards_data,
         ) = await asyncio.gather(
             # Active cards with the lens columns we aggregate over.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select(
                     "id, classifier_version, signal_type, anchor_scores, "
@@ -224,32 +192,32 @@ async def get_lens_overview(
                 .eq("status", "active")
             ),
             # CSP goal labels for the heatmap.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("csp_goals")
                 .select("id, code, name, pillar_code, display_order")
                 .order("pillar_code")
                 .order("display_order")
             ),
             # Cards created in window — drives `new_cards` sparkline + 24h delta.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, created_at")
                 .gte("created_at", window_iso)
             ),
             # Cards updated in window — drives `updated_cards` sparkline.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, updated_at")
                 .gte("updated_at", window_iso)
             ),
             # Classifications stamped in window.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("cards")
                 .select("id, classified_at")
                 .gte("classified_at", window_iso)
             ),
             # User's follows in window.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("card_follows")
                 .select("card_id, created_at")
                 .eq("user_id", user_id)
@@ -259,7 +227,7 @@ async def get_lens_overview(
             # `workstreams!inner(user_id)` filters at the DB level so the
             # postgrest server enforces ownership rather than us trusting the
             # client.
-            _fetch_all_paginated(
+            fetch_all_paginated(
                 lambda: supabase.table("workstream_cards")
                 .select("card_id, added_at, workstreams!inner(user_id)")
                 .eq("workstreams.user_id", user_id)
