@@ -15,7 +15,9 @@ import { AlertTriangle, Loader2, RefreshCw, X } from "lucide-react";
 
 import { CreateSignalModal } from "../../components/CreateSignal";
 import { useAuthContext } from "../../hooks/useAuthContext";
+import { useCardTagsBatch } from "../../hooks/useCardTagsBatch";
 import { useDebouncedValue } from "../../hooks/useDebounce";
+import { getAuthToken } from "../../lib/auth";
 import { PILLAR_CODES } from "../../lib/lens-api";
 import { togglePin } from "./api";
 import { EmptyState } from "./EmptyState";
@@ -95,6 +97,17 @@ export default function Signals() {
     patchSignal,
     patchStats,
   } = useSignalsFeed(queryParams);
+
+  // One batched hydrate covers both pinned + paginated signals. Memo keeps
+  // the array stable across renders that don't change membership; the hook
+  // already keys on a sorted-join of the IDs, but this also stops React
+  // from seeing a new reference each pass and re-running the effect via
+  // dep-changed checks elsewhere in the tree.
+  const allSignalCardIds = useMemo(
+    () => [...pinned.map((s) => s.id), ...signals.map((s) => s.id)],
+    [pinned, signals],
+  );
+  const { tagsByCard } = useCardTagsBatch(allSignalCardIds, getAuthToken);
 
   // Infinite scroll sentinel — calls loadMore when the bottom marker enters
   // the viewport. Re-binds whenever loadMore's identity changes (which
@@ -298,6 +311,7 @@ export default function Signals() {
               signals={pinned}
               viewMode={viewMode}
               onTogglePin={handleTogglePin}
+              tagsByCard={tagsByCard}
             />
           )}
           {groupedSignals.map((group) => (
@@ -308,6 +322,7 @@ export default function Signals() {
               signals={group.signals}
               viewMode={viewMode}
               onTogglePin={handleTogglePin}
+              tagsByCard={tagsByCard}
             />
           ))}
           {/* Infinite-scroll sentinel + load-more indicator.

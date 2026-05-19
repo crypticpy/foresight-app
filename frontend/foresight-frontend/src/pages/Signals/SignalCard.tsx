@@ -19,17 +19,20 @@ import {
   VelocityBadge,
   type VelocityTrend,
 } from "../../components/VelocityBadge";
+import { MiniTagBadge } from "../../components/tags/MiniTagBadge";
 import { parseStageNumber } from "../../lib/stage-utils";
+import type { TagOnCard } from "../../lib/tags-api";
 import { SourceBadge } from "./SourceBadge";
 import type { PersonalSignal } from "./types";
 
 interface SignalCardProps {
   signal: PersonalSignal;
   onTogglePin: (cardId: string, currentlyPinned: boolean) => void;
+  tags?: TagOnCard[];
 }
 
 export const SignalCard: React.FC<SignalCardProps> = React.memo(
-  ({ signal, onTogglePin }) => {
+  ({ signal, onTogglePin, tags }) => {
     const stageNumber = parseStageNumber(signal.stage_id);
 
     return (
@@ -108,6 +111,10 @@ export const SignalCard: React.FC<SignalCardProps> = React.memo(
                 <SourceBadge key={ws} type="workstream" label={ws} />
               ))}
             </div>
+
+            {tags && tags.length > 0 && (
+              <MiniTagBadge tags={tags} className="mb-3" />
+            )}
 
             <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
               <span>Impact {signal.impact_score}</span>

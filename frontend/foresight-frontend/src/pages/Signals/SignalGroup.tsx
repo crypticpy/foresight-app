@@ -12,6 +12,7 @@ import { HorizonBadge } from "../../components/HorizonBadge";
 import { PillarBadge } from "../../components/PillarBadge";
 import { VirtualizedGrid } from "../../components/VirtualizedGrid";
 import { VirtualizedList } from "../../components/VirtualizedList";
+import type { TagOnCard } from "../../lib/tags-api";
 import { SignalCard } from "./SignalCard";
 import { SignalListItem } from "./SignalListItem";
 import type { GroupBy, PersonalSignal, ViewMode } from "./types";
@@ -22,6 +23,7 @@ interface SignalGroupProps {
   signals: PersonalSignal[];
   viewMode: ViewMode;
   onTogglePin: (cardId: string, currentlyPinned: boolean) => void;
+  tagsByCard?: Record<string, TagOnCard[]>;
 }
 
 export function SignalGroup({
@@ -30,16 +32,21 @@ export function SignalGroup({
   signals,
   viewMode,
   onTogglePin,
+  tagsByCard,
 }: SignalGroupProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   const renderGridItem = useCallback(
     (signal: PersonalSignal, _index: number) => (
       <div className="h-full">
-        <SignalCard signal={signal} onTogglePin={onTogglePin} />
+        <SignalCard
+          signal={signal}
+          onTogglePin={onTogglePin}
+          tags={tagsByCard?.[signal.id]}
+        />
       </div>
     ),
-    [onTogglePin],
+    [onTogglePin, tagsByCard],
   );
 
   const renderListItem = useCallback(
