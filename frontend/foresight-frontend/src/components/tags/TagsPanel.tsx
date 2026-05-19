@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Tag as TagIcon } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useCardTags } from "../../hooks/useCardTags";
 import { TAG_DISPLAY_LIMIT, type TagOnCard } from "../../lib/tags-api";
@@ -29,7 +28,6 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
     getAuthToken,
   );
   const [showAll, setShowAll] = useState(false);
-  const navigate = useNavigate();
 
   const { visible, overflow } = useMemo(() => {
     if (showAll || tags.length <= TAG_DISPLAY_LIMIT) {
@@ -45,9 +43,9 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
 
   const handleCoApply = (tag: TagOnCard) => apply(tag.label, workstreamId);
   const handleRemove = (tag: TagOnCard) => remove(tag.slug);
-  const handleChipClick = (tag: TagOnCard) => {
-    navigate(`/tags/${tag.slug}`);
-  };
+  // Tag-detail navigation is gated on the /tags/:slug route landing in
+  // PR 5 of this stack; until then chips render without a click handler
+  // so we don't dead-link users to a 404.
 
   return (
     <div
@@ -77,7 +75,6 @@ export const TagsPanel: React.FC<TagsPanelProps> = ({
               tag={tag}
               onCoApply={readOnly ? undefined : handleCoApply}
               onRemove={readOnly ? undefined : handleRemove}
-              onClick={handleChipClick}
               readOnly={readOnly}
             />
           ))}
