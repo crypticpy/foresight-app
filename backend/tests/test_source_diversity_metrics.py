@@ -17,6 +17,8 @@ import math
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.discovery_result_types import SourceDiversityMetrics  # noqa: E402
@@ -138,15 +140,18 @@ def test_shannon_entropy_in_expected_range_for_skewed_distribution() -> None:
     """A modestly skewed distribution should produce a finite entropy
     strictly between 0 and 1.
 
-    Two categories at 90/10 split: H/H_max ≈ 0.469 / log(5) ≈ 0.291.
-    The fix doesn't change this branch's math; this test pins the
-    expectation so future refactors can't silently move the dial.
+    Two categories at 90/10 split: H/H_max ≈ 0.469 / log(N) ≈ 0.291
+    when N=5. The fix doesn't change this branch's math; this test
+    pins the expectation so future refactors can't silently move the
+    dial. The denominator is derived from the normalized bucket count
+    rather than hardcoded so growing ``SourceCategory`` doesn't quietly
+    break this test.
     """
     metrics = SourceDiversityMetrics.compute({"rss": 90, "news": 10})
 
     expected_h = -(0.9 * math.log(0.9) + 0.1 * math.log(0.1))
-    expected_normalized = round(expected_h / math.log(5), 3)
-    assert metrics.shannon_entropy == expected_normalized
+    expected_normalized = expected_h / math.log(len(metrics.sources_by_category))
+    assert metrics.shannon_entropy == pytest.approx(expected_normalized, abs=1e-3)
 
 
 # ---------------------------------------------------------------------------

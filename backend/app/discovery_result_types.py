@@ -274,6 +274,12 @@ class MultiSourceFetchResult:
         would have made a 6th category's presence push the ratio above
         the previous max of 1.0 / make a missing one look like 80%
         coverage).
+
+        The denominator is also widened to match ``sources_by_category``
+        when callers supply extra (non-enum) buckets — e.g. workstream
+        scans add a ``"serper"`` bucket. Without the widening, six
+        active buckets against a denominator of five would push the
+        ratio above the documented ``[0, 1]`` range.
         """
         if self.total_sources == 0:
             return 0.0
@@ -284,7 +290,9 @@ class MultiSourceFetchResult:
         active_categories = sum(
             bool(count > 0) for count in self.sources_by_category.values()
         )
-        denominator = max(len(SourceCategory), 1)
+        denominator = max(
+            len(self.sources_by_category), len(SourceCategory), 1
+        )
         return active_categories / denominator
 
 
