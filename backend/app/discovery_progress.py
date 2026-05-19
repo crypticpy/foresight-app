@@ -70,48 +70,42 @@ async def update_progress(
         if stats:
             progress["stats"] = stats
 
-        # Read current summary_report. The Supabase Python client is sync;
-        # calling .execute() directly here would block the event loop and
-        # serialize every other async task in the pipeline. Wrap in
-        # asyncio.to_thread so the network round-trip happens off-loop.
+        # Single atomic RPC. Earlier this helper read the column with a
+        # SELECT, splatted the merge in Python, then wrote it back —
+        # which races against every other writer to ``summary_report``
+        # on the same row (lifecycle terminal update, worker stage flip,
+        # quality-stats writers in discovery_service / discovery_triage).
+        # Any of those firing in the SELECT→UPDATE window clobbers our
+        # progress key. ``set_discovery_run_summary_key`` pushes the
+        # merge into a single transactional ``jsonb_set``; see migration
+        # 20260519000001_atomic_summary_report_progress_rpc.sql.
+        #
+        # The RPC also handles the JSONB-null column case via
+        # ``COALESCE(summary_report, '{}'::jsonb)``, so we no longer
+        # need defensive checks here.
+        #
+        # supabase-py is sync — wrap in asyncio.to_thread so the network
+        # round-trip stays off the event loop.
         result = await asyncio.to_thread(
-            lambda: supabase.table("discovery_runs")
-            .select("summary_report")
-            .eq("id", run_id)
-            .single()
-            .execute()
+            lambda: supabase.rpc(
+                "set_discovery_run_summary_key",
+                {
+                    "p_run_id": run_id,
+                    "p_key": "progress",
+                    "p_value": progress,
+                },
+            ).execute()
         )
 
-        # Two failure modes the old code didn't handle:
-        # 1. Row missing (result.data is None) — pre-fix we silently wrote
-        #    a no-op UPDATE that matched zero rows. Skip the write and log
-        #    so we surface that the run id is bogus instead of pretending
-        #    progress was recorded.
-        # 2. ``summary_report`` column is JSONB null — ``.get("k", {})``
-        #    only returns the default when the key is *missing*. When the
-        #    key exists with value None, ``.get`` returns None and the
-        #    ``{**current_report, ...}`` splat below would raise TypeError.
-        #    Coerce non-dict values to ``{}`` (the lifecycle helper uses
-        #    the same defensive pattern — see ``discovery_run_lifecycle``).
-        if not result.data:
+        # RPC returns boolean: true = row matched, false = run_id not
+        # in discovery_runs. We surface the latter rather than silently
+        # consuming a no-op write the way the old SELECT+UPDATE did.
+        if result.data is False:
             logger.warning(
                 "Progress update skipped: discovery_runs row %s not found",
                 run_id,
             )
             return
-        raw_report = result.data.get("summary_report")
-        current_report = raw_report if isinstance(raw_report, dict) else {}
-
-        # Merge progress into summary_report
-        updated_report = {**current_report, "progress": progress}
-
-        # Update the record (also off-loop — see note above).
-        await asyncio.to_thread(
-            lambda: supabase.table("discovery_runs")
-            .update({"summary_report": updated_report})
-            .eq("id", run_id)
-            .execute()
-        )
 
         logger.debug(f"Progress update: {stage} - {message}")
     except Exception as e:
