@@ -732,6 +732,64 @@ def test_get_tag_detail_empty_when_no_applications(monkeypatch):
     assert res.total == 0
 
 
+def test_get_tag_detail_drops_card_archived_between_rpc_and_hydrate(monkeypatch):
+    """Race: card flips to archived between the RPC and the hydration
+    query. The RPC saw it as active and returned its id; the hydrate
+    must drop it via `.eq('status','active')` so the UI never renders a
+    dead-link tile. `total` keeps the RPC value (snapshot count)."""
+    tag_id = _uuid()
+    card_id = _uuid()
+
+    tag_row = {
+        "id": tag_id,
+        "slug": "climate",
+        "label": "climate",
+        "created_by": _uuid(),
+        "created_at": _ts(),
+    }
+    # RPC ran first and considered the card active.
+    rpc_rows = [{"card_id": card_id, "most_recent_at": _ts(), "total": 1}]
+    # By the time the hydrate query runs, status has flipped.
+    card_rows = [
+        {
+            "id": card_id,
+            "status": "archived",
+            "slug": "raced-card",
+            "name": "Raced",
+            "summary": "",
+            "pillar_id": "CH",
+            "stage_id": "1_concept",
+            "horizon": "H1",
+            "impact_score": 0,
+            "relevance_score": 0,
+            "velocity_score": 0,
+            "novelty_score": 0,
+            "signal_quality_score": 0,
+            "velocity_trend": None,
+            "trend_direction": None,
+            "top25_relevance": None,
+            "created_at": _ts(),
+            "updated_at": _ts(),
+        },
+    ]
+
+    mock_sb = _MockSupabase(
+        tables={"tags": [tag_row], "cards": card_rows},
+        rpcs={"tag_cards_page": lambda _params: rpc_rows},
+    )
+    tags_module = _patch(monkeypatch, mock_sb)
+
+    res = _run(
+        tags_module.get_tag_detail(
+            slug="climate", limit=20, offset=0, current_user={"id": _uuid()}
+        )
+    )
+    # The raced card never reaches the response.
+    assert res.cards == []
+    # Total reflects the RPC snapshot — not adjusted for the race.
+    assert res.total == 1
+
+
 def test_get_tag_detail_excludes_archived_via_rpc_contract(monkeypatch):
     """`tag_cards_page` filters archived rows inside its CTE, so the route
     relies on the RPC's contract: only active card_ids come back and total
