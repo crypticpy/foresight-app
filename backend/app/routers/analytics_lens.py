@@ -381,11 +381,15 @@ async def get_lens_overview(
         # slices ``trend → driver → signal → unclassified``, so keep this
         # list aligned to that order rather than alphabetizing.
         # ``VALID_SIGNAL_TYPES`` is the schema-enforced source of truth for
-        # what counts as a real bucket; assert the ordered list matches.
+        # what counts as a real bucket; raise loudly if the ordered list
+        # drifts. Use an explicit conditional + RuntimeError rather than
+        # ``assert`` so the check survives ``python -O`` (PYTHONOPTIMIZE)
+        # builds, which strip assert statements.
         signal_type_buckets = ["trend", "driver", "signal", "unclassified"]
-        assert set(signal_type_buckets) - {"unclassified"} == VALID_SIGNAL_TYPES, (
-            "signal_type_buckets drifted from VALID_SIGNAL_TYPES — update both"
-        )
+        if set(signal_type_buckets) - {"unclassified"} != VALID_SIGNAL_TYPES:
+            raise RuntimeError(
+                "signal_type_buckets drifted from VALID_SIGNAL_TYPES — update both"
+            )
         signal_mix = [
             SignalTypeMix(signal_type=t, count=signal_type_counts.get(t, 0))
             for t in signal_type_buckets
