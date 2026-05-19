@@ -53,7 +53,19 @@ async def fetch_all_paginated(
     Returns:
         Concatenated list of all rows. Empty list if the query returns no
         data.
+
+    Raises:
+        ValueError: if ``page_size`` is not a positive integer. With
+            ``page_size <= 0`` the loop's terminating condition
+            (``len(page) < page_size``) can never be reached and
+            ``start`` never advances, so the call would hang forever.
+            Validating upfront surfaces caller bugs immediately rather
+            than as a stuck request.
     """
+    if page_size <= 0:
+        raise ValueError(
+            f"page_size must be a positive integer, got {page_size!r}"
+        )
     rows: list = []
     start = 0
     while True:
