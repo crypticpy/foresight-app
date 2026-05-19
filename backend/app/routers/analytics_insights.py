@@ -179,11 +179,19 @@ async def get_analytics_insights(
                     pillar_filter_query = base_query.is_("pillar_filter", "null")
                 else:
                     pillar_filter_query = base_query.eq("pillar_filter", pillar_id)
+                # ``UNIQUE(pillar_filter, insight_limit, cache_date)`` permits
+                # multiple NULL ``pillar_filter`` rows in PostgreSQL, so the
+                # upsert can leave behind legacy duplicates for the
+                # "all-pillars" view. Order by ``generated_at`` so a force
+                # refresh (or any newer entry) wins; otherwise ``.limit(1)``
+                # can return an older valid row and serve stale insights even
+                # after the hash invalidation path regenerates the cache.
                 cache_response = await asyncio.to_thread(
                     lambda: pillar_filter_query
                     .eq("insight_limit", limit)
                     .eq("cache_date", date_type.today().isoformat())
                     .gt("expires_at", datetime.now(timezone.utc).isoformat())
+                    .order("generated_at", desc=True)
                     .limit(1)
                     .execute()
                 )
