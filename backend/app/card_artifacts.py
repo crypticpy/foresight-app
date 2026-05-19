@@ -7,6 +7,7 @@ from collections import OrderedDict, defaultdict
 from typing import Any
 
 from app.models.card_artifacts import CardArtifacts
+from app.supabase_in_guard import chunked_in_query
 
 _ARTIFACT_CACHE_TTL_SECONDS = 60
 _ARTIFACT_CACHE_MAX_ENTRIES = 256
@@ -32,14 +33,16 @@ def get_follower_counts(client: Any, card_ids: list[str]) -> dict[str, int]:
         return {row["card_id"]: int(row.get("follower_count") or 0) for row in rows}
     except Exception:
         # Local/dev databases may not have the RPC until migrations are pushed.
-        rows = (
-            client.table("card_follows")
-            .select("card_id")
-            .in_("card_id", ids)
-            .execute()
-            .data
-            or []
-        )
+        def _fetch_follows(chunk):
+            resp = (
+                client.table("card_follows")
+                .select("card_id")
+                .in_("card_id", chunk)
+                .execute()
+            )
+            return resp.data or []
+
+        rows = chunked_in_query(_fetch_follows, ids)
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
             if row.get("card_id"):
@@ -51,15 +54,18 @@ def get_followed_card_ids(client: Any, user_id: str, card_ids: list[str]) -> set
     ids = _dedupe_card_ids(card_ids)
     if not ids:
         return set()
-    rows = (
-        client.table("card_follows")
-        .select("card_id")
-        .eq("user_id", user_id)
-        .in_("card_id", ids)
-        .execute()
-        .data
-        or []
-    )
+
+    def _fetch_followed(chunk):
+        resp = (
+            client.table("card_follows")
+            .select("card_id")
+            .eq("user_id", user_id)
+            .in_("card_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    rows = chunked_in_query(_fetch_followed, ids)
     return {row["card_id"] for row in rows if row.get("card_id")}
 
 
@@ -88,15 +94,19 @@ def get_card_artifacts(
     # so we can surface the latest "generating" or "failed" attempt on cards
     # that don't yet have a completed brief — the kanban needs to show
     # in-flight progress and actionable errors, not just the happy path.
-    brief_rows = (
-        client.table("executive_briefs")
-        .select("card_id, status, error_message, generated_at, updated_at, created_at")
-        .in_("card_id", ids)
-        .order("updated_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
+    def _fetch_briefs(chunk):
+        resp = (
+            client.table("executive_briefs")
+            .select("card_id, status, error_message, generated_at, updated_at, created_at")
+            .in_("card_id", chunk)
+            .order("updated_at", desc=True)
+            .execute()
+        )
+        return resp.data or []
+
+    brief_rows = chunked_in_query(_fetch_briefs, ids)
+    # Re-sort across chunks so the newest-first invariant survives merging.
+    brief_rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
     for row in brief_rows:
         card_id = row.get("card_id")
         if not card_id or card_id not in artifacts:
@@ -131,16 +141,19 @@ def get_card_artifacts(
             current.failed_brief = True
             current.brief_error_message = row.get("error_message")
 
-    research_rows = (
-        client.table("research_tasks")
-        .select("card_id, status, task_type, error_message, completed_at, created_at")
-        .in_("card_id", ids)
-        .eq("task_type", "deep_research")
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
+    def _fetch_research(chunk):
+        resp = (
+            client.table("research_tasks")
+            .select("card_id, status, task_type, error_message, completed_at, created_at")
+            .in_("card_id", chunk)
+            .eq("task_type", "deep_research")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return resp.data or []
+
+    research_rows = chunked_in_query(_fetch_research, ids)
+    research_rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     for row in research_rows:
         card_id = row.get("card_id")
         if not card_id or card_id not in artifacts:
@@ -177,14 +190,16 @@ def get_card_artifacts(
     # started_at on that same workstream. Without this guard, every card in
     # any scanned workstream would be tagged has_scan, even cards added by
     # other flows long before/after the scan.
-    wc_rows = (
-        client.table("workstream_cards")
-        .select("card_id, workstream_id, added_at")
-        .in_("card_id", ids)
-        .execute()
-        .data
-        or []
-    )
+    def _fetch_wc_rows(chunk):
+        resp = (
+            client.table("workstream_cards")
+            .select("card_id, workstream_id, added_at")
+            .in_("card_id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    wc_rows = chunked_in_query(_fetch_wc_rows, ids)
     workstream_to_card_added: dict[str, list[tuple[str, str | None]]] = defaultdict(list)
     for row in wc_rows:
         ws_id = row.get("workstream_id")
@@ -193,16 +208,21 @@ def get_card_artifacts(
             workstream_to_card_added[ws_id].append((cid, row.get("added_at")))
 
     if workstream_to_card_added:
-        scan_rows = (
-            client.table("workstream_scans")
-            .select("workstream_id, status, started_at, completed_at, created_at")
-            .in_("workstream_id", list(workstream_to_card_added.keys()))
-            .eq("status", "completed")
-            .order("completed_at", desc=True)
-            .execute()
-            .data
-            or []
+        def _fetch_scans(chunk):
+            resp = (
+                client.table("workstream_scans")
+                .select("workstream_id, status, started_at, completed_at, created_at")
+                .in_("workstream_id", chunk)
+                .eq("status", "completed")
+                .order("completed_at", desc=True)
+                .execute()
+            )
+            return resp.data or []
+
+        scan_rows = chunked_in_query(
+            _fetch_scans, list(workstream_to_card_added.keys())
         )
+        scan_rows.sort(key=lambda r: r.get("completed_at") or "", reverse=True)
         for row in scan_rows:
             ws_id = row.get("workstream_id")
             scan_start = row.get("started_at") or row.get("created_at")

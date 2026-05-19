@@ -26,6 +26,7 @@ from app.chat_service import (
 )
 from app.helpers.search_utils import sanitize_ilike
 from app.openai_provider import azure_openai_async_client, get_chat_mini_deployment
+from app.supabase_in_guard import chunked_in_query
 from app.usage_telemetry import llm_usage_context
 
 logger = logging.getLogger(__name__)
@@ -421,31 +422,57 @@ async def search_chat_conversations(
         # the same cross-user leak this fix exists to close.
         msg_conv_ids: List[str] = []
         if user_conv_ids:
-            msg_result = await asyncio.to_thread(
-                lambda: supabase.table("chat_messages")
-                .select("conversation_id")
-                .in_("conversation_id", user_conv_ids)
-                .ilike("content", f"%{safe_q}%")
-                .limit(50)
-                .execute()
-            )
-            # Get unique conversation IDs from message matches
-            msg_conv_ids = list(
-                set(m["conversation_id"] for m in (msg_result.data or []))
-            )
+            # Fan out across chunks but cap at 50 matches globally so a
+            # heavy account doesn't multiply the per-chunk limit into a
+            # huge result set.
+            GLOBAL_MATCH_CAP = 50
+            seen_msg_ids: set[str] = set()
+
+            def _search_messages(chunk):
+                if len(seen_msg_ids) >= GLOBAL_MATCH_CAP:
+                    return []
+                remaining = GLOBAL_MATCH_CAP - len(seen_msg_ids)
+                resp = (
+                    supabase.table("chat_messages")
+                    .select("conversation_id")
+                    .in_("conversation_id", chunk)
+                    .ilike("content", f"%{safe_q}%")
+                    .limit(remaining)
+                    .execute()
+                )
+                fresh = []
+                for m in resp.data or []:
+                    cid = m["conversation_id"]
+                    if cid not in seen_msg_ids:
+                        seen_msg_ids.add(cid)
+                        fresh.append(m)
+                return fresh
+
+            await asyncio.to_thread(chunked_in_query, _search_messages, user_conv_ids)
+            msg_conv_ids = list(seen_msg_ids)
 
         # Fetch those conversations (with ownership check, defense in depth)
         msg_conversations = []
         if msg_conv_ids:
-            conv_result = await asyncio.to_thread(
-                lambda: supabase.table("chat_conversations")
-                .select("id, scope, scope_id, title, created_at, updated_at")
-                .eq("user_id", user_id)
-                .in_("id", msg_conv_ids)
-                .order("updated_at", desc=True)
-                .execute()
+            def _fetch_msg_convs(chunk):
+                resp = (
+                    supabase.table("chat_conversations")
+                    .select("id, scope, scope_id, title, created_at, updated_at")
+                    .eq("user_id", user_id)
+                    .in_("id", chunk)
+                    .order("updated_at", desc=True)
+                    .execute()
+                )
+                return resp.data or []
+
+            msg_conversations = await asyncio.to_thread(
+                chunked_in_query, _fetch_msg_convs, msg_conv_ids
             )
-            msg_conversations = conv_result.data or []
+            # Re-sort across chunks since per-chunk ordering doesn't
+            # carry across the merge.
+            msg_conversations.sort(
+                key=lambda c: c.get("updated_at") or "", reverse=True
+            )
 
         # Merge and deduplicate results, title matches first
         seen = set()

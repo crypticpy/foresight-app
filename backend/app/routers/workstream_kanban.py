@@ -29,6 +29,7 @@ from app.models.workstream import (
 from app.models.research import ResearchTask
 from app.research_service import ResearchService
 from app.card_artifacts import enrich_cards_with_collab
+from app.supabase_in_guard import chunked_in_query
 
 logger = logging.getLogger(__name__)
 
@@ -763,30 +764,42 @@ async def get_workstream_research_status(
         active_cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
 
         # Query active tasks
-        active_tasks = await asyncio.to_thread(
-            lambda: supabase.table("research_tasks")
-            .select("id, card_id, task_type, status, started_at, completed_at")
-            .in_("card_id", card_ids)
-            .in_("status", ["queued", "processing"])
-            .gte("created_at", active_cutoff)
-            .execute()
+        def _query_active(chunk):
+            resp = (
+                supabase.table("research_tasks")
+                .select("id, card_id, task_type, status, started_at, completed_at")
+                .in_("card_id", chunk)
+                .in_("status", ["queued", "processing"])
+                .gte("created_at", active_cutoff)
+                .execute()
+            )
+            return resp.data or []
+
+        active_data = await asyncio.to_thread(
+            chunked_in_query, _query_active, card_ids
         )
 
         # Query recently completed tasks
-        recent_tasks = await asyncio.to_thread(
-            lambda: supabase.table("research_tasks")
-            .select("id, card_id, task_type, status, started_at, completed_at")
-            .in_("card_id", card_ids)
-            .in_("status", ["completed", "failed"])
-            .gte("completed_at", one_hour_ago)
-            .execute()
+        def _query_recent(chunk):
+            resp = (
+                supabase.table("research_tasks")
+                .select("id, card_id, task_type, status, started_at, completed_at")
+                .in_("card_id", chunk)
+                .in_("status", ["completed", "failed"])
+                .gte("completed_at", one_hour_ago)
+                .execute()
+            )
+            return resp.data or []
+
+        recent_data = await asyncio.to_thread(
+            chunked_in_query, _query_recent, card_ids
         )
     except Exception as e:
         logger.warning(f"Error querying research tasks: {e}")
         return WorkstreamResearchStatusResponse(tasks=[])
 
     # Combine and format results
-    all_tasks = (active_tasks.data or []) + (recent_tasks.data or [])
+    all_tasks = active_data + recent_data
 
     # Deduplicate by card_id, keeping the most recent task per card
     task_by_card: Dict[str, dict] = {}
@@ -962,14 +975,19 @@ async def bulk_workstream_card_action(
             require_paid_user(current_user)
         await asyncio.to_thread(_require_workstream_edit, workstream_id, current_user)
 
-    rows_response = await asyncio.to_thread(
-        lambda: supabase.table("workstream_cards")
-        .select("*, cards(*)")
-        .eq("workstream_id", workstream_id)
-        .in_("id", body.card_ids)
-        .execute()
+    def _fetch_bulk_rows(chunk):
+        resp = (
+            supabase.table("workstream_cards")
+            .select("*, cards(*)")
+            .eq("workstream_id", workstream_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    rows = await asyncio.to_thread(
+        chunked_in_query, _fetch_bulk_rows, body.card_ids
     )
-    rows = rows_response.data or []
     if len(rows) != len(set(body.card_ids)):
         # Some ids didn't match; surface that but still operate on the matched rows.
         logger.info(
@@ -1025,12 +1043,18 @@ async def bulk_workstream_card_action(
     if action in ("watch", "unwatch"):
         flag = action == "watch"
         if rows:
-            await asyncio.to_thread(
-                lambda: supabase.table("workstream_cards")
-                .update({"is_watching": flag, "updated_at": now_iso})
-                .in_("id", [r["id"] for r in rows])
-                .execute()
-            )
+            row_ids = [r["id"] for r in rows]
+
+            def _bulk_set_watch(chunk):
+                (
+                    supabase.table("workstream_cards")
+                    .update({"is_watching": flag, "updated_at": now_iso})
+                    .in_("id", chunk)
+                    .execute()
+                )
+                return None
+
+            await asyncio.to_thread(chunked_in_query, _bulk_set_watch, row_ids)
         return {"updated": len(rows), "action": action, "is_watching": flag}
 
     if action == "set_status":
@@ -1064,12 +1088,18 @@ async def bulk_workstream_card_action(
                 detail=f"params.brief_status must be one of: {sorted(VALID_BRIEF_STATUSES)}",
             )
         if rows:
-            await asyncio.to_thread(
-                lambda: supabase.table("workstream_cards")
-                .update({"brief_status": new_brief, "updated_at": now_iso})
-                .in_("id", [r["id"] for r in rows])
-                .execute()
-            )
+            row_ids = [r["id"] for r in rows]
+
+            def _bulk_set_brief(chunk):
+                (
+                    supabase.table("workstream_cards")
+                    .update({"brief_status": new_brief, "updated_at": now_iso})
+                    .in_("id", chunk)
+                    .execute()
+                )
+                return None
+
+            await asyncio.to_thread(chunked_in_query, _bulk_set_brief, row_ids)
         return {"updated": len(rows), "action": action, "brief_status": new_brief}
 
     if action == "copy_share_links":

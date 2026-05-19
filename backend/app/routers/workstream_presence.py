@@ -9,6 +9,7 @@ from app.authz import require_workstream_access
 from app.deps import supabase, get_current_user
 from app.feature_flags import collaboration_enabled, realtime_enabled
 from app.models.workstream_collab import PresenceHeartbeatResponse, WorkstreamMember
+from app.supabase_in_guard import chunked_in_query
 
 router = APIRouter(prefix="/api/v1", tags=["workstream-presence"])
 
@@ -71,8 +72,17 @@ async def list_presence(
         user_ids = [row["user_id"] for row in rows if row.get("user_id")]
         profiles = {}
         if user_ids:
-            profile_rows = supabase.table("users").select("id, email, display_name").in_("id", user_ids).execute()
-            profiles = {row["id"]: row for row in profile_rows.data or []}
+            def _fetch_profiles(chunk):
+                resp = (
+                    supabase.table("users")
+                    .select("id, email, display_name")
+                    .in_("id", chunk)
+                    .execute()
+                )
+                return resp.data or []
+
+            profile_rows = chunked_in_query(_fetch_profiles, user_ids)
+            profiles = {row["id"]: row for row in profile_rows}
         return [
             WorkstreamMember(
                 user_id=row["user_id"],

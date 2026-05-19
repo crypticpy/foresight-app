@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.deps import supabase, get_current_user, _safe_error
+from app.supabase_in_guard import chunked_in_query
 from app.supabase_retry import execute_with_h2_retry
 from app.models.history import (
     ScoreHistory,
@@ -337,15 +338,19 @@ async def get_related_cards(
             related_card_ids.add(rel["source_card_id"])
 
     # Fetch full card details for all related cards
-    cards_response = (
-        supabase.table("cards")
-        .select("id, name, slug, summary, pillar_id, stage_id, horizon")
-        .in_("id", list(related_card_ids))
-        .execute()
-    )
+    def _fetch_related(chunk):
+        resp = (
+            supabase.table("cards")
+            .select("id, name, slug, summary, pillar_id, stage_id, horizon")
+            .in_("id", chunk)
+            .execute()
+        )
+        return resp.data or []
+
+    related_rows = chunked_in_query(_fetch_related, list(related_card_ids))
 
     # Create a lookup map for cards
-    cards_map = {card["id"]: card for card in (cards_response.data or [])}
+    cards_map = {card["id"]: card for card in related_rows}
 
     # Build the related cards list with relationship context
     related_cards = []
