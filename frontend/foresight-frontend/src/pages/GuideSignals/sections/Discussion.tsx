@@ -1,5 +1,5 @@
 /**
- * Accordion section — Discussion: the per-signal comment thread where the
+ * Accordion section 7/9 — Discussion: the per-signal comment thread where the
  * team talks through what a signal means, captures context, and records
  * decisions next to the intelligence itself.
  *

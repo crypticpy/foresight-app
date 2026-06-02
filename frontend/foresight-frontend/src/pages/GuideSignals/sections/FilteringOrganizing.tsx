@@ -1,5 +1,5 @@
 /**
- * Accordion section 5/7 — filters, sorting, grouping, view modes, and
+ * Accordion section 5/9 — filters, sorting, grouping, view modes, and
  * pinning on the My Signals page.
  *
  * @module pages/GuideSignals/sections/FilteringOrganizing

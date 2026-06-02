@@ -1,5 +1,5 @@
 /**
- * Accordion section 4/7 — source-category explorer (with active-source local
+ * Accordion section 4/9 — source-category explorer (with active-source local
  * state) plus the additional priority-domain / RSS / keyword configuration.
  *
  * @module pages/GuideSignals/sections/SourcePreferences

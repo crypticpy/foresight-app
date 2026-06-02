@@ -1,5 +1,5 @@
 /**
- * Accordion section 1/7 — defines what a signal is, the six strategic
+ * Accordion section 1/9 — defines what a signal is, the six strategic
  * pillars, three time horizons, and the SQI score.
  *
  * @module pages/GuideSignals/sections/WhatAreSignals

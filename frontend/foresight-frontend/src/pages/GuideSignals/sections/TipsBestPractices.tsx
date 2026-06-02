@@ -1,5 +1,5 @@
 /**
- * Accordion section 7/7 — quality thresholds, horizon strategy, create vs
+ * Accordion section 9/9 — quality thresholds, horizon strategy, create vs
  * follow heuristics, naming conventions, and general best practices.
  *
  * @module pages/GuideSignals/sections/TipsBestPractices

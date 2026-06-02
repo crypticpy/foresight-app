@@ -1,5 +1,5 @@
 /**
- * Accordion section — Community Tags: shared, free-form labels that the team
+ * Accordion section 6/9 — Community Tags: shared, free-form labels that the team
  * can add to a signal, where to find them, and how to keep the vocabulary
  * tidy.
  *

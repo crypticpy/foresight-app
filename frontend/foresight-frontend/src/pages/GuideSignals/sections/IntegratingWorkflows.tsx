@@ -1,5 +1,5 @@
 /**
- * Accordion section 6/7 — Dashboard → Discover → Follow → My Signals →
+ * Accordion section 8/9 — Dashboard → Discover → Follow → My Signals →
  * Workstream → Research → Brief flow, with desktop and mobile diagrams.
  *
  * @module pages/GuideSignals/sections/IntegratingWorkflows
