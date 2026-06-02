@@ -34,7 +34,7 @@ export function ResearchComparisonTable() {
       duration: "30-90 seconds",
       depth: "Surface",
       bestFor:
-        "Fast triage of a fresh signal. Provides a concise snapshot to decide if it warrants a deeper Deep Dive.",
+        "A concise scan of a fresh signal -- a fast read that helps you decide whether it warrants a full Deep Dive.",
       column: "Working",
       color: "border-yellow-500",
     },
