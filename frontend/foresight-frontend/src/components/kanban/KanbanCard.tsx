@@ -249,6 +249,18 @@ export const KanbanCard = memo(function KanbanCard({
           {embeddedCard.name}
         </h4>
 
+        {embeddedCard.summary && (
+          <p
+            title={embeddedCard.summary}
+            className={cn(
+              "text-xs text-gray-500 dark:text-gray-400 leading-snug line-clamp-2 mb-2",
+              onToggleSelect && "pl-6",
+            )}
+          >
+            {embeddedCard.summary}
+          </p>
+        )}
+
         <div className="flex items-center gap-1.5 flex-wrap mb-2">
           <PillarBadge
             pillarId={embeddedCard.pillar_id}
