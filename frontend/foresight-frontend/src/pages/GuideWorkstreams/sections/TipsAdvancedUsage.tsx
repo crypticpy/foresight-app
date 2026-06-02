@@ -60,10 +60,10 @@ export function TipsAdvancedUsage() {
         </h4>
         <p className="mb-4">
           Align your brief generation with your organization's cadence. If
-          leadership reviews happen monthly, plan to have cards through the
-          Research column by mid-month and generate briefs the week before the
-          review. Use the version history to show how intelligence evolved
-          between briefing cycles.
+          leadership reviews happen monthly, plan to have cards researched in
+          Working by mid-month and generate briefs the week before the review.
+          Use the version history to show how intelligence evolved between
+          briefing cycles.
         </p>
 
         <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">
@@ -87,8 +87,8 @@ export function TipsAdvancedUsage() {
             was investigated.
           </li>
           <li>
-            <strong>Periodic review:</strong> Check the Watching column monthly.
-            Signals that have been dormant for 3+ months can usually be
+            <strong>Periodic review:</strong> Review your watched signals
+            monthly. Signals that have been dormant for 3+ months can usually be
             archived.
           </li>
           <li>
@@ -114,24 +114,24 @@ export function TipsAdvancedUsage() {
               research results more effectively.
             </li>
             <li>
-              <strong>Layer research:</strong> After a Deep Dive, move the card
-              to Brief and generate a brief. If the brief reveals gaps, move it
-              back to Research for another round.
+              <strong>Layer research:</strong> After a Deep Dive, generate a
+              brief to move the card to Ready. If the brief reveals gaps, move
+              it back to Working for another round.
             </li>
             <li>
-              <strong>Use Check for Updates on watching signals:</strong>{" "}
-              Periodically refresh high-priority signals in the Watching column
-              to catch breaking developments.
+              <strong>Use Check for Updates on watched signals:</strong>{" "}
+              Periodically refresh the high-priority signals you're watching to
+              catch breaking developments.
             </li>
           </ol>
         </div>
 
         <ProTip title="Advanced Pattern: Research Sprints">
           For time-sensitive topics, create a dedicated workstream and
-          batch-process signals in a single session. Move 5-10 signals from
-          Inbox to Screening, run Quick Updates on all of them, then promote the
-          top 3-4 to Research for Deep Dives. This focused approach is more
-          efficient than trickling signals through the pipeline over days.
+          batch-process signals in a single session. Accept 5-10 signals from
+          Inbox into Working, run Quick Updates on all of them, then run Deep
+          Dives on the top 3-4. This focused approach is more efficient than
+          trickling signals through the pipeline over days.
         </ProTip>
       </AccordionContent>
     </Accordion.Item>

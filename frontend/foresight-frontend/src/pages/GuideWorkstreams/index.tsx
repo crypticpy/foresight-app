@@ -59,7 +59,7 @@ const QUICK_START_STEPS: QuickStartStep[] = [
     icon: <Search className="h-5 w-5" />,
     description: "Investigate with AI-powered tools",
     details:
-      "Move signals through Screening (Quick Update) and Research (Deep Dive) columns. The AI pulls from 5 to 15+ sources to build comprehensive research packages. Add your own notes and context at every stage.",
+      "Accept a signal to move it into Working, then run a Quick Update for a fast read or a Deep Dive for a comprehensive research package. The AI pulls from 5 to 15+ sources. Add your own notes and context as you go.",
   },
   {
     step: 4,
