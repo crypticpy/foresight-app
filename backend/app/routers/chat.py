@@ -41,13 +41,18 @@ def _coerce_citations(value: Any) -> List[Dict[str, Any]]:
     hands them back as strings. Array-expecting consumers (the chat
     renderer's ``citations.find``/``.map``) crash on a non-array, so coerce
     any string (via ``json.loads``) or other non-list value back to a list.
+
+    Decodes repeatedly (bounded) so double-encoded legacy payloads — a JSON
+    string whose contents are themselves a JSON-encoded array — resolve to
+    the underlying list instead of being dropped.
     """
-    if value is None:
-        return []
-    if isinstance(value, str):
+    for _ in range(3):
+        if not isinstance(value, str):
+            break
         try:
             value = json.loads(value)
         except (json.JSONDecodeError, TypeError):
+            logger.warning("Dropping un-decodable citations payload")
             return []
     return value if isinstance(value, list) else []
 

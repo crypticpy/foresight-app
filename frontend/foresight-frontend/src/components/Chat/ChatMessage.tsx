@@ -59,17 +59,17 @@ export function ChatMessage({
   // panel via the ErrorBoundary). Mirrors the backend normalization in
   // routers/chat.py::get_chat_conversation.
   const citations = useMemo<Citation[]>(() => {
-    const raw: unknown = message.citations;
-    if (Array.isArray(raw)) return raw as Citation[];
-    if (typeof raw === "string") {
+    let raw: unknown = message.citations;
+    // Decode repeatedly (bounded): some legacy rows are double-encoded — a
+    // JSON string whose contents are themselves a JSON-encoded array.
+    for (let i = 0; i < 3 && typeof raw === "string"; i++) {
       try {
-        const parsed: unknown = JSON.parse(raw);
-        return Array.isArray(parsed) ? (parsed as Citation[]) : [];
+        raw = JSON.parse(raw);
       } catch {
         return [];
       }
     }
-    return [];
+    return Array.isArray(raw) ? (raw as Citation[]) : [];
   }, [message.citations]);
 
   const formattedTime = useMemo(() => {
