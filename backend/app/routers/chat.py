@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
+def _coerce_citations(value: Any) -> List[Dict[str, Any]]:
+    """Normalize a persisted ``citations`` field to a list.
+
+    Legacy ``chat_messages`` rows stored citations as a JSON *string*
+    (``json.dumps`` before insert) rather than a JSONB array, so PostgREST
+    hands them back as strings. Array-expecting consumers (the chat
+    renderer's ``citations.find``/``.map``) crash on a non-array, so coerce
+    any string (via ``json.loads``) or other non-list value back to a list.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return value if isinstance(value, list) else []
+
+
 async def _gate_workstream_scope(scope: str, scope_id: Optional[str], current_user: dict) -> None:
     """Ownership gate for workstream-scoped chat surfaces.
 
@@ -532,19 +551,11 @@ async def get_chat_conversation(
         )
 
         messages = msg_result.data or []
-        # Legacy rows persisted `citations` as a JSON *string* (json.dumps
-        # before insert) instead of a JSONB array, so PostgREST hands them
-        # back as strings. The chat renderer calls `.find`/`.map` on this
-        # field and crashes the whole panel on a non-array. Coerce every
-        # message's citations back to a list (mirrors the PDF-export path).
+        # Legacy rows persisted `citations` as a JSON string rather than a
+        # JSONB array; coerce so the chat renderer never calls array methods
+        # on a non-array (which blanks the whole panel via the ErrorBoundary).
         for msg in messages:
-            citations = msg.get("citations") or []
-            if isinstance(citations, str):
-                try:
-                    citations = json.loads(citations)
-                except (json.JSONDecodeError, TypeError):
-                    citations = []
-            msg["citations"] = citations if isinstance(citations, list) else []
+            msg["citations"] = _coerce_citations(msg.get("citations"))
         return {"conversation": conversation, "messages": messages}
     except HTTPException:
         raise
@@ -1178,7 +1189,15 @@ async def list_pinned_messages(
             .range(offset, offset + limit - 1)
             .execute()
         )
-        return result.data or []
+        pins = result.data or []
+        # Same legacy string-citations normalization as get_chat_conversation:
+        # the nested message rows come from the same table, so the pinned-
+        # messages UI must not inherit the non-array crash.
+        for pin in pins:
+            msg = pin.get("chat_messages")
+            if isinstance(msg, dict):
+                msg["citations"] = _coerce_citations(msg.get("citations"))
+        return pins
     except Exception as e:
         logger.error(f"Failed to list pins for user {user_id}: {e}")
         raise HTTPException(
@@ -1304,12 +1323,7 @@ async def export_chat_message_pdf(
                 )
 
         # 5. Parse citations
-        citations = message.get("citations") or []
-        if isinstance(citations, str):
-            try:
-                citations = json.loads(citations)
-            except (json.JSONDecodeError, TypeError):
-                citations = []
+        citations = _coerce_citations(message.get("citations"))
 
         # 6. Build metadata
         metadata: Dict[str, Any] = {}
