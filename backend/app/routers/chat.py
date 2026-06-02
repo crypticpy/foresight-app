@@ -532,6 +532,19 @@ async def get_chat_conversation(
         )
 
         messages = msg_result.data or []
+        # Legacy rows persisted `citations` as a JSON *string* (json.dumps
+        # before insert) instead of a JSONB array, so PostgREST hands them
+        # back as strings. The chat renderer calls `.find`/`.map` on this
+        # field and crashes the whole panel on a non-array. Coerce every
+        # message's citations back to a list (mirrors the PDF-export path).
+        for msg in messages:
+            citations = msg.get("citations") or []
+            if isinstance(citations, str):
+                try:
+                    citations = json.loads(citations)
+                except (json.JSONDecodeError, TypeError):
+                    citations = []
+            msg["citations"] = citations if isinstance(citations, list) else []
         return {"conversation": conversation, "messages": messages}
     except HTTPException:
         raise

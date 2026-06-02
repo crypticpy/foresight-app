@@ -53,6 +53,25 @@ export function ChatMessage({
   const [showTimestamp, setShowTimestamp] = useState(false);
   const isUser = message.role === "user";
 
+  // Legacy persisted messages stored `citations` as a JSON *string* rather
+  // than an array; coerce defensively so the markdown parser and the sources
+  // list never call array methods on a non-array (which blanks the whole chat
+  // panel via the ErrorBoundary). Mirrors the backend normalization in
+  // routers/chat.py::get_chat_conversation.
+  const citations = useMemo<Citation[]>(() => {
+    const raw: unknown = message.citations;
+    if (Array.isArray(raw)) return raw as Citation[];
+    if (typeof raw === "string") {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        return Array.isArray(parsed) ? (parsed as Citation[]) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }, [message.citations]);
+
   const formattedTime = useMemo(() => {
     if (!message.created_at) return "";
     try {
@@ -76,8 +95,8 @@ export function ChatMessage({
   }, [message.content]);
 
   const renderedContent = useMemo(
-    () => parseMarkdown(message.content, message.citations, onCitationClick),
-    [message.content, message.citations, onCitationClick],
+    () => parseMarkdown(message.content, citations, onCitationClick),
+    [message.content, citations, onCitationClick],
   );
 
   const toneBorder = useMemo(
@@ -140,13 +159,13 @@ export function ChatMessage({
           )}
         </div>
 
-        {!isUser && message.citations.length > 0 && !isStreaming && (
+        {!isUser && citations.length > 0 && !isStreaming && (
           <div className="mt-2 space-y-1">
             <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 animate-fade-in">
               Sources
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {message.citations.map((citation, index) => (
+              {citations.map((citation, index) => (
                 <div
                   key={`${citation.index}-${citation.card_id || citation.source_id || citation.title}`}
                   className="animate-fade-in"
