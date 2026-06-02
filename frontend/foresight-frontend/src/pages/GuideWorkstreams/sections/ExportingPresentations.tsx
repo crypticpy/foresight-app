@@ -74,12 +74,12 @@ export function ExportingPresentations() {
         </h4>
         <p className="mb-3">
           For comprehensive briefing packages, the Bulk Export feature lets you
-          combine multiple briefs from the Brief column into a single cohesive
+          combine multiple briefs from the Ready column into a single cohesive
           document:
         </p>
         <ol className="list-decimal list-inside space-y-1 mb-4">
           <li>
-            Click the <strong>Bulk Export</strong> button in the Brief column
+            Click the <strong>Bulk Export</strong> button in the Ready column
             header
           </li>
           <li>

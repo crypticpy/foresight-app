@@ -23,7 +23,7 @@ export function ResearchComparisonTable() {
       depth: "Comprehensive",
       bestFor:
         "Full investigation of high-priority signals. Produces detailed research across academic, government, and industry sources.",
-      column: "Research",
+      column: "Working",
       color: "border-blue-500",
     },
     {
@@ -34,8 +34,8 @@ export function ResearchComparisonTable() {
       duration: "30-90 seconds",
       depth: "Surface",
       bestFor:
-        "Rapid triage during screening. Provides a concise snapshot to decide if a signal warrants deeper research.",
-      column: "Screening",
+        "Fast triage of a fresh signal. Provides a concise snapshot to decide if it warrants a deeper Deep Dive.",
+      column: "Working",
       color: "border-yellow-500",
     },
     {
@@ -47,7 +47,7 @@ export function ResearchComparisonTable() {
       depth: "Focused",
       bestFor:
         "Monitoring signals you are watching. Looks for new developments since the last research run.",
-      column: "Watching",
+      column: "Any (watched)",
       color: "border-green-500",
     },
   ];

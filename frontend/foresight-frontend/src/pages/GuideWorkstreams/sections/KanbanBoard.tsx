@@ -1,5 +1,5 @@
 /**
- * Accordion section 3/10 — explains the six-column Kanban board, with the
+ * Accordion section 3/10 — explains the four-column Kanban board, with the
  * interactive column explainer embedded.
  *
  * @module pages/GuideWorkstreams/sections/KanbanBoard
@@ -19,10 +19,12 @@ export function KanbanBoard() {
       </AccordionTrigger>
       <AccordionContent>
         <p className="mb-4">
-          Each workstream has a six-column Kanban board that represents the full
-          lifecycle of a research signal. Cards move from left to right as they
-          progress through investigation, and each column unlocks specific
-          AI-powered actions.
+          Each workstream has a four-column Kanban board -- Inbox, Working,
+          Ready, and Archived -- that tracks a signal from first sighting to a
+          leadership-ready artifact. Cards move left to right as you investigate
+          them. The AI-powered actions live on each card's action menu and the
+          selection toolbar, so they're available wherever a card sits -- not
+          gated behind a particular column.
         </p>
 
         <InteractiveKanban />

@@ -20,8 +20,8 @@ import { cn } from "../../lib/utils";
 export function ExportWorkflowDiagram() {
   const steps = [
     {
-      title: "Cards in Brief Column",
-      subtitle: "Researched & ready",
+      title: "Researched Card",
+      subtitle: "In Working",
       icon: <ClipboardList className="h-5 w-5" />,
       color:
         "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400",
