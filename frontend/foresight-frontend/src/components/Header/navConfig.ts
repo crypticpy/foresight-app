@@ -39,6 +39,7 @@ export const MAIN_NAVIGATION: NavItem[] = [
 ];
 
 export const GUIDE_NAVIGATION: NavItem[] = [
+  { name: "Ask Foresight Guide", href: "/guide/chat", icon: HelpCircle },
   { name: "Signals Guide", href: "/guide/signals", icon: HelpCircle },
   { name: "Discover Guide", href: "/guide/discover", icon: HelpCircle },
   { name: "Workstreams Guide", href: "/guide/workstreams", icon: HelpCircle },

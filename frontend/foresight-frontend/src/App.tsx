@@ -60,6 +60,7 @@ const AdminConsole = lazy(() => import("./pages/AdminConsole"));
 const GuideSignals = lazy(() => import("./pages/GuideSignals"));
 const GuideDiscover = lazy(() => import("./pages/GuideDiscover"));
 const GuideWorkstreams = lazy(() => import("./pages/GuideWorkstreams"));
+const GuideChat = lazy(() => import("./pages/GuideChat"));
 
 function CardRedirect() {
   const { slug } = useParams<{ slug: string }>();
@@ -488,6 +489,15 @@ function App() {
                     element={
                       <ProtectedRoute
                         element={<GuideWorkstreams />}
+                        loadingMessage="Loading guide..."
+                      />
+                    }
+                  />
+                  <Route
+                    path="/guide/chat"
+                    element={
+                      <ProtectedRoute
+                        element={<GuideChat />}
                         loadingMessage="Loading guide..."
                       />
                     }
