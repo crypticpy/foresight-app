@@ -1,6 +1,6 @@
 /**
  * Composer for the Signals guide page. Renders the hero, the always-visible
- * Quick Start row, seven accordion sections, and the footer CTA.
+ * Quick Start row, nine accordion sections, and the footer CTA.
  *
  * The page was previously a 1650 LOC monolith. Per-section state lives in
  * its own component (the source-category expander, the quick-start active
@@ -25,6 +25,8 @@ import { PersonalHub } from "./sections/PersonalHub";
 import { CreatingSignals } from "./sections/CreatingSignals";
 import { SourcePreferences } from "./sections/SourcePreferences";
 import { FilteringOrganizing } from "./sections/FilteringOrganizing";
+import { CommunityTags } from "./sections/CommunityTags";
+import { Discussion } from "./sections/Discussion";
 import { IntegratingWorkflows } from "./sections/IntegratingWorkflows";
 import { TipsBestPractices } from "./sections/TipsBestPractices";
 
@@ -86,6 +88,8 @@ export default function GuideSignals() {
             <CreatingSignals />
             <SourcePreferences />
             <FilteringOrganizing />
+            <CommunityTags />
+            <Discussion />
             <IntegratingWorkflows />
             <TipsBestPractices />
           </Accordion.Root>
