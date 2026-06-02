@@ -251,6 +251,7 @@ export const KanbanCard = memo(function KanbanCard({
 
         {embeddedCard.summary && (
           <p
+            title={embeddedCard.summary}
             className={cn(
               "text-xs text-gray-500 dark:text-gray-400 leading-snug line-clamp-2 mb-2",
               onToggleSelect && "pl-6",
