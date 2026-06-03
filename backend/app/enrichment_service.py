@@ -503,6 +503,12 @@ async def enrich_signal_profiles(
 
                 await refresh_card_embedding(supabase, card_id)
 
+                # Distill + store the 2-sentence blurb so list/preview views
+                # never regenerate it on read.
+                from app.ai_service import generate_and_store_short_description
+
+                await generate_and_store_short_description(supabase, card_id)
+
                 # Create timeline event
                 await asyncio.to_thread(
                     lambda: supabase.table("card_timeline")

@@ -1389,6 +1389,12 @@ Example: ["query 1", "query 2", ...]"""
 
             await refresh_card_embedding(self.supabase, card_id)
 
+            # Distill + store the 2-sentence blurb so list/preview views never
+            # regenerate it on read.
+            from app.ai_service import generate_and_store_short_description
+
+            await generate_and_store_short_description(self.supabase, card_id)
+
             logger.info(
                 f"Workstream scan: profile generated for card {card_id} "
                 f"({len(profile)} chars)"

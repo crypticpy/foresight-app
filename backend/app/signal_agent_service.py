@@ -1997,6 +1997,12 @@ class SignalAgentService:
 
             await refresh_card_embedding(self.supabase, card_id)
 
+            # Distill + store the 2-sentence blurb so list/preview views never
+            # regenerate it on read.
+            from app.ai_service import generate_and_store_short_description
+
+            await generate_and_store_short_description(self.supabase, card_id)
+
             await self._create_timeline_event(
                 card_id=card_id,
                 event_type="profile_generated",

@@ -19,6 +19,7 @@ import openai
 # Azure OpenAI deployment names
 from app.openai_provider import (
     EMBEDDING_DIM,
+    azure_openai_client,
     get_chat_agent_deployment,
     get_chat_mini_deployment,
     get_chat_nano_deployment,
@@ -451,6 +452,19 @@ GUIDELINES:
 - If sources are thin, acknowledge gaps rather than fabricating details
 - Do NOT include a sources section — that is handled separately
 """
+
+
+SHORT_DESCRIPTION_PROMPT = """Write a 2-sentence executive description of the strategic signal below, for a City of Austin horizon-scanning dashboard.
+
+Sentence 1: what the signal is.
+Sentence 2: why it matters to Austin.
+
+Rules: plain prose, no markdown, no bullet points, no preamble or labels, maximum 2 sentences. Be concrete — prefer specifics from the profile over generic phrasing.
+
+Signal name: {name}
+Summary: {summary}
+Profile:
+{description}"""
 
 
 # ============================================================================
@@ -1044,6 +1058,43 @@ Respond with JSON:
 *Profile generation encountered an error. Run deep research or try again later to generate a full profile.*
 """
 
+    async def generate_short_description(
+        self, name: str, summary: str = "", description: str = ""
+    ) -> Optional[str]:
+        """Distill a card into a 2-sentence executive blurb via the mini tier.
+
+        Stored on ``cards.short_description`` so the blurb is generated once and
+        never recomputed on read. Routes through the mini chat tier for cost.
+        Returns None on failure (empty name, LLM error) so callers can skip the
+        write rather than abort the creation flow.
+        """
+        name = (name or "").strip()
+        if not name:
+            return None
+        prompt = SHORT_DESCRIPTION_PROMPT.format(
+            name=name,
+            summary=(summary or "").strip() or "(none)",
+            description=((description or "").strip() or "(none)")[:4000],
+        )
+        try:
+            # Sync client blocks the loop — push to a worker thread (see
+            # generate_signal_profile for the full rationale).
+            response = await asyncio.to_thread(
+                lambda: self.client.chat.completions.create(
+                    model=get_chat_mini_deployment(),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=160,
+                    timeout=REQUEST_TIMEOUT,
+                )
+            )
+            text = (response.choices[0].message.content or "").strip()
+            return text or None
+        except Exception as e:
+            logger.warning(
+                f"Short-description generation failed for '{name[:50]}': {e}"
+            )
+            return None
+
     async def analyze_trend_trajectory(
         self,
         signal_name: str,
@@ -1465,3 +1516,50 @@ Respond as JSON:
         )
 
         return "\n".join(lines)
+
+
+async def generate_and_store_short_description(supabase, card_id: str) -> bool:
+    """Generate a card's 2-sentence ``short_description`` and persist it.
+
+    The single source of truth for "store a card's short blurb" — used by the
+    card-write paths (right after the rich profile is written) and by the
+    one-time backfill. Re-fetches name/summary/description by id so each call
+    site stays a single line, mirroring
+    ``embedding_backfill_service.refresh_card_embedding``.
+
+    Non-fatal: logs a warning and returns False on any failure (missing row,
+    empty name, LLM error) so it can't abort the creation flow.
+    """
+    try:
+        result = await asyncio.to_thread(
+            lambda: supabase.table("cards")
+            .select("name, summary, description")
+            .eq("id", card_id)
+            .single()
+            .execute()
+        )
+        if not result.data:
+            return False
+
+        card = result.data
+        blurb = await AIService(azure_openai_client).generate_short_description(
+            card.get("name") or "",
+            card.get("summary") or "",
+            card.get("description") or "",
+        )
+        if not blurb:
+            return False
+
+        await asyncio.to_thread(
+            lambda: supabase.table("cards")
+            .update({"short_description": blurb})
+            .eq("id", card_id)
+            .execute()
+        )
+        logger.info("Stored short_description for card %s", card_id)
+        return True
+    except Exception as exc:
+        logger.warning(
+            "generate_and_store_short_description failed for %s: %s", card_id, exc
+        )
+        return False
