@@ -1800,7 +1800,13 @@ class SignalAgentService:
             f"Signal agent: Created signal card '{action.signal_name}' -> {card_id}"
         )
 
-        # Store embedding on the card (use centroid of source embeddings)
+        # Store embedding on the card. Prefer the centroid of the linked
+        # source embeddings; when none are usable (the common case — sources
+        # don't always carry their embedding onto the agent's working set),
+        # embed the card's own name + summary so it still gets a real vector
+        # instead of keeping the zero-vector column default, which would drop
+        # it out of pgvector / hybrid search (zero vectors are non-fatal per
+        # _coerce_similarity, but they never match).
         try:
             source_embeddings = [
                 all_sources[idx].embedding
@@ -1808,13 +1814,20 @@ class SignalAgentService:
                 if 0 <= idx < len(all_sources) and all_sources[idx].embedding
             ]
             if source_embeddings:
-                centroid = _compute_centroid(source_embeddings)
-                await asyncio.to_thread(
-                    lambda: self.supabase.table("cards")
-                    .update({"embedding": centroid})
-                    .eq("id", card_id)
-                    .execute()
+                embedding_to_store = _compute_centroid(source_embeddings)
+            else:
+                card_text = f"{action.signal_name} {action.signal_summary or ''}".strip()
+                resp = await azure_openai_async_embedding_client.embeddings.create(
+                    model=get_embedding_deployment(),
+                    input=card_text[:8000],
                 )
+                embedding_to_store = resp.data[0].embedding
+            await asyncio.to_thread(
+                lambda: self.supabase.table("cards")
+                .update({"embedding": embedding_to_store})
+                .eq("id", card_id)
+                .execute()
+            )
         except Exception as e:
             logger.warning(
                 f"Signal agent: Failed to store embedding on card {card_id}: {e}"
