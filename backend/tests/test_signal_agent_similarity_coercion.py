@@ -25,7 +25,7 @@ import asyncio
 import math
 import os
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -158,3 +158,76 @@ def test_prefetch_output_never_crashes_existing_text_format():
     )
     assert "0.77" in text
     assert "NaN" not in text
+
+
+# ---------------------------------------------------------------------------
+# _tool_search_existing_signals — the second fix site
+# ---------------------------------------------------------------------------
+
+
+def _make_service_with_embedding(rpc_rows):
+    """Service whose find_similar_cards RPC returns ``rpc_rows`` and whose
+    embedding client returns a fixed vector (no network)."""
+    supabase = MagicMock()
+    supabase.rpc.return_value.execute.return_value = MagicMock(data=rpc_rows)
+    return svc.SignalAgentService(
+        supabase=supabase,
+        run_id="00000000-0000-0000-0000-000000000000",
+    )
+
+
+def _patch_embedding_client():
+    """Patch the module-level async embedding client to return a fixed vector."""
+    emb_resp = MagicMock()
+    emb_resp.data = [MagicMock(embedding=[0.1] * 1536)]
+    fake = MagicMock()
+    fake.embeddings.create = AsyncMock(return_value=emb_resp)
+    return patch.object(svc, "azure_openai_async_embedding_client", fake)
+
+
+def test_search_tool_drops_nan_matches():
+    """The search_existing_signals tool must drop NaN rows — round("NaN", 3)
+    would otherwise raise (swallowed by the tool's try/except, but it
+    silently degraded the agent's dedup to a 'Search failed' error)."""
+    rows = [
+        {"id": "a", "name": "Real match", "summary": "s", "pillar_id": "PS",
+         "horizon": "H2", "similarity": 0.91},
+        {"id": "b", "name": "Numeric string", "summary": "s2", "pillar_id": "CH",
+         "horizon": "H1", "similarity": "0.80"},
+        {"id": "c", "name": "Zero-vector match", "summary": "z", "pillar_id": "HG",
+         "horizon": "H2", "similarity": "NaN"},
+    ]
+    service = _make_service_with_embedding(rows)
+
+    with _patch_embedding_client():
+        result, action = asyncio.run(
+            service._tool_search_existing_signals({"query": "urban flooding"})
+        )
+
+    assert action is None
+    assert [m["id"] for m in result["matches"]] == ["a", "b"]  # NaN dropped
+    assert result["count"] == 2
+    for m in result["matches"]:
+        assert isinstance(m["similarity"], float)
+        assert math.isfinite(m["similarity"])
+
+
+def test_search_tool_all_nan_returns_zero_matches_without_raising():
+    """All-NaN result (the production scenario): the tool must return an
+    empty match list, not raise and not surface a 'Search failed' error."""
+    rows = [
+        {"id": str(i), "name": f"zero-{i}", "summary": "", "pillar_id": "HG",
+         "horizon": "H2", "similarity": "NaN"}
+        for i in range(9)
+    ]
+    service = _make_service_with_embedding(rows)
+
+    with _patch_embedding_client():
+        result, action = asyncio.run(
+            service._tool_search_existing_signals({"query": "anything"})
+        )
+
+    assert action is None
+    assert result["matches"] == []
+    assert result["count"] == 0
+    assert "error" not in result
