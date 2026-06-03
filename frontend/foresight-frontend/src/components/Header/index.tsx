@@ -70,7 +70,7 @@ const Header: React.FC = () => {
         <div className="flex justify-between items-center h-16">
           <Link
             to="/"
-            className="flex shrink-0 items-center gap-3 hover:opacity-90 transition-opacity"
+            className="flex items-center gap-3 hover:opacity-90 transition-opacity"
           >
             <img
               src="/logo-horizontal.png"
