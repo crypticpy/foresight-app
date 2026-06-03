@@ -21,6 +21,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { GuideFigure } from "@/components/GuideFigure";
 import { QuickStartCard } from "./QuickStartCard";
 import type { QuickStartStep } from "./types";
 import { WhatIsAskForesight } from "./sections/WhatIsAskForesight";
@@ -117,6 +118,13 @@ export default function GuideChat() {
         </div>
 
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+          <GuideFigure
+            src="/guide/ask-foresight-chat.png"
+            alt="The Ask Foresight assistant answering a question about mobility signals, with a structured summary, recommendation, and the conversation history in the left sidebar."
+            caption="Ask Foresight answers in plain English — grounded in your signals, with citations to check and a running conversation history."
+            className="mt-0 mb-12"
+          />
+
           {/* ================================================================ */}
           {/* Quick Start (always visible) */}
           {/* ================================================================ */}
