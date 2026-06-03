@@ -19,9 +19,49 @@ from app.models.card_creation import (
     KeywordSuggestionResponse,
 )
 from app.models.ai_helpers import SuggestDescriptionRequest, SuggestDescriptionResponse
+from app.taxonomy import STAGE_NUMBER_TO_ID, extract_stage_number
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["ai_helpers"])
+
+
+async def _make_unique_slug(name: str, card_id: str) -> str:
+    """Build a unique ``cards.slug`` for a user-created card.
+
+    ``cards.slug`` is UNIQUE NOT NULL with no DB default, so every insert must
+    supply one — the discovery, signal-agent, research and workstream-scan
+    paths all do, but these two user-facing endpoints historically did not,
+    which 500'd every Create-Signal submission. Reuse the canonical slugifier,
+    fall back to the card id for name-less input (e.g. emoji-only topics), and
+    disambiguate collisions with a card-id fragment (guaranteed-unique, unlike
+    the second-resolution timestamp the other paths use).
+    """
+    from app.signal_agent_service import _generate_slug
+
+    base = _generate_slug(name) or card_id
+    existing = await asyncio.to_thread(
+        lambda: supabase.table("cards")
+        .select("id")
+        .eq("slug", base)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return f"{base}-{card_id[:8]}"
+    return base
+
+
+def _resolve_stage_id(stage: str | None) -> str:
+    """Resolve a maturity-stage input to a valid ``stages`` FK id.
+
+    The create-signal form sends a stage *number* ("1".."8"); ``cards.stage_id``
+    is a FK to ``stages`` whose ids are "1_concept".."8_declining". Accept a bare
+    number or a full id (via ``extract_stage_number``); anything missing or
+    out-of-range falls back to Concept — the earliest stage — so a bad value can
+    never 500 on the FK constraint.
+    """
+    stage_number = extract_stage_number(str(stage)) if stage else None
+    return STAGE_NUMBER_TO_ID.get(stage_number, "1_concept")
 
 
 @router.post("/cards/create-from-topic")
@@ -39,7 +79,7 @@ async def create_card_from_topic(
             "origin": "user_created",
             "is_exploratory": not body.pillar_hints,
             "created_by": user["id"],
-            "review_status": "approved",
+            "review_status": "active",
             "signal_quality_score": 0,
             "quality_breakdown": {},
         }
@@ -51,6 +91,8 @@ async def create_card_from_topic(
             card_data["source_preferences"] = body.source_preferences.dict(
                 exclude_none=True
             )
+
+        card_data["slug"] = await _make_unique_slug(body.topic, card_id)
 
         result = await asyncio.to_thread(
             lambda: supabase.table("cards").insert(card_data).execute()
@@ -129,6 +171,8 @@ async def create_manual_card(
         if body.pillar_ids and len(body.pillar_ids) > 0:
             primary_pillar = body.pillar_ids[0]
 
+        stage_id = _resolve_stage_id(body.stage)
+
         card_data = {
             "id": card_id,
             "name": body.name,
@@ -136,11 +180,11 @@ async def create_manual_card(
             "origin": "user_created",
             "is_exploratory": body.is_exploratory or (not primary_pillar),
             "created_by": user["id"],
-            "review_status": "approved",
+            "review_status": "active",
             "signal_quality_score": 0,
             "quality_breakdown": {},
             "horizon": body.horizon or "H1",
-            "stage_id": body.stage or "1",
+            "stage_id": stage_id,
         }
 
         if primary_pillar:
@@ -150,6 +194,8 @@ async def create_manual_card(
             card_data["source_preferences"] = body.source_preferences.dict(
                 exclude_none=True
             )
+
+        card_data["slug"] = await _make_unique_slug(body.name, card_id)
 
         result = await asyncio.to_thread(
             lambda: supabase.table("cards").insert(card_data).execute()
