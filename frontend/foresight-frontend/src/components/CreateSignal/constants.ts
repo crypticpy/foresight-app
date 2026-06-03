@@ -24,13 +24,21 @@ export const HORIZON_OPTIONS = [
   { value: "H3", label: "Long-term (H3)" },
 ] as const;
 
-/** Maturity stage options. */
+/**
+ * Maturity stage options. Values are the canonical stage *numbers* (1-8); the
+ * backend maps them to the matching ``stages`` row id (1_concept..8_declining).
+ * Labels must match the canonical taxonomy order — note stage 4 is "Proof of
+ * Concept", not "Implementing".
+ */
 export const STAGE_OPTIONS = [
   { value: "1", label: "Concept" },
   { value: "2", label: "Exploring" },
   { value: "3", label: "Pilot" },
-  { value: "4", label: "Implementing" },
-  { value: "5", label: "Scaling" },
+  { value: "4", label: "Proof of Concept" },
+  { value: "5", label: "Implementing" },
+  { value: "6", label: "Scaling" },
+  { value: "7", label: "Mature" },
+  { value: "8", label: "Declining" },
 ] as const;
 
 /** Step labels for the wizard indicator. */
