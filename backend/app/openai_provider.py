@@ -13,8 +13,9 @@ Environment Variables:
 - OPENAI_CHAT_NANO_MODEL: High-volume label-only slot — kept as an alias of
   the mini model by default so we don't downgrade quality unintentionally.
   Set this explicitly to gpt-5-nano (or similar) only after sampling outputs.
-- OPENAI_EMBEDDING_MODEL: Embedding model (default: text-embedding-ada-002 — kept
-  for pgvector compatibility with existing 1536-dim card embeddings)
+- OPENAI_EMBEDDING_MODEL: Embedding model (default: text-embedding-3-small — the
+  canonical model for all embeddings; 1536-dim, pgvector-compatible with the
+  existing card/source columns, so no schema change vs. the retired ada-002)
 - OPENAI_BASE_URL (optional): Override base URL for OpenAI-compatible endpoints
 
 Tier guidance:
@@ -65,7 +66,7 @@ DEFAULT_CHAT_MINI_MODEL = "gpt-5.4-mini-2026-03-17"
 # Nano deliberately has no factory default — when OPENAI_CHAT_NANO_MODEL is
 # unset it falls back to the resolved mini model so nano-routed call sites
 # don't quietly drop a generation in quality.
-DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_REASONING_EFFORT = "medium"
 
 # Dimensionality of the embedding vectors produced by DEFAULT_EMBEDDING_MODEL.
@@ -90,8 +91,11 @@ ALLOWED_CHAT_MODELS: tuple[str, ...] = (
     DEFAULT_CHAT_AGENT_MODEL,
     DEFAULT_CHAT_MINI_MODEL,
 )
-# Embeddings are locked to ada-002 because every persisted card embedding
-# is 1536-dim; swapping models requires a full reindex.
+# text-embedding-3-small is the canonical embedding model for the whole
+# corpus. It is 1536-dim like the retired ada-002, so the vector(1536)
+# columns are unchanged — but the two models occupy different latent
+# spaces, so cards/sources must be re-embedded to 3-small (see
+# embedding_backfill_service) rather than left mixed.
 ALLOWED_EMBEDDING_MODELS: tuple[str, ...] = (DEFAULT_EMBEDDING_MODEL,)
 ALLOWED_REASONING_EFFORTS: tuple[str, ...] = ("minimal", "low", "medium", "high")
 
@@ -151,7 +155,7 @@ def get_chat_nano_deployment() -> str:
 
 
 def get_embedding_deployment() -> str:
-    """Embedding model (kept on ada-002 for pgvector compatibility)."""
+    """Embedding model (text-embedding-3-small — canonical for all embeddings)."""
     return _config.model_embedding
 
 

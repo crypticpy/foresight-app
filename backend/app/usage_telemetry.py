@@ -146,6 +146,8 @@ DEFAULT_MODEL_PRICING_PER_MILLION = {
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60, "cached_input": 0.10},
     "gpt-4.1-nano": {"input": 0.10, "output": 0.40, "cached_input": 0.025},
     "gpt-4.1": {"input": 2.00, "output": 8.00, "cached_input": 0.50},
+    "text-embedding-3-small": {"input": 0.02, "output": 0.00, "cached_input": 0.02},
+    "text-embedding-3-large": {"input": 0.13, "output": 0.00, "cached_input": 0.13},
     "text-embedding-ada-002": {"input": 0.10, "output": 0.00, "cached_input": 0.10},
 }
 
