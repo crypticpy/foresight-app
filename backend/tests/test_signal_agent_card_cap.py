@@ -106,7 +106,7 @@ def test_per_pillar_cap_lets_each_pillar_hit_its_own_limit():
     ]
     service = _make_service_with_fake_create([f"card-{i}" for i in range(6)])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # Each pillar exhausted its own cap, not the other's.
     assert len(result["signals_created"]) == 4
@@ -128,7 +128,7 @@ def test_late_pillar_not_starved_by_earlier_pillar():
     actions += [_make_action(pillar="HH", name=f"HH-{i}") for i in range(5)]
     service = _make_service_with_fake_create([f"card-{i}" for i in range(20)])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # All 20 land — EW filled, HH still got its 5.
     assert len(result["signals_created"]) == 20
@@ -141,7 +141,7 @@ def test_per_pillar_cap_skips_only_overflow_in_that_pillar():
     actions += [_make_action(pillar="MC", name="MC-1")]
     service = _make_service_with_fake_create([f"card-{i}" for i in range(3)])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # HH: 5 attempts → 2 created + 3 skipped
     # MC: 1 attempt → 1 created
@@ -161,7 +161,7 @@ def test_global_ceiling_still_binds_when_many_pillars_active():
         actions += [_make_action(pillar=code, name=f"{code}-{i}") for i in range(15)]
     service = _make_service_with_fake_create([f"card-{i}" for i in range(100)])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     assert len(result["signals_created"]) == 30
 
@@ -182,7 +182,7 @@ def test_global_ceiling_logs_distinct_reason(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="app.signal_agent_service"):
-        asyncio.run(service._execute_actions(actions, [], config))
+        asyncio.run(service._execute_actions(actions, config))
 
     messages = [r.getMessage() for r in caplog.records]
     assert any("Global card ceiling (2)" in m for m in messages)
@@ -206,7 +206,7 @@ def test_missing_pillar_id_buckets_under_unknown():
     ]
     service = _make_service_with_fake_create(["card-1", "card-2"])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # orphan-1 lands (first UNKNOWN), orphan-2 skips (UNKNOWN cap=1),
     # HH-1 lands (its own bucket is empty).
@@ -225,7 +225,7 @@ def test_malformed_pillar_id_buckets_under_unknown():
     ]
     service = _make_service_with_fake_create(["card-1", "card-2"])
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # bad-1 lands (first UNKNOWN), bad-2 skips (UNKNOWN cap=1, shared with
     # other malformed codes), HH-1 lands (its own bucket is empty).
@@ -245,7 +245,7 @@ def test_per_pillar_warning_names_the_pillar(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="app.signal_agent_service"):
-        asyncio.run(service._execute_actions(actions, [], config))
+        asyncio.run(service._execute_actions(actions, config))
 
     messages = [r.getMessage() for r in caplog.records]
     assert any("Per-pillar card limit" in m and "HH" in m for m in messages)
@@ -280,7 +280,7 @@ def test_attach_actions_do_not_consume_cap():
         return_value={"sources_stored": 1, "junction_created": 1}
     )
 
-    result = asyncio.run(service._execute_actions(actions, [], config))
+    result = asyncio.run(service._execute_actions(actions, config))
 
     # Create-signal still goes through despite an attach in front of it.
     assert len(result["signals_created"]) == 1

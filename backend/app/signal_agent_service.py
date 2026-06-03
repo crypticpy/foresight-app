@@ -139,6 +139,15 @@ class SignalAction:
     relationship_type: str
     confidence: float
     reasoning: str
+    # The actual ProcessedSource objects this action refers to, captured from
+    # the *batch* the agent saw (where ``source_indices`` are valid) at
+    # tool-call time. Execution MUST use these, never re-resolve
+    # ``source_indices`` against the run-global source list: the agent numbers
+    # sources batch-locally (per pillar), so a batch-local index resolved
+    # against the global list attaches the wrong source — the cross-batch
+    # scramble that mislinked ~360 cards. ``source_indices`` is retained for
+    # telemetry/debugging only.
+    resolved_sources: List[ProcessedSource] = field(default_factory=list)
 
 
 @dataclass
@@ -783,9 +792,7 @@ class SignalAgentService:
                 f"({total_tokens} tokens used across {total_agent_calls} agent calls)"
             )
 
-            execution_result = await self._execute_actions(
-                all_actions, processed_sources, config
-            )
+            execution_result = await self._execute_actions(all_actions, config)
 
             result.signals_created = execution_result.get("signals_created", [])
             result.signals_enriched = execution_result.get("signals_enriched", [])
@@ -1339,9 +1346,17 @@ class SignalAgentService:
         if not source_indices:
             return {"error": "source_indices is required (at least one source)"}, None
 
-        # Validate source indices
+        # Validate source indices. The model may emit them as floats (0.0)
+        # or strings ("0"); coerce to int before range-checking so they index
+        # batch_sources cleanly downstream (a float index raises TypeError on
+        # list subscription, and a str breaks the 0 <= idx comparison itself).
         valid_indices = []
         for idx in source_indices:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                logger.warning(f"Signal agent: non-integer source index {idx!r}")
+                continue
             if 0 <= idx < len(batch_sources):
                 valid_indices.append(idx)
             else:
@@ -1400,6 +1415,9 @@ class SignalAgentService:
             relationship_type=relationship_type,
             confidence=confidence,
             reasoning=reasoning[:500],
+            # Bind to the batch the agent actually saw — indices are
+            # batch-local and only valid against ``batch_sources``.
+            resolved_sources=[batch_sources[i] for i in valid_indices],
         )
 
         source_titles = [
@@ -1433,9 +1451,15 @@ class SignalAgentService:
         if not source_indices:
             return {"error": "source_indices is required"}, None
 
-        # Validate source indices
+        # Validate source indices (coerce floats/strings to int — see
+        # _tool_create_signal for why a bare range-check is insufficient).
         valid_indices = []
         for idx in source_indices:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                logger.warning(f"Signal agent: non-integer source index {idx!r}")
+                continue
             if 0 <= idx < len(batch_sources):
                 valid_indices.append(idx)
 
@@ -1483,6 +1507,9 @@ class SignalAgentService:
             relationship_type=relationship_type,
             confidence=confidence,
             reasoning=reasoning[:500],
+            # Bind to the batch the agent actually saw — indices are
+            # batch-local and only valid against ``batch_sources``.
+            resolved_sources=[batch_sources[i] for i in valid_indices],
         )
 
         return {
@@ -1597,11 +1624,16 @@ class SignalAgentService:
     async def _execute_actions(
         self,
         actions: List[SignalAction],
-        all_sources: List[ProcessedSource],
         config: Any,
     ) -> Dict:
         """
         Persist all accumulated actions to the database.
+
+        Each action carries its own ``resolved_sources`` (the ProcessedSource
+        objects captured from the batch the agent saw). We deliberately do NOT
+        thread the run-global source list in here: source indices are
+        batch-local, so resolving them globally mislinks sources across pillar
+        batches (the bug that mislinked ~360 cards).
 
         For create_signal:
           1. Generate unique slug
@@ -1659,7 +1691,7 @@ class SignalAgentService:
                         continue
 
                     card_id = await self._execute_create_signal(
-                        action, all_sources, auto_approve_threshold
+                        action, auto_approve_threshold
                     )
                     if card_id:
                         signals_created.append(card_id)
@@ -1671,13 +1703,11 @@ class SignalAgentService:
                             auto_approved += 1
 
                         # Count sources and junction entries
-                        sources_linked += len(action.source_indices)
-                        junction_entries += len(action.source_indices)
+                        sources_linked += len(action.resolved_sources)
+                        junction_entries += len(action.resolved_sources)
 
                 elif action.action_type == "attach_to_existing":
-                    attached = await self._execute_attach_to_existing(
-                        action, all_sources
-                    )
+                    attached = await self._execute_attach_to_existing(action)
                     if attached:
                         if action.signal_card_id not in signals_enriched:
                             signals_enriched.append(action.signal_card_id)
@@ -1706,7 +1736,6 @@ class SignalAgentService:
     async def _execute_create_signal(
         self,
         action: SignalAction,
-        all_sources: List[ProcessedSource],
         auto_approve_threshold: float,
     ) -> Optional[str]:
         """
@@ -1741,15 +1770,10 @@ class SignalAgentService:
             pass
 
         # Build discovery_metadata from all source URLs
-        source_urls = []
-        for idx in action.source_indices:
-            if 0 <= idx < len(all_sources):
-                source_urls.append(
-                    {
-                        "url": all_sources[idx].raw.url,
-                        "title": all_sources[idx].raw.title,
-                    }
-                )
+        source_urls = [
+            {"url": src.raw.url, "title": src.raw.title}
+            for src in action.resolved_sources
+        ]
 
         card_data = {
             "name": action.signal_name,
@@ -1809,9 +1833,7 @@ class SignalAgentService:
         # _coerce_similarity, but they never match).
         try:
             source_embeddings = [
-                all_sources[idx].embedding
-                for idx in action.source_indices
-                if 0 <= idx < len(all_sources) and all_sources[idx].embedding
+                src.embedding for src in action.resolved_sources if src.embedding
             ]
             if source_embeddings:
                 embedding_to_store = _compute_centroid(source_embeddings)
@@ -1834,11 +1856,7 @@ class SignalAgentService:
             )
 
         # Store each source and create junction entries
-        for idx in action.source_indices:
-            if idx < 0 or idx >= len(all_sources):
-                continue
-
-            source = all_sources[idx]
+        for source in action.resolved_sources:
             source_id = await self._store_source(source, card_id)
 
             if source_id:
@@ -1858,14 +1876,14 @@ class SignalAgentService:
             card_id=card_id,
             event_type="discovered",
             description=(
-                f"Signal detected by AI agent with {len(action.source_indices)} "
+                f"Signal detected by AI agent with {len(action.resolved_sources)} "
                 f"source(s): {action.reasoning[:200]}"
             ),
         )
 
         # Generate rich signal profile from source analyses
         try:
-            await self._generate_card_profile(card_id, action, all_sources)
+            await self._generate_card_profile(card_id, action)
         except Exception as e:
             logger.warning(f"Signal profile generation failed for {card_id}: {e}")
 
@@ -1909,7 +1927,6 @@ class SignalAgentService:
         self,
         card_id: str,
         action: SignalAction,
-        all_sources: List[ProcessedSource],
     ) -> None:
         """Generate a rich signal profile from source data and store as card description."""
         from app.ai_service import AIService
@@ -1920,10 +1937,7 @@ class SignalAgentService:
 
         # Gather source analyses from the sources attached to this signal
         source_analyses = []
-        for idx in action.source_indices:
-            if idx < 0 or idx >= len(all_sources):
-                continue
-            src = all_sources[idx]
+        for src in action.resolved_sources:
             content = src.raw.content or ""
 
             # Backfill thin content from URL
@@ -2021,7 +2035,6 @@ class SignalAgentService:
     async def _execute_attach_to_existing(
         self,
         action: SignalAction,
-        all_sources: List[ProcessedSource],
     ) -> Optional[Dict]:
         """
         Attach sources to an existing signal card.
@@ -2036,11 +2049,7 @@ class SignalAgentService:
         sources_stored = 0
         junction_created = 0
 
-        for idx in action.source_indices:
-            if idx < 0 or idx >= len(all_sources):
-                continue
-
-            source = all_sources[idx]
+        for source in action.resolved_sources:
             source_id = await self._store_source(source, card_id)
 
             if source_id:
