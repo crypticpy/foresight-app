@@ -55,6 +55,7 @@ const WorkstreamKanban: React.FC = () => {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [discussionOpen, setDiscussionOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -293,6 +294,7 @@ const WorkstreamKanban: React.FC = () => {
           onExport={handleWorkstreamExport}
           workstreamId={id!}
           onOpenChat={() => setChatOpen(true)}
+          onOpenDiscussion={() => setDiscussionOpen(true)}
           onOpenEdit={() => setShowEditModal(true)}
         />
 
@@ -370,6 +372,9 @@ const WorkstreamKanban: React.FC = () => {
           onEditSuccess={handleFormSuccess}
           chatOpen={chatOpen}
           onChatClose={() => setChatOpen(false)}
+          discussionOpen={discussionOpen}
+          onDiscussionClose={() => setDiscussionOpen(false)}
+          canComment={workstreamCapabilities.canComment}
           shareOpen={shareOpen}
           onShareClose={() => setShareOpen(false)}
           membersOpen={membersOpen}
