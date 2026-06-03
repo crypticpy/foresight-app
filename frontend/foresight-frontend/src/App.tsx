@@ -57,6 +57,7 @@ const Feeds = lazy(() => import("./pages/Feeds"));
 const AdminConsole = lazy(() => import("./pages/AdminConsole"));
 
 // Guide pages
+const GuideHub = lazy(() => import("./pages/GuideHub"));
 const GuideSignals = lazy(() => import("./pages/GuideSignals"));
 const GuideDiscover = lazy(() => import("./pages/GuideDiscover"));
 const GuideWorkstreams = lazy(() => import("./pages/GuideWorkstreams"));
@@ -466,6 +467,15 @@ function App() {
                   />
 
                   {/* Guide pages */}
+                  <Route
+                    path="/guide"
+                    element={
+                      <ProtectedRoute
+                        element={<GuideHub />}
+                        loadingMessage="Loading guides..."
+                      />
+                    }
+                  />
                   <Route
                     path="/guide/signals"
                     element={
