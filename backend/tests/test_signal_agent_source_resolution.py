@@ -102,6 +102,25 @@ def test_create_signal_skips_out_of_range_indices():
     assert action.resolved_sources == [batch[0], batch[2]]
 
 
+def test_create_signal_coerces_non_integer_indices():
+    """The model sometimes emits indices as floats (2.0) or strings ("1").
+    Those must be coerced to int — a float index raises TypeError when used
+    to subscript batch_sources, and a str breaks the 0 <= idx range check —
+    while genuine garbage ("abc", None) is dropped, not crashed on."""
+    service = _make_service()
+    batch = _batch("A", 4)
+
+    _, action = service._tool_create_signal(
+        {"signal_name": "Signal", "source_indices": [1.0, "2", "abc", None, 3]},
+        batch,
+    )
+
+    assert action.source_indices == [1, 2, 3]
+    assert action.resolved_sources == [batch[1], batch[2], batch[3]]
+    # The captured objects must be real batch members (no TypeError, no float keys).
+    assert all(s in batch for s in action.resolved_sources)
+
+
 # ---------------------------------------------------------------------------
 # attach_source_to_signal
 # ---------------------------------------------------------------------------

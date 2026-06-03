@@ -1346,9 +1346,17 @@ class SignalAgentService:
         if not source_indices:
             return {"error": "source_indices is required (at least one source)"}, None
 
-        # Validate source indices
+        # Validate source indices. The model may emit them as floats (0.0)
+        # or strings ("0"); coerce to int before range-checking so they index
+        # batch_sources cleanly downstream (a float index raises TypeError on
+        # list subscription, and a str breaks the 0 <= idx comparison itself).
         valid_indices = []
         for idx in source_indices:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                logger.warning(f"Signal agent: non-integer source index {idx!r}")
+                continue
             if 0 <= idx < len(batch_sources):
                 valid_indices.append(idx)
             else:
@@ -1443,9 +1451,15 @@ class SignalAgentService:
         if not source_indices:
             return {"error": "source_indices is required"}, None
 
-        # Validate source indices
+        # Validate source indices (coerce floats/strings to int — see
+        # _tool_create_signal for why a bare range-check is insufficient).
         valid_indices = []
         for idx in source_indices:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                logger.warning(f"Signal agent: non-integer source index {idx!r}")
+                continue
             if 0 <= idx < len(batch_sources):
                 valid_indices.append(idx)
 
