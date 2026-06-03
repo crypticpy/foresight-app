@@ -24,6 +24,7 @@ import {
   Search,
   Star,
 } from "lucide-react";
+import { GuideFigure } from "@/components/GuideFigure";
 import { QuickStartCard } from "./QuickStartCard";
 import { Library } from "./sections/Library";
 import { SearchAndAI } from "./sections/SearchAndAI";
@@ -116,6 +117,14 @@ export default function GuideDiscover() {
         </div>
 
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+          <GuideFigure
+            src="/guide/discover-feed.png"
+            alt="The Discover page showing the search and filter panel above a grid of AI-curated signal cards across Austin's strategic pillars."
+            caption="The Discover feed — AI-curated signals you can search semantically, filter by pillar and score, and follow to build your watchlist."
+            className="mt-0 mb-14"
+            eager
+          />
+
           {/* Quick Start */}
           <section className="mb-14">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">

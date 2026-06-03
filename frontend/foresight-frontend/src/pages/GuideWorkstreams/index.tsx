@@ -23,6 +23,7 @@ import {
   Star,
 } from "lucide-react";
 
+import { GuideFigure } from "@/components/GuideFigure";
 import { QuickStartCard } from "./QuickStartCard";
 import type { QuickStartStep } from "./types";
 import { WhatAreWorkstreams } from "./sections/WhatAreWorkstreams";
@@ -121,6 +122,14 @@ export default function GuideWorkstreams() {
         </div>
 
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+          <GuideFigure
+            src="/guide/workstreams-kanban-board.png"
+            alt="A workstream Kanban board with four columns — Inbox, Working, Ready, and Archived — holding signal cards, with a brief-backed card in the Ready column."
+            caption="A workstream's Kanban board — signals flow from Inbox to Working, Ready, and Archived as you research them and prepare deliverables."
+            className="mt-0 mb-12"
+            eager
+          />
+
           {/* ================================================================ */}
           {/* Quick Start (always visible) */}
           {/* ================================================================ */}

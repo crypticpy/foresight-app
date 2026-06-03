@@ -19,6 +19,7 @@ import {
   FolderOpen,
   Radio,
 } from "lucide-react";
+import { GuideFigure } from "@/components/GuideFigure";
 import { QuickStart } from "./QuickStart";
 import { WhatAreSignals } from "./sections/WhatAreSignals";
 import { PersonalHub } from "./sections/PersonalHub";
@@ -76,6 +77,14 @@ export default function GuideSignals() {
         </div>
 
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+          <GuideFigure
+            src="/guide/signal-detail-overview.png"
+            alt="A signal's detail page showing the title, summary, action buttons, the Overview tab, and a multi-factor score panel with Impact, Relevance, Velocity, Novelty, and Opportunity ratings."
+            caption="A signal's detail page — the summary, multi-factor scores, and every action you can take, from Deep Research to adding it to a workstream."
+            className="mt-0 mb-12"
+            eager
+          />
+
           <QuickStart />
 
           <Accordion.Root

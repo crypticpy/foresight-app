@@ -9,6 +9,7 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { MessageCircle } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
+import { GuideFigure } from "@/components/GuideFigure";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 
 export function Discussion() {
@@ -24,6 +25,12 @@ export function Discussion() {
           right next to the intelligence instead of scattering them across
           emails and chats.
         </p>
+
+        <GuideFigure
+          src="/guide/signal-discussion-thread.png"
+          alt="The Discussion tab open on a signal, showing the comment composer with a Comment button and an invitation to start the first discussion."
+          caption="The Discussion tab on a signal — post a comment, reply one level deep, or add a quick reaction."
+        />
 
         <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">
           How it works

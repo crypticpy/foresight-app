@@ -8,6 +8,7 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { Radio } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
+import { GuideFigure } from "@/components/GuideFigure";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 import { SqiBar } from "../SqiBar";
 
@@ -117,6 +118,12 @@ export function WhatAreSignals() {
           <SqiBar score={55} label="Moderate" />
           <SqiBar score={25} label="Needs review" />
         </div>
+
+        <GuideFigure
+          src="/guide/signal-scoring-detail.png"
+          alt="A signal detail page scrolled to show the maturity meter, the activity panel listing sources and timeline events, and the key developments section."
+          caption="On a live signal, the maturity meter and activity trail update as new sources, research, and timeline events come in."
+        />
 
         <ProTip>
           Use the quality score filter on the Signals page to focus on
