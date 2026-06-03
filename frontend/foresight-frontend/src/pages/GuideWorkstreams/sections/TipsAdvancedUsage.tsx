@@ -126,7 +126,7 @@ export function TipsAdvancedUsage() {
           </ol>
         </div>
 
-        <ProTip title="Advanced Pattern: Research Sprints">
+        <ProTip title="Advanced Pattern: Research Sprints" defaultOpen>
           For time-sensitive topics, create a dedicated workstream and
           batch-process signals in a single session. Accept 5-10 signals from
           Inbox into Working, run Quick Updates on all of them, then run Deep

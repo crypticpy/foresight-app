@@ -25,6 +25,7 @@ import {
   Star,
 } from "lucide-react";
 import { GuideFigure } from "@/components/GuideFigure";
+import { useGuideAccordionHash } from "@/hooks/useGuideAccordionHash";
 import { QuickStartCard } from "./QuickStartCard";
 import { Library } from "./sections/Library";
 import { SearchAndAI } from "./sections/SearchAndAI";
@@ -71,8 +72,24 @@ const QUICK_START_STEPS = [
   },
 ];
 
+// Accordion section values in render order. The first is open on load; any
+// of these may be deep-linked via `/guide/discover#<value>`.
+const ACCORDION_SECTIONS = [
+  "library",
+  "search",
+  "filtering",
+  "working",
+  "saved",
+  "pipeline",
+  "scores",
+  "review",
+  "workflow",
+];
+
 export default function GuideDiscover() {
   const [activeStep, setActiveStep] = useState(0);
+  const [openSections, setOpenSections] =
+    useGuideAccordionHash(ACCORDION_SECTIONS);
 
   return (
     <>
@@ -120,7 +137,7 @@ export default function GuideDiscover() {
           <GuideFigure
             src="/guide/discover-feed.png"
             alt="The Discover page showing the search and filter panel above a grid of AI-curated signal cards across Austin's strategic pillars."
-            caption="The Discover feed — AI-curated signals you can search semantically, filter by pillar and score, and follow to build your watchlist."
+            caption="The Discover feed — AI-curated signals you can search by meaning, filter by pillar and score, and follow to build your watchlist."
             className="mt-0 mb-14"
             eager
           />
@@ -153,7 +170,8 @@ export default function GuideDiscover() {
           {/* Accordion Sections */}
           <Accordion.Root
             type="multiple"
-            defaultValue={[]}
+            value={openSections}
+            onValueChange={setOpenSections}
             className="divide-y divide-gray-200 dark:divide-gray-700 border-t border-b border-gray-200 dark:border-gray-700"
           >
             <Library />

@@ -17,6 +17,7 @@ import {
   Check,
   Eye,
   EyeOff,
+  GripHorizontal,
   StickyNote,
 } from "lucide-react";
 
@@ -80,6 +81,7 @@ export const KanbanCard = memo(function KanbanCard({
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -160,7 +162,11 @@ export const KanbanCard = memo(function KanbanCard({
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
+      // `listeners` (pointer/touch activation) stays on the whole card so it
+      // remains draggable by mouse or touch from anywhere. We intentionally do
+      // NOT spread `attributes` here — that would make the card root a second
+      // focusable role="button" nested around the content button below (a WCAG
+      // 4.1.2 violation). Keyboard drag is wired to the dedicated grip handle.
       {...listeners}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -228,6 +234,40 @@ export const KanbanCard = memo(function KanbanCard({
           />
         )}
       </div>
+
+      {/* Dedicated drag handle — the keyboard-accessible activator. Mouse and
+          touch users can still drag the whole card (listeners on the root); the
+          handle gives keyboard users a focusable target that lifts the card on
+          space/enter, moves it with the arrow keys, and cancels on escape.
+          `setActivatorNodeRef` + dnd-kit's `attributes` provide the correct
+          ARIA (role, describedby, roledescription) for assistive tech. */}
+      {!isDragOverlay && !readOnly && (
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          // Only the keyboard activator goes on the handle. Spreading the full
+          // `listeners` would also bind pointer activation here, double-firing
+          // against the root's pointer drag. dnd-kit types these as `Function`.
+          onKeyDown={
+            listeners?.onKeyDown as
+              | React.KeyboardEventHandler<HTMLButtonElement>
+              | undefined
+          }
+          aria-label={`Reorder "${embeddedCard.name}". Press space or enter to pick it up, then use the arrow keys to move it between columns.`}
+          className={cn(
+            "absolute top-1 left-1/2 -translate-x-1/2 z-20",
+            "flex h-5 w-8 items-center justify-center rounded",
+            "text-gray-400 dark:text-gray-500",
+            "cursor-grab active:cursor-grabbing touch-none",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            "hover:bg-gray-100 dark:hover:bg-dark-surface-elevated",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue",
+          )}
+        >
+          <GripHorizontal className="h-4 w-4" />
+        </button>
+      )}
 
       <div
         data-kanban-card={card.id}

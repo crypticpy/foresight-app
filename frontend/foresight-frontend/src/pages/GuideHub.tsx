@@ -20,6 +20,7 @@ import {
   Sparkles,
   Wand2,
 } from "lucide-react";
+import { GuideGlossary } from "@/components/GuideGlossary";
 
 interface GuideLink {
   name: string;
@@ -29,13 +30,15 @@ interface GuideLink {
   accent: string;
 }
 
+// Ordered to mirror the product funnel: discover signals, organize the ones
+// you follow, research them in a workstream, then ask questions across it all.
 const HOW_TO_GUIDES: GuideLink[] = [
   {
-    name: "Ask Foresight",
-    href: "/guide/chat",
-    icon: Sparkles,
+    name: "Discover",
+    href: "/guide/discover",
+    icon: Compass,
     description:
-      "Ask questions in plain English and get cited answers drawn from your intelligence library.",
+      "Browse and triage AI-curated signals across Austin's strategic pillars.",
     accent: "text-brand-blue dark:text-brand-light-blue",
   },
   {
@@ -47,20 +50,20 @@ const HOW_TO_GUIDES: GuideLink[] = [
     accent: "text-brand-green",
   },
   {
-    name: "Discover",
-    href: "/guide/discover",
-    icon: Compass,
-    description:
-      "Browse and triage AI-curated signals across Austin's strategic pillars.",
-    accent: "text-brand-blue dark:text-brand-light-blue",
-  },
-  {
     name: "Workstreams",
     href: "/guide/workstreams",
     icon: FolderOpen,
     description:
       "Run deep research, manage the Kanban board, and build leadership-ready briefs.",
     accent: "text-brand-green",
+  },
+  {
+    name: "Ask Foresight",
+    href: "/guide/chat",
+    icon: Sparkles,
+    description:
+      "Ask questions in plain English and get cited answers drawn from your intelligence library.",
+    accent: "text-brand-blue dark:text-brand-light-blue",
   },
 ];
 
@@ -131,8 +134,9 @@ export default function GuideHub() {
           </div>
           <p className="text-white/80 text-lg max-w-2xl leading-relaxed">
             Everything you need to get the most out of Foresight. New here?
-            Start with Ask Foresight, then explore Signals and Workstreams at
-            your own pace.
+            Start with Discover to find signals, organize the ones you follow in
+            Signals, dig in with Workstreams &mdash; and ask Foresight anything
+            along the way.
           </p>
         </div>
       </div>
@@ -165,6 +169,8 @@ export default function GuideHub() {
             ))}
           </div>
         </section>
+
+        <GuideGlossary />
 
         <p className="mt-12 text-sm text-gray-400 dark:text-gray-500 text-center">
           Still stuck? Reach out to the Foresight team &mdash; we're happy to

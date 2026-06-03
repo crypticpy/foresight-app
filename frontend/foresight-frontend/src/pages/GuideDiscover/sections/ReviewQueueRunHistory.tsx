@@ -86,7 +86,7 @@ export function ReviewQueueRunHistory() {
           <li>Any errors or warnings encountered</li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Check Run History when coverage feels sparse for a topic. If recent
           runs show high deduplication rates, the topic may already be
           well-covered. If they show errors for certain source categories, it

@@ -98,7 +98,7 @@ export function PopulatingWorkstream() {
           </div>
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           The best approach is to combine all three methods. Start with
           Auto-Populate for breadth, run a Workstream Scan for fresh content,
           and manually add any specific signals you find during your regular

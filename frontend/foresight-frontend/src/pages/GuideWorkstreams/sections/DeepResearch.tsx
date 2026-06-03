@@ -99,7 +99,7 @@ export function DeepResearch() {
           ))}
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           You do not need to wait on the research page. The research runs in the
           background. Navigate away and come back later -- the board will show
           updated status indicators when you return.

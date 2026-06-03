@@ -127,7 +127,7 @@ export function Library() {
           </li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Use the quick filter chips at the top of Discover to rapidly scope
           your view. "New This Week" shows signals discovered in the last 7
           days, while "Updated This Week" catches recently re-scored or enriched

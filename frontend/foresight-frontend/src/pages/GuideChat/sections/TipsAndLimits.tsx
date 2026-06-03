@@ -46,7 +46,7 @@ export function TipsAndLimits() {
           </li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Paste a dense or jargon-heavy paragraph from a signal and ask "explain
           this in plain English." It's one of the fastest ways to make a
           technical signal accessible to the whole team.

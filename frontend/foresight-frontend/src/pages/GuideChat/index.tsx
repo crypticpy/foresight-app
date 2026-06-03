@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { GuideFigure } from "@/components/GuideFigure";
+import { useGuideAccordionHash } from "@/hooks/useGuideAccordionHash";
 import { QuickStartCard } from "./QuickStartCard";
 import type { QuickStartStep } from "./types";
 import { WhatIsAskForesight } from "./sections/WhatIsAskForesight";
@@ -68,7 +69,23 @@ const QUICK_START_STEPS: QuickStartStep[] = [
   },
 ];
 
+// Accordion section values in render order. The first is open on load; any
+// of these may be deep-linked via `/guide/chat#<value>`.
+const ACCORDION_SECTIONS = [
+  "what",
+  "where",
+  "scope",
+  "questions",
+  "answers",
+  "conversations",
+  "features",
+  "tips",
+];
+
 export default function GuideChat() {
+  const [openSections, setOpenSections] =
+    useGuideAccordionHash(ACCORDION_SECTIONS);
+
   return (
     <>
       {/* Print styles */}
@@ -130,7 +147,7 @@ export default function GuideChat() {
           {/* Quick Start (always visible) */}
           {/* ================================================================ */}
           <section className="mb-12">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
               Quick Start
             </h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
@@ -148,7 +165,8 @@ export default function GuideChat() {
           {/* ================================================================ */}
           <Accordion.Root
             type="multiple"
-            defaultValue={[]}
+            value={openSections}
+            onValueChange={setOpenSections}
             className="divide-y divide-gray-200 dark:divide-gray-700 border-t border-b border-gray-200 dark:border-gray-700"
           >
             <WhatIsAskForesight />
