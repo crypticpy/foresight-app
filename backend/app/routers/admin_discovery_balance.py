@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -89,18 +90,39 @@ BALANCE_PRIORITY_GOAL_CODES = frozenset(
 # Subtracted from a priority goal's drift score (lower = more starved = picked
 # first). The 0.35 default lifts a goal at ~-0.45 drift to ~-0.80, reliably
 # landing it in the top picks without always forcing it ahead of a goal that
-# has zero recent cards. A malformed env value falls back to the default rather
-# than crashing balancer dispatch.
-try:
-    BALANCE_PRIORITY_DRIFT_BONUS = float(
-        os.getenv("BALANCE_PRIORITY_DRIFT_BONUS", "0.35")
-    )
-except ValueError:
-    logger.warning(
-        "Invalid BALANCE_PRIORITY_DRIFT_BONUS=%r; falling back to 0.35",
-        os.getenv("BALANCE_PRIORITY_DRIFT_BONUS"),
-    )
-    BALANCE_PRIORITY_DRIFT_BONUS = 0.35
+# has zero recent cards. A malformed, non-finite, or negative env value falls
+# back to the default rather than crashing balancer dispatch or inverting the
+# boost.
+def _parse_priority_drift_bonus() -> float:
+    """Read ``BALANCE_PRIORITY_DRIFT_BONUS`` as a finite, non-negative float.
+
+    Two traps make a bare ``float()`` unsafe here:
+
+    * ``float("nan")`` / ``float("inf")`` do **not** raise ``ValueError`` — they
+      yield non-finite floats that would poison the drift sort.
+    * A *negative* value is a valid float but inverts the feature: the bonus is
+      *subtracted* from drift, so a negative bonus would push priority goals
+      *down* the starvation ranking (demote, not promote).
+
+    Reject all three (parse error, non-finite, negative) and fall back to the
+    0.35 default with a warning.
+    """
+    raw = os.getenv("BALANCE_PRIORITY_DRIFT_BONUS", "0.35")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not math.isfinite(value) or value < 0.0:
+        logger.warning(
+            "Invalid BALANCE_PRIORITY_DRIFT_BONUS=%r (need a finite, "
+            "non-negative float); falling back to 0.35",
+            raw,
+        )
+        return 0.35
+    return value
+
+
+BALANCE_PRIORITY_DRIFT_BONUS = _parse_priority_drift_bonus()
 
 
 class BalanceDispatchRequest(BaseModel):
@@ -144,9 +166,12 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
 
     Goals whose code is in ``BALANCE_PRIORITY_GOAL_CODES`` (default: the
     climate goal CH.3) receive a ``BALANCE_PRIORITY_DRIFT_BONUS`` reduction to
-    their drift score so they surface in the starved set whenever they are
-    even mildly under-fed — this is the lever that keeps climate coverage from
-    quietly decaying because climate sits mid-pack in the raw drift ranking.
+    their drift score **when they are themselves under-fed** (drift < 0), so
+    they surface in the starved set whenever they are even mildly under-fed —
+    this is the lever that keeps climate coverage from quietly decaying because
+    climate sits mid-pack in the raw drift ranking. A priority goal already at
+    or above its expected share is left unboosted, so the bonus can never push
+    an over-fed climate goal ahead of a goal that is genuinely starved.
     """
     since_dt = datetime.now(timezone.utc) - timedelta(days=window_days)
 
@@ -192,9 +217,15 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
         drift_score = (count - expected) / max(expected, 1.0)
         goal = goal_index[gid]
         code = (goal.get("code") or "").strip().upper()
-        if code in BALANCE_PRIORITY_GOAL_CODES and BALANCE_PRIORITY_DRIFT_BONUS:
-            # Lower drift = more starved = sorts earlier. Subtracting nudges
-            # the priority goal up without pinning it ahead of a truly empty one.
+        if (
+            code in BALANCE_PRIORITY_GOAL_CODES
+            and BALANCE_PRIORITY_DRIFT_BONUS
+            and drift_score < 0.0
+        ):
+            # Lower drift = more starved = sorts earlier. Only boost a priority
+            # goal that is *itself* under-fed (drift < 0); boosting one already
+            # at or above its expected share would let it crowd a genuinely
+            # starved goal out of the capped pick set.
             drift_score -= BALANCE_PRIORITY_DRIFT_BONUS
             boosted.append(code)
         scored.append((drift_score, goal))

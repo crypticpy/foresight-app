@@ -1440,23 +1440,18 @@ def _cards_for(code: str, n: int) -> List[Dict[str, Any]]:
     ]
 
 
-def _run_auto_pick(monkeypatch, *, priority_codes, bonus):
-    """Build a fixed 6-goal corpus and run _auto_pick_starved_goals.
+def _run_auto_pick(monkeypatch, *, counts, priority_codes, bonus):
+    """Build a corpus from ``{code: n_active_cards}`` and run the auto-picker.
 
-    Raw 30d drift (expected=1.0): CH.1=CH.2=-1.0, MC.1=MC.2=0.0,
-    EW.1=CH.3=+1.0. Without a boost CH.3 ties EW.1 for last and falls outside
-    the top-5; a boost on CH.3 must promote it into the top-5 (displacing the
-    later-inserted EW.1).
+    Returns the picked goal codes (capped at ``BALANCE_MAX_GOALS``). Dict order
+    is preserved into the goal list, so tie-breaks are deterministic.
     """
     from app.routers import admin_discovery_balance as bal
 
-    goals = [_goal(c) for c in ("CH.1", "CH.2", "MC.1", "MC.2", "EW.1", "CH.3")]
-    cards = (
-        _cards_for("MC.1", 1)
-        + _cards_for("MC.2", 1)
-        + _cards_for("EW.1", 2)
-        + _cards_for("CH.3", 2)
-    )
+    goals = [_goal(code) for code in counts]
+    cards: List[Dict[str, Any]] = []
+    for code, n in counts.items():
+        cards += _cards_for(code, n)
     mock_sb = _MockSupabase({"csp_goals": goals, "cards": cards})
     _patch_supabase(monkeypatch, mock_sb)
     monkeypatch.setattr(
@@ -1467,22 +1462,111 @@ def _run_auto_pick(monkeypatch, *, priority_codes, bonus):
     return [g["code"] for g in picked]
 
 
-def test_auto_pick_priority_boost_promotes_climate_goal(monkeypatch):
-    # No boost: CH.3 ties EW.1 for last and is squeezed out of the top-5.
-    no_boost = _run_auto_pick(monkeypatch, priority_codes=set(), bonus=0.0)
-    assert "CH.3" not in no_boost
-    assert "EW.1" in no_boost
+# CH.3 is *under-fed* (2 cards vs expected 2.25 → drift ≈ -0.11). Without a
+# boost it sits 6th (just outside the top-5); the two big over-fed goals pull
+# ``expected`` above 2 so CH.3 reads as starved. A boost must lift it past a
+# mildly-starved goal (drift ≈ -0.56) into the top-5, but never past the three
+# genuinely empty goals (drift -1.0).
+_UNDERFED_CORPUS = {
+    "MC.1": 0,
+    "MC.2": 0,
+    "PS.1": 0,  # 3 empties → drift -1.0, always picked
+    "HH.1": 1,
+    "HH.2": 1,  # 2 mild → drift ≈ -0.56
+    "CH.3": 2,  # under-fed climate → drift ≈ -0.11
+    "EW.1": 7,
+    "HG.1": 7,  # over-fed → raise expected to 2.25
+}
 
-    # With the boost: CH.3 is promoted into the top-5, displacing EW.1.
-    with_boost = _run_auto_pick(monkeypatch, priority_codes={"CH.3"}, bonus=0.5)
+# CH.3 is *over-fed* (4 cards vs expected ≈ 0.71 → drift > 0). The gate must
+# leave it unboosted so it can't displace a genuinely starved (empty) goal.
+_OVERFED_CORPUS = {
+    "MC.1": 0,
+    "MC.2": 0,
+    "PS.1": 0,
+    "PS.2": 0,
+    "HH.1": 0,  # 5 empties → fill the whole top-5
+    "CH.3": 4,  # over-fed climate → drift > 0
+    "EW.1": 1,
+}
+
+
+def test_auto_pick_priority_boost_promotes_underfed_climate_goal(monkeypatch):
+    # No boost: under-fed CH.3 is 6th and squeezed out of the top-5.
+    no_boost = _run_auto_pick(
+        monkeypatch, counts=_UNDERFED_CORPUS, priority_codes=set(), bonus=0.0
+    )
+    assert "CH.3" not in no_boost
+    assert {"MC.1", "MC.2", "PS.1"}.issubset(no_boost)  # empties always picked
+    assert len(no_boost) == 5
+
+    # With the boost: CH.3 is promoted into the top-5 (displacing a mildly
+    # starved goal), while the three genuinely empty goals stay ahead of it.
+    with_boost = _run_auto_pick(
+        monkeypatch, counts=_UNDERFED_CORPUS, priority_codes={"CH.3"}, bonus=0.5
+    )
     assert "CH.3" in with_boost
-    assert "EW.1" not in with_boost
+    assert {"MC.1", "MC.2", "PS.1"}.issubset(with_boost)
+    assert len(with_boost) == 5
+
+
+def test_auto_pick_priority_boost_skips_overfed_priority_goal(monkeypatch):
+    # CH.3 is above its expected share. The bonus must NOT promote it, so the
+    # picked set is byte-for-byte identical with and without the bonus — an
+    # over-fed climate goal can't crowd out a genuinely starved one.
+    no_boost = _run_auto_pick(
+        monkeypatch, counts=_OVERFED_CORPUS, priority_codes=set(), bonus=0.0
+    )
+    with_boost = _run_auto_pick(
+        monkeypatch, counts=_OVERFED_CORPUS, priority_codes={"CH.3"}, bonus=0.5
+    )
+    assert "CH.3" not in no_boost
+    assert "CH.3" not in with_boost
+    assert no_boost == with_boost
 
 
 def test_auto_pick_priority_boost_only_affects_listed_codes(monkeypatch):
-    # Boost EW.1 (already in the top-5) and confirm CH.3 — not listed here —
-    # stays at its raw rank and remains squeezed out. Proves the bonus is
-    # scoped to listed codes, not applied corpus-wide.
-    picked = _run_auto_pick(monkeypatch, priority_codes={"EW.1"}, bonus=0.5)
-    assert "EW.1" in picked
+    # Boost HH.1 (a mildly-starved goal already in the top-5) and confirm CH.3 —
+    # not listed here — stays at its raw rank and remains squeezed out. Proves
+    # the bonus is scoped to listed codes, not applied corpus-wide.
+    picked = _run_auto_pick(
+        monkeypatch, counts=_UNDERFED_CORPUS, priority_codes={"HH.1"}, bonus=0.5
+    )
+    assert "HH.1" in picked
     assert "CH.3" not in picked
+
+
+@pytest.mark.parametrize("raw", ["0.5", "0", "1.25"])
+def test_parse_priority_drift_bonus_accepts_finite_nonnegative(monkeypatch, raw):
+    from app.routers import admin_discovery_balance as bal
+
+    monkeypatch.setenv("BALANCE_PRIORITY_DRIFT_BONUS", raw)
+    assert bal._parse_priority_drift_bonus() == float(raw)
+
+
+def test_parse_priority_drift_bonus_defaults_when_unset(monkeypatch):
+    from app.routers import admin_discovery_balance as bal
+
+    monkeypatch.delenv("BALANCE_PRIORITY_DRIFT_BONUS", raising=False)
+    assert bal._parse_priority_drift_bonus() == 0.35
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "-0.35",  # negative would *demote* priority goals (Greptile P1)
+        "-1",
+        "nan",  # float() parses these without ValueError (CodeRabbit)
+        "NaN",
+        "inf",
+        "-inf",
+        "Infinity",
+        "abc",  # genuine parse error
+        "",
+    ],
+)
+def test_parse_priority_drift_bonus_rejects_bad_values(monkeypatch, raw):
+    from app.routers import admin_discovery_balance as bal
+
+    monkeypatch.setenv("BALANCE_PRIORITY_DRIFT_BONUS", raw)
+    assert bal._parse_priority_drift_bonus() == 0.35
