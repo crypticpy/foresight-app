@@ -1074,7 +1074,9 @@ Respond with JSON:
         prompt = SHORT_DESCRIPTION_PROMPT.format(
             name=name,
             summary=(summary or "").strip() or "(none)",
-            description=((description or "").strip() or "(none)")[:4000],
+            # Profiles run 500-800 words (~6000 chars); cap matches that ceiling
+            # so the tail (often the most signal-specific section) isn't dropped.
+            description=((description or "").strip() or "(none)")[:6000],
         )
         try:
             # Sync client blocks the loop — push to a worker thread (see
