@@ -25,20 +25,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["ai_helpers"])
 
 
-async def _make_unique_slug(name: str, card_id: str) -> str:
-    """Build a unique ``cards.slug`` for a user-created card.
-
-    ``cards.slug`` is UNIQUE NOT NULL with no DB default, so every insert must
-    supply one — the discovery, signal-agent, research and workstream-scan
-    paths all do, but these two user-facing endpoints historically did not,
-    which 500'd every Create-Signal submission. Reuse the canonical slugifier,
-    fall back to the card id for name-less input (e.g. emoji-only topics), and
-    disambiguate collisions with a card-id fragment (guaranteed-unique, unlike
-    the second-resolution timestamp the other paths use).
-    """
+def _slugify(name: str, card_id: str) -> str:
+    """Canonical base slug for a user card; falls back to the card id for
+    name-less input (e.g. emoji-only topics) so the value is never empty."""
     from app.signal_agent_service import _generate_slug
 
-    base = _generate_slug(name) or card_id
+    return _generate_slug(name) or card_id
+
+
+async def _make_unique_slug(name: str, card_id: str) -> str:
+    """Pick a readable, probably-unique ``cards.slug`` for a user-created card.
+
+    ``cards.slug`` is UNIQUE NOT NULL with no DB default, so every insert must
+    supply one — the discovery, signal-agent, research and workstream-scan paths
+    all do, but these two user-facing endpoints historically did not, which
+    500'd every Create-Signal submission. This pre-check produces a clean slug in
+    the common case and disambiguates a known collision with a card-id fragment.
+
+    It is intentionally *best-effort*: the read-then-write has a TOCTOU window, so
+    the UNIQUE constraint — enforced by ``_insert_card_with_unique_slug`` — is the
+    actual guarantee, not this function.
+    """
+    base = _slugify(name, card_id)
     existing = await asyncio.to_thread(
         lambda: supabase.table("cards")
         .select("id")
@@ -49,6 +57,43 @@ async def _make_unique_slug(name: str, card_id: str) -> str:
     if existing.data:
         return f"{base}-{card_id[:8]}"
     return base
+
+
+def _is_unique_violation(e: Exception) -> bool:
+    """True if a Supabase insert failed on a UNIQUE constraint (Postgres 23505)."""
+    if getattr(e, "code", None) == "23505":
+        return True
+    msg = str(e)
+    return "23505" in msg or "duplicate key value" in msg
+
+
+async def _insert_card_with_unique_slug(card_data: dict, name: str):
+    """Insert a card row, guaranteeing a unique ``slug`` even under concurrency.
+
+    ``_make_unique_slug`` chooses a readable slug, but its read-then-write can't
+    prevent two concurrent Create-Signal calls for the same new name from both
+    passing the existence check and then colliding on the UNIQUE constraint. The
+    database is the only real arbiter, so on a unique violation we retry once with
+    the full card id appended — globally unique, so the retry cannot collide.
+    """
+    card_id = card_data["id"]
+    card_data["slug"] = await _make_unique_slug(name, card_id)
+    try:
+        return await asyncio.to_thread(
+            lambda: supabase.table("cards").insert(card_data).execute()
+        )
+    except Exception as e:
+        if not _is_unique_violation(e):
+            raise
+        card_data["slug"] = f"{_slugify(name, card_id)}-{card_id}"
+        logger.info(
+            "Slug collision on card %s; retrying with id-suffixed slug %s",
+            card_id,
+            card_data["slug"],
+        )
+        return await asyncio.to_thread(
+            lambda: supabase.table("cards").insert(card_data).execute()
+        )
 
 
 def _resolve_stage_id(stage: str | None) -> str:
@@ -92,11 +137,7 @@ async def create_card_from_topic(
                 exclude_none=True
             )
 
-        card_data["slug"] = await _make_unique_slug(body.topic, card_id)
-
-        result = await asyncio.to_thread(
-            lambda: supabase.table("cards").insert(card_data).execute()
-        )
+        result = await _insert_card_with_unique_slug(card_data, body.topic)
 
         if not result.data:
             raise HTTPException(
@@ -195,11 +236,7 @@ async def create_manual_card(
                 exclude_none=True
             )
 
-        card_data["slug"] = await _make_unique_slug(body.name, card_id)
-
-        result = await asyncio.to_thread(
-            lambda: supabase.table("cards").insert(card_data).execute()
-        )
+        result = await _insert_card_with_unique_slug(card_data, body.name)
 
         if not result.data:
             raise HTTPException(

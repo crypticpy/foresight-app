@@ -100,3 +100,84 @@ def test_make_unique_slug_disambiguates_collisions():
     with patch.object(m, "supabase", _patched_supabase(collision=True)):
         slug = asyncio.run(m._make_unique_slug("Quantum Computing", card_id))
     assert slug == f"quantum-computing-{card_id[:8]}"
+
+
+# ---------------------------------------------------------------------------
+# TOCTOU race — the pre-check can't prevent concurrent same-name collisions, so
+# the insert must retry on the UNIQUE constraint (the real arbiter)
+# ---------------------------------------------------------------------------
+
+
+class _UniqueViolation(Exception):
+    """Stand-in for supabase-py's APIError on a Postgres 23505."""
+
+    code = "23505"
+
+    def __init__(self):
+        super().__init__(
+            "duplicate key value violates unique constraint \"cards_slug_key\""
+        )
+
+
+def test_is_unique_violation_detects_23505():
+    assert m._is_unique_violation(_UniqueViolation())
+    assert m._is_unique_violation(Exception("... code 23505 ..."))
+    assert m._is_unique_violation(Exception("duplicate key value violates ..."))
+    assert not m._is_unique_violation(Exception("null value in column"))
+
+
+def _insert_supabase(*, fail_first: bool):
+    """MagicMock whose cards insert raises a unique violation on the first call
+    (then succeeds) when ``fail_first``; the ``_make_unique_slug`` pre-check
+    select chain always reports no collision."""
+    sb = MagicMock()
+    sel = sb.table.return_value.select.return_value.eq.return_value.limit.return_value
+    sel.execute.return_value = MagicMock(data=[])
+    execute = sb.table.return_value.insert.return_value.execute
+    if fail_first:
+        execute.side_effect = [_UniqueViolation(), MagicMock(data=[{"id": "ok"}])]
+    else:
+        execute.return_value = MagicMock(data=[{"id": "ok"}])
+    return sb, execute
+
+
+def test_insert_retries_with_full_id_suffix_on_slug_collision():
+    """A concurrent insert that loses the slug race retries once with the full
+    card id appended (globally unique) and succeeds — no 500 surfaces."""
+    card_id = "abcd1234-5678-9012-3456-7890abcdef00"
+    card_data = {"id": card_id, "name": "Dup Name"}
+    sb, execute = _insert_supabase(fail_first=True)
+    with patch.object(m, "supabase", sb):
+        result = asyncio.run(m._insert_card_with_unique_slug(card_data, "Dup Name"))
+    assert result.data == [{"id": "ok"}]
+    assert execute.call_count == 2
+    assert card_data["slug"] == f"dup-name-{card_id}"
+
+
+def test_insert_no_retry_on_clean_insert():
+    """The happy path inserts exactly once and keeps the readable slug."""
+    card_id = "11112222-3333-4444-5555-666677778888"
+    card_data = {"id": card_id, "name": "Clean Name"}
+    sb, execute = _insert_supabase(fail_first=False)
+    with patch.object(m, "supabase", sb):
+        asyncio.run(m._insert_card_with_unique_slug(card_data, "Clean Name"))
+    assert execute.call_count == 1
+    assert card_data["slug"] == "clean-name"
+
+
+def test_insert_reraises_non_unique_errors():
+    """A non-unique failure (e.g. a NOT NULL / FK violation) must propagate, not
+    be mistaken for a slug race and retried."""
+    sb = MagicMock()
+    sel = sb.table.return_value.select.return_value.eq.return_value.limit.return_value
+    sel.execute.return_value = MagicMock(data=[])
+    sb.table.return_value.insert.return_value.execute.side_effect = RuntimeError("boom")
+    with patch.object(m, "supabase", sb):
+        try:
+            asyncio.run(
+                m._insert_card_with_unique_slug({"id": "x-id", "name": "n"}, "n")
+            )
+            raised = None
+        except RuntimeError as exc:
+            raised = exc
+    assert isinstance(raised, RuntimeError)
