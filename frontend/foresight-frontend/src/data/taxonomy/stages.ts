@@ -1,6 +1,11 @@
 /**
- * Maturity Stages (8): Concept → Mature progression aligned to
+ * Maturity Stages (8): Concept → Declining progression aligned to
  * horizons H1/H2/H3. Used for card-level maturity classification.
+ *
+ * Names, numbering, and order are the frontend mirror of the backend
+ * source of truth in `backend/app/taxonomy.py` (`STAGE_NAMES` /
+ * `STAGE_NUMBER_TO_ID`). Keep them in sync — `StageBadge` and the stage
+ * timeline render these names directly, so drift here mislabels cards.
  *
  * @module data/taxonomy/stages
  */
@@ -12,57 +17,58 @@ export const stages: MaturityStage[] = [
     stage: 1,
     name: "Concept",
     horizon: "H3",
-    description: "Academic research, theoretical exploration",
-    signals: "arXiv papers, university research",
+    description: "Early-stage idea or research; not yet built or tested.",
+    signals: "Academic papers, theoretical frameworks, R&D announcements",
   },
   {
     stage: 2,
-    name: "Emerging",
+    name: "Exploring",
     horizon: "H3",
-    description: "Startups forming, patents filed",
-    signals: "VC funding, patent filings",
+    description:
+      "Active investigation and experimentation; feasibility being assessed.",
+    signals: "Lab experiments, grant funding, early-stage startups",
   },
   {
     stage: 3,
-    name: "Prototype",
+    name: "Pilot",
     horizon: "H2",
-    description: "Working demos exist",
-    signals: 'Conference demos, "proof of concept"',
+    description: "Tested in a limited real-world setting to gauge viability.",
+    signals: 'Limited field trials, "Company X launches pilot..."',
   },
   {
     stage: 4,
-    name: "Pilot",
+    name: "Proof of Concept",
     horizon: "H2",
-    description: "Real-world testing (private sector)",
-    signals: '"Company X announces pilot..."',
+    description: "Pilot results validate that the approach works as intended.",
+    signals: "Published pilot outcomes, validated demos, case studies",
   },
   {
     stage: 5,
-    name: "Municipal Pilot",
-    horizon: "H2",
-    description: "Government entity testing",
-    signals: '"City of X announces..."',
+    name: "Implementing",
+    horizon: "H1",
+    description: "Being deployed into regular operations.",
+    signals: "Procurement, rollout announcements, vendor contracts",
   },
   {
     stage: 6,
-    name: "Early Adoption",
+    name: "Scaling",
     horizon: "H1",
-    description: "Multiple cities implementing",
-    signals: "Pattern of announcements",
+    description: "Proven and expanding across more users, sites, or agencies.",
+    signals: "Multi-site rollouts, growing adoption, budget increases",
   },
   {
     stage: 7,
-    name: "Mainstream",
+    name: "Mature",
     horizon: "H1",
-    description: "Widespread adoption",
-    signals: '"Cities across the country..."',
+    description: "Established and widely adopted as standard practice.",
+    signals: "Industry standards, broad adoption, commoditized offerings",
   },
   {
     stage: 8,
-    name: "Mature",
+    name: "Declining",
     horizon: "H1",
-    description: "Established, commoditized",
-    signals: "Industry standards exist",
+    description: "Being phased out or replaced by newer approaches.",
+    signals: "Sunset announcements, falling usage, replacement by alternatives",
   },
 ];
 
