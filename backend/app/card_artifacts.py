@@ -142,11 +142,17 @@ def get_card_artifacts(
             current.brief_error_message = row.get("error_message")
 
     def _fetch_research(chunk):
+        # Only GLOBAL card reports (workstream_id IS NULL) count toward the
+        # card-level badge. Workstream-scoped deep research stays private to its
+        # owner, matching the research_tasks_select RLS policy
+        # (migration 20260603000005), so the badge never advertises a report the
+        # cross-user Deep Research tab cannot display.
         resp = (
             client.table("research_tasks")
             .select("card_id, status, task_type, error_message, completed_at, created_at")
             .in_("card_id", chunk)
             .eq("task_type", "deep_research")
+            .is_("workstream_id", "null")
             .order("created_at", desc=True)
             .execute()
         )
