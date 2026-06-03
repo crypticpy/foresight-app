@@ -32,6 +32,7 @@ export function QuickStartCard({
     <button
       type="button"
       onClick={onClick}
+      aria-expanded={isActive}
       className={cn(
         "relative flex flex-col items-start rounded-xl border p-5 text-left transition-all duration-200",
         "hover:shadow-md hover:-translate-y-0.5",

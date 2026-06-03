@@ -17,6 +17,7 @@ export function QuickStartCard({ data }: { data: QuickStartStep }) {
     <button
       type="button"
       onClick={() => setExpanded(!expanded)}
+      aria-expanded={expanded}
       className={cn(
         "relative flex flex-col items-center text-center p-5 rounded-xl border transition-all duration-200 cursor-pointer print:break-inside-avoid",
         "bg-white dark:bg-dark-surface",
@@ -52,6 +53,7 @@ export function QuickStartCard({ data }: { data: QuickStartStep }) {
         </div>
       )}
       <ChevronDown
+        aria-hidden="true"
         className={cn(
           "absolute top-3 right-3 h-3.5 w-3.5 text-gray-400 transition-transform duration-200",
           expanded && "rotate-180",
