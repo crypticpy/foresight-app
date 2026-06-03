@@ -32,6 +32,7 @@ export function QuickStartCard({
     <button
       type="button"
       onClick={onClick}
+      aria-expanded={isActive}
       className={cn(
         "relative flex flex-col items-start rounded-xl border p-5 text-left transition-all duration-200",
         "hover:shadow-md hover:-translate-y-0.5",
@@ -68,6 +69,7 @@ export function QuickStartCard({
       </h3>
       <p className="text-sm text-gray-600 dark:text-gray-400">{description}</p>
       <div
+        aria-hidden={!isActive}
         className={cn(
           "mt-3 overflow-hidden transition-all duration-300",
           isActive ? "max-h-96 opacity-100" : "max-h-0 opacity-0",
