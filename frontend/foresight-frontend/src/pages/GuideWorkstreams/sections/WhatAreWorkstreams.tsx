@@ -122,11 +122,11 @@ export function WhatAreWorkstreams() {
           Strategic Alignment
         </h4>
         <p>
-          Every workstream can be aligned to Austin's strategic pillars
-          (Community Health, Mobility, Housing, Economic, Environmental,
-          Cultural) and the CMO's Top 25 Priorities. This alignment helps the AI
-          surface the most relevant signals and ensures briefs frame findings in
-          terms of the city's goals.
+          Every workstream can be aligned to Austin's six strategic pillars
+          (such as Public Safety, Mobility &amp; Critical Infrastructure, and
+          Homelessness &amp; Housing) and the CMO's Top 25 Priorities. This
+          alignment helps the AI surface the most relevant signals and ensures
+          briefs frame findings in terms of the city's goals.
         </p>
       </AccordionContent>
     </Accordion.Item>

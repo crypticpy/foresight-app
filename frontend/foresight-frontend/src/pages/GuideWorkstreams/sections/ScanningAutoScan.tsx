@@ -95,7 +95,7 @@ export function ScanningAutoScan() {
           after a scan completes.
         </p>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Time your manual scans strategically. Run one in the morning to catch
           overnight developments, and save the second for later in the day if a
           breaking topic emerges. Rely on auto-scan for routine monitoring.

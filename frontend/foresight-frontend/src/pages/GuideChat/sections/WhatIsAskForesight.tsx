@@ -48,7 +48,7 @@ export function WhatIsAskForesight() {
           </li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Think of Ask Foresight as an analyst who has read your whole signal
           library. The more clearly you describe what you need, the more useful
           the answer.

@@ -266,7 +266,7 @@ export function SourcePreferences() {
           })}
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Enable at least two source categories for better corroboration scores.
           Signals with diverse sources score significantly higher on the Signal
           Quality Index than those relying on a single category.

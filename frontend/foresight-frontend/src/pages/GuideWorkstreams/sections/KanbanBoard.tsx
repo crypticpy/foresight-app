@@ -67,10 +67,14 @@ export function KanbanBoard() {
           </li>
         </ul>
 
-        <ProTip title="Keyboard Accessibility">
-          The Kanban board supports keyboard navigation. Use Tab to focus cards,
-          Enter to activate drag mode, and arrow keys to move cards between
-          columns. Press Escape to cancel a drag operation.
+        <ProTip title="Keyboard Accessibility" defaultOpen>
+          You don't need a mouse to move cards. Each card has a drag handle --
+          the grip icon that appears at the top of the card when you hover over
+          it or focus it with the keyboard. Tab to a card's drag handle, press
+          Space or Enter to pick the card up, use the arrow keys to move it
+          between columns, then press Space or Enter again to drop it (Escape
+          cancels). To open a card instead of moving it, focus the card body and
+          press Enter.
         </ProTip>
       </AccordionContent>
     </Accordion.Item>

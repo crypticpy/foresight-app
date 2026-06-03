@@ -201,7 +201,7 @@ export function ScoreDimensions() {
           ))}
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Use score threshold sliders in the filter panel to surface only
           signals above your minimum bar. Setting Impact above 60 and Relevance
           above 50 is a good starting point for focused analysis sessions.

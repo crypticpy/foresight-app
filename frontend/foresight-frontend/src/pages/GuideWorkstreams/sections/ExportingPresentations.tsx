@@ -109,7 +109,7 @@ export function ExportingPresentations() {
           </p>
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Use bulk export when preparing for quarterly strategic reviews or
           presenting to the City Manager's office. Order the briefs from highest
           priority to lowest, and the AI will create smooth transitions between

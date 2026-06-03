@@ -28,7 +28,7 @@ const PIPELINE_STAGES = [
   {
     label: "AI Triage",
     icon: <Brain className="h-5 w-5" />,
-    desc: "GPT-5.4-mini analyzes each piece of content for relevance to Austin's strategic priorities, filtering out noise and off-topic material.",
+    desc: "An AI triage step analyzes each piece of content for relevance to Austin's strategic priorities, filtering out noise and off-topic material.",
   },
   {
     label: "Classification",
@@ -43,7 +43,7 @@ const PIPELINE_STAGES = [
   {
     label: "Deduplication",
     icon: <GitCompare className="h-5 w-5" />,
-    desc: "Vector embeddings enable semantic similarity matching. Content that is too similar to existing signals (above 0.92 threshold) is merged or discarded.",
+    desc: "Near-identical content is automatically merged so you don't see the same story twice, even when several sources cover it.",
   },
   {
     label: "Published",
@@ -158,13 +158,13 @@ export function DiscoveryPipeline() {
 
         <InfoBox>
           <span className="font-medium">Deduplication explained:</span> When
-          multiple sources report on the same topic, Foresight uses vector
-          embeddings to detect semantic overlap. Content above a 0.92 similarity
-          threshold is either merged into an existing signal (adding source
-          diversity) or discarded, keeping the library clean and non-redundant.
+          multiple sources report on the same topic, Foresight recognizes that
+          they are covering the same story. Near-identical content is merged
+          into a single signal (adding source diversity) or set aside, so you
+          don't see duplicates and the library stays clean.
         </InfoBox>
 
-        <ProTip>
+        <ProTip defaultOpen>
           The pipeline runs on a configurable schedule. If you notice a gap in
           coverage for a specific topic area, consider creating a user-generated
           signal or requesting a manual discovery run through the admin

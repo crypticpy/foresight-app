@@ -39,7 +39,7 @@ export function ChoosingScope() {
           between <strong>All Signals</strong> and any workstream you own. On a
           signal or inside a workstream, the scope is already set for you.
         </p>
-        <ProTip>
+        <ProTip defaultOpen>
           Narrower scope usually means sharper, faster, more relevant answers.
           When your question is about one topic, scope to that workstream rather
           than All Signals.

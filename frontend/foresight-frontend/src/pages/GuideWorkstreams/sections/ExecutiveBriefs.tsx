@@ -29,7 +29,7 @@ export function ExecutiveBriefs() {
         </h4>
         <ol className="list-decimal list-inside space-y-1 mb-4">
           <li>
-            Move a card to the <strong>Brief</strong> column (ensure it has
+            Move a card to the <strong>Ready</strong> column (ensure it has
             research data first)
           </li>
           <li>
@@ -74,7 +74,7 @@ export function ExecutiveBriefs() {
           fresh version with the latest intelligence.
         </p>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Run Deep Dive research before generating a brief. The brief quality is
           directly proportional to the research data available. A card that has
           been through both Quick Update and Deep Dive will produce a

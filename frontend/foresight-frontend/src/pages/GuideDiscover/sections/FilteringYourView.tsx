@@ -18,65 +18,31 @@ import {
 } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
 import { cn } from "@/lib/utils";
+import { horizons, pillars } from "@/data/taxonomy";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 
 const FILTER_TYPES = [
   {
     name: "Strategic Pillars",
     icon: <Layers className="h-5 w-5" />,
-    items: [
-      {
-        code: "CH",
-        label: "Community Health",
-        desc: "Public health, wellness, social services",
-      },
-      {
-        code: "MC",
-        label: "Mobility",
-        desc: "Transportation, transit, infrastructure",
-      },
-      {
-        code: "HS",
-        label: "Housing",
-        desc: "Affordability, development, homelessness",
-      },
-      {
-        code: "EC",
-        label: "Economic",
-        desc: "Workforce, business development, innovation",
-      },
-      {
-        code: "ES",
-        label: "Environmental",
-        desc: "Sustainability, climate, resilience",
-      },
-      {
-        code: "CE",
-        label: "Cultural",
-        desc: "Arts, equity, community engagement",
-      },
-    ],
+    // Derived from the canonical taxonomy so codes/labels always match the
+    // six pillars the product classifies signals under.
+    items: pillars.map((p) => ({
+      code: p.code,
+      label: p.name,
+      desc: p.description,
+    })),
   },
   {
     name: "Time Horizons",
     icon: <Clock className="h-5 w-5" />,
-    items: [
-      {
-        code: "H1",
-        label: "Now (0-2 years)",
-        desc: "Immediate impacts and near-term changes",
-      },
-      {
-        code: "H2",
-        label: "Near (2-5 years)",
-        desc: "Medium-term trends requiring planning",
-      },
-      {
-        code: "H3",
-        label: "Far (5+ years)",
-        desc: "Long-range signals and emerging possibilities",
-      },
-    ],
+    // Derived from the canonical taxonomy so the names and timeframes always
+    // match the horizon badges and tooltips shown on every signal card.
+    items: horizons.map((h) => ({
+      code: h.code,
+      label: `${h.name} (${h.timeframe})`,
+      desc: h.description,
+    })),
   },
   {
     name: "Maturity Stages",
@@ -272,11 +238,11 @@ export function FilteringYourView() {
           cycle).
         </p>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Combine filters strategically: set pillar to "MC" (Mobility), horizon
-          to "H1" (Now), and quality to "High" to see only the most credible
-          near-term transportation signals. Save this combination for quick
-          access later.
+          to "H1" (Mainstream), and quality to "High" to see only the most
+          credible near-term transportation signals. Save this combination for
+          quick access later.
         </ProTip>
       </AccordionContent>
     </Accordion.Item>

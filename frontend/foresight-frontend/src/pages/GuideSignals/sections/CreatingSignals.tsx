@@ -157,7 +157,7 @@ export function CreatingSignals() {
           </div>
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Quick Create with a deep dive is the fastest way to generate a
           comprehensive signal. Start with a clear, specific topic phrase for
           best results &mdash; for example, &ldquo;autonomous shuttle pilots in

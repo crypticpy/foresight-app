@@ -9,6 +9,7 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { Eye, Layers, PenTool, Target } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
+import { GuideFigure } from "@/components/GuideFigure";
 import { cn } from "../../../lib/utils";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 
@@ -116,7 +117,21 @@ export function PersonalHub() {
           ))}
         </div>
 
-        <ProTip>
+        <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">
+          Opening a Signal
+        </h4>
+        <p className="text-sm mb-3">
+          Click any card to open the signal&rsquo;s detail page, where you can
+          read the full summary, review its multi-factor scores, and take
+          action.
+        </p>
+        <GuideFigure
+          src="/guide/signal-detail-overview.png"
+          alt="A signal's detail page showing the title, summary, action buttons, the Overview tab, and a multi-factor score panel with Impact, Relevance, Velocity, Novelty, and Opportunity ratings."
+          caption="A signal's detail page — the summary, multi-factor scores, and every action you can take, from Deep Research to adding it to a workstream."
+        />
+
+        <ProTip defaultOpen>
           The &ldquo;Needs Research&rdquo; stat highlights signals with few
           sources. These are good candidates for adding to a workstream and
           running a deep research task.

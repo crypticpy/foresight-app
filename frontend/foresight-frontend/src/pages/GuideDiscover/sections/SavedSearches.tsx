@@ -75,11 +75,11 @@ export function SavedSearches() {
           the day.
         </p>
 
-        <ProTip title="When to Use Saved Searches">
+        <ProTip title="When to Use Saved Searches" defaultOpen>
           Create saved searches for recurring analysis tasks. For example, save
-          a "Weekly Environmental Scan" with pillar set to ES, quality to High,
-          and date range to the last 7 days. Load it each Monday for a
-          consistent review workflow.
+          a "Weekly Mobility Scan" with pillar set to MC, quality to High, and
+          date range to the last 7 days. Load it each Monday for a consistent
+          review workflow.
         </ProTip>
       </AccordionContent>
     </Accordion.Item>

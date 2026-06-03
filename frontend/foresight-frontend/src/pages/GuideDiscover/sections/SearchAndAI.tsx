@@ -40,7 +40,9 @@ export function SearchAndAI() {
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle className="h-4 w-4 text-brand-green flex-shrink-0 mt-0.5" />
-                <span>Fast, with debounced input for smooth typing</span>
+                <span>
+                  Fast -- results update a moment after you stop typing
+                </span>
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle className="h-4 w-4 text-brand-green flex-shrink-0 mt-0.5" />
@@ -61,7 +63,8 @@ export function SearchAndAI() {
               <li className="flex items-start gap-2">
                 <CheckCircle className="h-4 w-4 text-brand-blue flex-shrink-0 mt-0.5" />
                 <span>
-                  Finds conceptually related signals using vector embeddings
+                  Finds conceptually related signals, not just exact word
+                  matches
                 </span>
               </li>
               <li className="flex items-start gap-2">
@@ -85,11 +88,11 @@ export function SearchAndAI() {
           How AI Search Works
         </h4>
         <p className="mb-3">
-          When you toggle on AI Search, your query is converted into a
-          high-dimensional vector embedding using the same model that encodes
-          all signal content. The system then performs a nearest-neighbor search
-          in vector space, returning signals that are semantically similar to
-          your query -- even if they use entirely different vocabulary.
+          When you toggle on AI Search, Foresight reads your query for meaning
+          rather than matching it word for word. Searching "urban heat" will
+          surface signals about "cooling infrastructure" or "tree canopy" even
+          when those exact terms never appear -- so you find the right results
+          even when you and the source use different vocabulary.
         </p>
 
         <InfoBox>
@@ -99,7 +102,7 @@ export function SearchAndAI() {
           themes, or when standard search returns too few results.
         </InfoBox>
 
-        <ProTip title="Search Tips">
+        <ProTip title="Search Tips" defaultOpen>
           For AI Search, phrase your query as a concept or question rather than
           isolated keywords. "How are cities adapting public transit to
           autonomous vehicles" will yield richer results than just "autonomous

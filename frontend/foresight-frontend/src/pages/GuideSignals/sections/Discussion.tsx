@@ -61,7 +61,7 @@ export function Discussion() {
           </li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Use the discussion to flag why a signal matters (&ldquo;this maps
           directly to our affordability priority&rdquo;), ask the team a
           question, or record a decision. It turns a static signal into a shared

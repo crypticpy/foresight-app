@@ -20,6 +20,7 @@ import {
   Radio,
 } from "lucide-react";
 import { GuideFigure } from "@/components/GuideFigure";
+import { useGuideAccordionHash } from "@/hooks/useGuideAccordionHash";
 import { QuickStart } from "./QuickStart";
 import { WhatAreSignals } from "./sections/WhatAreSignals";
 import { PersonalHub } from "./sections/PersonalHub";
@@ -31,7 +32,24 @@ import { Discussion } from "./sections/Discussion";
 import { IntegratingWorkflows } from "./sections/IntegratingWorkflows";
 import { TipsBestPractices } from "./sections/TipsBestPractices";
 
+// Accordion section values in render order. The first is open on load; any
+// of these may be deep-linked via `/guide/signals#<value>`.
+const ACCORDION_SECTIONS = [
+  "what-are-signals",
+  "personal-hub",
+  "creating-signals",
+  "source-preferences",
+  "filtering",
+  "tags",
+  "discussion",
+  "workflows",
+  "tips",
+];
+
 export default function GuideSignals() {
+  const [openSections, setOpenSections] =
+    useGuideAccordionHash(ACCORDION_SECTIONS);
+
   return (
     <>
       <style>{`
@@ -78,9 +96,9 @@ export default function GuideSignals() {
 
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
           <GuideFigure
-            src="/guide/signal-detail-overview.png"
-            alt="A signal's detail page showing the title, summary, action buttons, the Overview tab, and a multi-factor score panel with Impact, Relevance, Velocity, Novelty, and Opportunity ratings."
-            caption="A signal's detail page — the summary, multi-factor scores, and every action you can take, from Deep Research to adding it to a workstream."
+            src="/guide/my-signals-hub.png"
+            alt="The My Signals hub: a personal dashboard with stat cards for total signals, followed and created counts, signals updated this week, and signals needing research, above a filterable grid of signal cards."
+            caption="My Signals — your personal hub. The stat cards summarize what you're tracking, and the grid below gathers every signal you follow, create, or add to a workstream."
             className="mt-0 mb-12"
             eager
           />
@@ -89,7 +107,8 @@ export default function GuideSignals() {
 
           <Accordion.Root
             type="multiple"
-            defaultValue={[]}
+            value={openSections}
+            onValueChange={setOpenSections}
             className="divide-y divide-gray-200 dark:divide-gray-700 border-t border-b border-gray-200 dark:border-gray-700"
           >
             <WhatAreSignals />

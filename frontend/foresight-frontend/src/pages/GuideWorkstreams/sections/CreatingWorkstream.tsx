@@ -67,9 +67,10 @@ export function CreatingWorkstream() {
             </h4>
             <p className="text-sm">
               Filter by maturity stage (1 = Concept through 8 = Declining) and
-              time horizon (H1: now-2 years, H2: 2-5 years, H3: 5+ years). For
-              forward-looking research, combine early-stage maturity with H2/H3
-              horizons to capture emerging signals.
+              time horizon (H1 Mainstream: 0-3 years, H2 Transitional: 3-7
+              years, H3 Transformative: 7-15+ years). For forward-looking
+              research, combine early-stage maturity with H2/H3 horizons to
+              capture emerging signals.
             </p>
           </div>
 
@@ -85,7 +86,7 @@ export function CreatingWorkstream() {
           </div>
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Start focused, then expand. A narrow workstream with 3-5 specific
           keywords will surface higher-quality results than a broad one. You can
           always edit the filters later from the "Edit Filters" button on the

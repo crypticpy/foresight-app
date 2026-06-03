@@ -178,7 +178,7 @@ export function DiscoveryToAction() {
           </div>
         </div>
 
-        <ProTip title="Building an Effective Workflow">
+        <ProTip title="Building an Effective Workflow" defaultOpen>
           Start broad in Discover, narrow with filters, follow liberally in the
           early stages. Then use My Signals to periodically prune and prioritize
           before routing the most actionable signals into workstreams. This

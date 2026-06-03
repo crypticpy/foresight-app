@@ -54,9 +54,8 @@ export function WorkingWithSignals() {
           </div>
         </div>
         <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-          Both views use virtualized rendering -- only the signals currently
-          visible in your viewport are rendered, keeping the page fast even with
-          thousands of results.
+          Both views stay fast and smooth to scroll even with thousands of
+          signals.
         </p>
 
         <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">
@@ -64,9 +63,8 @@ export function WorkingWithSignals() {
         </h4>
         <p className="mb-3">
           Click the <Star className="inline-block h-4 w-4 text-amber-500" />{" "}
-          star icon on any card to follow that signal. Following uses optimistic
-          updates -- the star fills immediately while the request processes in
-          the background. To unfollow, click the star again.
+          star icon on any card to follow that signal. The star fills in
+          instantly when you click it. To unfollow, click the star again.
         </p>
         <p className="mb-4">
           Followed signals appear on your{" "}
@@ -99,7 +97,7 @@ export function WorkingWithSignals() {
           related signals, and the full scoring breakdown.
         </InfoBox>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Comparison mode is especially useful for understanding why two
           seemingly similar signals were scored differently. Compare their
           source quality, recency, and pillar alignment to see what drives the

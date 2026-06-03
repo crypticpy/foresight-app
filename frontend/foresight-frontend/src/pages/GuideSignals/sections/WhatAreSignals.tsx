@@ -9,35 +9,28 @@ import * as Accordion from "@radix-ui/react-accordion";
 import { Radio } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
 import { GuideFigure } from "@/components/GuideFigure";
+import { horizons, pillars } from "@/data/taxonomy";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 import { SqiBar } from "../SqiBar";
 
-const PILLARS = [
-  { code: "CH", label: "Community Health" },
-  { code: "MC", label: "Mobility" },
-  { code: "HS", label: "Housing" },
-  { code: "EC", label: "Economic" },
-  { code: "ES", label: "Environmental" },
-  { code: "CE", label: "Cultural" },
-];
+// Derived from the canonical taxonomy so the guide can never drift from the
+// six pillars the product actually classifies signals under.
+const PILLARS = pillars.map((p) => ({ code: p.code, label: p.name }));
 
-const HORIZONS = [
-  {
-    code: "H1",
-    label: "Now (0-2 years)",
-    desc: "Immediate or near-term impacts that require attention now.",
-  },
-  {
-    code: "H2",
-    label: "Near (2-5 years)",
-    desc: "Medium-term trends that should inform planning and strategy.",
-  },
-  {
-    code: "H3",
-    label: "Far (5+ years)",
-    desc: "Long-range developments to monitor for future positioning.",
-  },
-];
+// Plain-English blurbs for non-technical readers. The label (name +
+// timeframe) is pulled from the canonical taxonomy so it always matches the
+// horizon badges and tooltips shown on every signal card.
+const HORIZON_BLURBS: Record<"H1" | "H2" | "H3", string> = {
+  H1: "Immediate or near-term impacts that require attention now.",
+  H2: "Medium-term trends that should inform planning and strategy.",
+  H3: "Long-range developments to monitor for future positioning.",
+};
+
+const HORIZONS = horizons.map((h) => ({
+  code: h.code,
+  label: `${h.name} (${h.timeframe})`,
+  desc: HORIZON_BLURBS[h.code],
+}));
 
 export function WhatAreSignals() {
   return (
@@ -125,7 +118,7 @@ export function WhatAreSignals() {
           caption="On a live signal, the maturity meter and activity trail update as new sources, research, and timeline events come in."
         />
 
-        <ProTip>
+        <ProTip defaultOpen>
           Use the quality score filter on the Signals page to focus on
           high-confidence intelligence. A minimum threshold of 60 is a good
           starting point for strategic decisions.

@@ -36,7 +36,7 @@ export function UnderstandingAnswers() {
           If it doesn't have enough information to answer well, it will tell you
           rather than guess.
         </p>
-        <ProTip>
+        <ProTip defaultOpen>
           AI can occasionally misread a source. For anything that will inform a
           decision, open the citation and confirm the claim against the original
           before you act on it.

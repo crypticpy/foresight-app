@@ -198,7 +198,7 @@ export function IntegratingWorkflows() {
           </li>
         </ol>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Not every signal needs to complete the full workflow. Some signals are
           valuable simply as &ldquo;watch items&rdquo; on your Signals page.
           Reserve deep research and briefing for signals that require active

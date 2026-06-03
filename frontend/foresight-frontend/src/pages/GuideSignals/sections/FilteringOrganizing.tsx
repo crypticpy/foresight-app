@@ -8,6 +8,7 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { Filter, Grid, List, Star } from "lucide-react";
 import { ProTip } from "@/components/ProTip";
+import { horizons, pillars } from "@/data/taxonomy";
 import { AccordionTrigger, AccordionContent } from "../_accordion";
 
 const FILTER_ROWS = [
@@ -17,11 +18,14 @@ const FILTER_ROWS = [
   },
   {
     filter: "Pillar",
-    options: "CH, MC, HS, EC, ES, CE, or All Pillars",
+    options: `${pillars.map((p) => p.code).join(", ")}, or All Pillars`,
   },
   {
     filter: "Horizon",
-    options: "H1 (0-2 years), H2 (2-5 years), H3 (5+ years), or All Horizons",
+    // Derived from the canonical taxonomy so the timeframes match the badges.
+    options: `${horizons
+      .map((h) => `${h.code} (${h.timeframe})`)
+      .join(", ")}, or All Horizons`,
   },
   {
     filter: "Source",
@@ -167,7 +171,7 @@ export function FilteringOrganizing() {
           </div>
         </div>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Combine grouping by pillar with sorting by quality score to quickly
           identify the strongest signals in each strategic area. This is
           especially useful for preparing pillar-specific briefings.

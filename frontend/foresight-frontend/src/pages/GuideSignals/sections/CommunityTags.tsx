@@ -62,7 +62,7 @@ export function CommunityTags() {
           </li>
         </ul>
 
-        <ProTip>
+        <ProTip defaultOpen>
           Reuse an existing tag before inventing a new one, and keep tags short
           and consistent &mdash; for example &ldquo;ai-procurement&rdquo; rather
           than &ldquo;Using AI in Procurement.&rdquo; A tidy, shared vocabulary
