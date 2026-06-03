@@ -276,6 +276,25 @@ async def create_research_task(
             detail="Invalid task_type. Use: update, deep_research, workstream_analysis",
         )
 
+    # deep_research is a card-global artifact: it lights the card-level
+    # `has_deep_research` badge and is shared via the card arm of the
+    # research_tasks RLS policy, both scoped to `workstream_id IS NULL`
+    # (see migration 20260603000005 and card_artifacts._fetch_research). The
+    # kanban deep-dive endpoint already persists these card-only even when
+    # triggered from a workstream. Accepting a workstream_id here would create a
+    # row the badge/shared-read policy intentionally exclude, leaving an
+    # owner-only badge/tab mismatch. Workstream-scoped research uses
+    # task_type=workstream_analysis instead.
+    if task_data.task_type == "deep_research" and task_data.workstream_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "deep_research is card-global and cannot be scoped to a "
+                "workstream; omit workstream_id or use "
+                "task_type=workstream_analysis"
+            ),
+        )
+
     if not _env_bool("FORESIGHT_ENABLE_AI_RESEARCH", True):
         raise HTTPException(
             status_code=403,
