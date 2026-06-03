@@ -48,7 +48,7 @@ export function DesktopNav({
             key={item.name}
             to={item.href}
             aria-current={isActive ? "page" : undefined}
-            className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
+            className={`inline-flex items-center px-2.5 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
               isActive
                 ? "text-brand-blue bg-brand-blue/10"
                 : "text-gray-600 hover:text-brand-dark-blue hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10"
@@ -65,7 +65,7 @@ export function DesktopNav({
           onClick={onToggleMore}
           aria-haspopup="menu"
           aria-expanded={isMoreDropdownOpen}
-          className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
+          className={`inline-flex items-center px-2.5 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
             moreIsActive
               ? "text-brand-blue bg-brand-blue/10"
               : "text-gray-600 hover:text-brand-dark-blue hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10"
