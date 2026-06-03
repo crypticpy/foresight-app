@@ -1,5 +1,5 @@
 /**
- * Accordion section 3/7 — the three-step signal creation wizard: define,
+ * Accordion section 3/9 — the three-step signal creation wizard: define,
  * source preferences, review & create.
  *
  * @module pages/GuideSignals/sections/CreatingSignals

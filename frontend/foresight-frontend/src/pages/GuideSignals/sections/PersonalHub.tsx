@@ -1,5 +1,5 @@
 /**
- * Accordion section 2/7 — the three signal source types (followed / created
+ * Accordion section 2/9 — the three signal source types (followed / created
  * / workstream) and the stats-row summary that lives at the top of the My
  * Signals page.
  *
