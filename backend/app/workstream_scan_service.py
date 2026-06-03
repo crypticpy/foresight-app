@@ -1383,6 +1383,12 @@ Example: ["query 1", "query 2", ...]"""
                 ).eq("id", card_id).execute()
             )
 
+            # Re-embed now that the profile exists; creation only embedded
+            # name + summary (see refresh_card_embedding).
+            from app.embedding_backfill_service import refresh_card_embedding
+
+            await refresh_card_embedding(self.supabase, card_id)
+
             logger.info(
                 f"Workstream scan: profile generated for card {card_id} "
                 f"({len(profile)} chars)"

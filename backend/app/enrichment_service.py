@@ -496,6 +496,13 @@ async def enrich_signal_profiles(
                     .execute()
                 )
 
+                # Re-embed against name + summary + description now that the
+                # profile exists, so the enriched card lands in the same
+                # semantic space as freshly-written/backfilled cards.
+                from app.embedding_backfill_service import refresh_card_embedding
+
+                await refresh_card_embedding(supabase, card_id)
+
                 # Create timeline event
                 await asyncio.to_thread(
                     lambda: supabase.table("card_timeline")

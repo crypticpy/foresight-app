@@ -310,3 +310,108 @@ def test_process_table_marks_done_when_slice_short():
     assert counters["total"] == 1
     assert counters["next_offset"] == 1
     assert counters["done"] is True
+
+
+# ---------------------------------------------------------------------------
+# refresh_card_embedding — the single-card re-embed used by the profile-write
+# paths (signal_agent / enrichment / workstream scan) so a card's stored vector
+# reflects name + summary + description, not just the creation-time name+summary.
+# ---------------------------------------------------------------------------
+
+
+class _SingleCardQuery:
+    """Supports the ``select().eq().single().execute()`` read and the
+    ``update().eq().execute()`` write that refresh_card_embedding issues,
+    capturing the update payload + embed text for assertions."""
+
+    def __init__(self, row, captured):
+        self._row = row
+        self._captured = captured
+        self._payload = None
+
+    def select(self, *_a, **_kw):
+        return self
+
+    def update(self, payload):
+        self._payload = payload
+        return self
+
+    def eq(self, *_a, **_kw):
+        return self
+
+    def single(self):
+        return self
+
+    def execute(self):
+        if self._payload is not None:
+            self._captured["update"] = self._payload
+            return type("R", (), {"data": [{"id": "c1"}]})()
+        return type("R", (), {"data": self._row})()
+
+
+def _single_card_supabase(row, captured):
+    class _SB:
+        def table(self, _name):
+            return _SingleCardQuery(row, captured)
+
+    return _SB()
+
+
+def test_refresh_card_embedding_writes_vector_from_card_text():
+    """Happy path: build name+summary+description, embed it, write the vector."""
+    captured: Dict[str, Any] = {}
+    row = {
+        "name": "Quantum sensors",
+        "summary": "Short blurb.",
+        "description": "Long profile text.",
+    }
+
+    async def _vec(text):
+        captured["embed_text"] = text
+        return [0.1, 0.2, 0.3]
+
+    with patch.object(svc, "_embed_one", side_effect=_vec):
+        ok = asyncio.run(
+            svc.refresh_card_embedding(_single_card_supabase(row, captured), "c1")
+        )
+
+    assert ok is True
+    assert captured["update"]["embedding"] == [0.1, 0.2, 0.3]
+    # Composition mirrors _build_card_text: name + summary + description.
+    assert captured["embed_text"] == "Quantum sensors Short blurb. Long profile text."
+
+
+def test_refresh_card_embedding_false_when_card_missing():
+    """Missing row -> no embed call, no write, returns False (non-fatal)."""
+    captured: Dict[str, Any] = {}
+    calls = {"n": 0}
+
+    async def _boom(_text):
+        calls["n"] += 1
+        return [0.0]
+
+    with patch.object(svc, "_embed_one", side_effect=_boom):
+        ok = asyncio.run(
+            svc.refresh_card_embedding(_single_card_supabase(None, captured), "missing")
+        )
+
+    assert ok is False
+    assert calls["n"] == 0
+    assert "update" not in captured
+
+
+def test_refresh_card_embedding_false_when_embed_fails():
+    """_embed_one returns None (too-short text / API error) -> no write, False."""
+    captured: Dict[str, Any] = {}
+    row = {"name": "n", "summary": "s", "description": "d"}
+
+    async def _none(_text):
+        return None
+
+    with patch.object(svc, "_embed_one", side_effect=_none):
+        ok = asyncio.run(
+            svc.refresh_card_embedding(_single_card_supabase(row, captured), "c1")
+        )
+
+    assert ok is False
+    assert "update" not in captured
