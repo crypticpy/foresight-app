@@ -87,6 +87,9 @@ backend/audit_signals.py
 backend/enrich_profiles_runner.py
 code_bugs_report.json
 
+# Data-repair backups (contain live DB rows — never commit)
+backend/scripts/repair_backups/
+
 # Supabase CLI temp files
 supabase/.temp/
 
