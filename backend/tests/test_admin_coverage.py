@@ -1415,3 +1415,74 @@ def test_admin_refresh_goal_queries_rejects_non_uuid(monkeypatch):
             )
         )
     assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Priority (climate) drift weighting in _auto_pick_starved_goals
+# ---------------------------------------------------------------------------
+
+
+def _goal(code: str) -> Dict[str, Any]:
+    return {
+        "id": f"gid-{code}",
+        "code": code,
+        "name": code,
+        "pillar_code": code.split(".")[0],
+    }
+
+
+def _cards_for(code: str, n: int) -> List[Dict[str, Any]]:
+    """n active cards (created now, inside any window) each linking ``code``."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {"csp_goal_ids": [f"gid-{code}"], "created_at": now, "status": "active"}
+        for _ in range(n)
+    ]
+
+
+def _run_auto_pick(monkeypatch, *, priority_codes, bonus):
+    """Build a fixed 6-goal corpus and run _auto_pick_starved_goals.
+
+    Raw 30d drift (expected=1.0): CH.1=CH.2=-1.0, MC.1=MC.2=0.0,
+    EW.1=CH.3=+1.0. Without a boost CH.3 ties EW.1 for last and falls outside
+    the top-5; a boost on CH.3 must promote it into the top-5 (displacing the
+    later-inserted EW.1).
+    """
+    from app.routers import admin_discovery_balance as bal
+
+    goals = [_goal(c) for c in ("CH.1", "CH.2", "MC.1", "MC.2", "EW.1", "CH.3")]
+    cards = (
+        _cards_for("MC.1", 1)
+        + _cards_for("MC.2", 1)
+        + _cards_for("EW.1", 2)
+        + _cards_for("CH.3", 2)
+    )
+    mock_sb = _MockSupabase({"csp_goals": goals, "cards": cards})
+    _patch_supabase(monkeypatch, mock_sb)
+    monkeypatch.setattr(
+        bal, "BALANCE_PRIORITY_GOAL_CODES", frozenset(priority_codes)
+    )
+    monkeypatch.setattr(bal, "BALANCE_PRIORITY_DRIFT_BONUS", bonus)
+    picked = asyncio.run(bal._auto_pick_starved_goals(30))
+    return [g["code"] for g in picked]
+
+
+def test_auto_pick_priority_boost_promotes_climate_goal(monkeypatch):
+    # No boost: CH.3 ties EW.1 for last and is squeezed out of the top-5.
+    no_boost = _run_auto_pick(monkeypatch, priority_codes=set(), bonus=0.0)
+    assert "CH.3" not in no_boost
+    assert "EW.1" in no_boost
+
+    # With the boost: CH.3 is promoted into the top-5, displacing EW.1.
+    with_boost = _run_auto_pick(monkeypatch, priority_codes={"CH.3"}, bonus=0.5)
+    assert "CH.3" in with_boost
+    assert "EW.1" not in with_boost
+
+
+def test_auto_pick_priority_boost_only_affects_listed_codes(monkeypatch):
+    # Boost EW.1 (already in the top-5) and confirm CH.3 — not listed here —
+    # stays at its raw rank and remains squeezed out. Proves the bonus is
+    # scoped to listed codes, not applied corpus-wide.
+    picked = _run_auto_pick(monkeypatch, priority_codes={"EW.1"}, bonus=0.5)
+    assert "EW.1" in picked
+    assert "CH.3" not in picked
