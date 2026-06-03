@@ -36,6 +36,7 @@ export const MAIN_NAVIGATION: NavItem[] = [
   { name: "Discover", href: "/discover", icon: Compass },
   { name: "Signals", href: "/signals", icon: Radio },
   { name: "Workstreams", href: "/workstreams", icon: FolderOpen },
+  { name: "Help", href: "/guide", icon: HelpCircle },
 ];
 
 export const GUIDE_NAVIGATION: NavItem[] = [
