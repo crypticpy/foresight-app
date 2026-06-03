@@ -26,6 +26,7 @@ class Card(BaseModel):
     name: str
     slug: str
     summary: Optional[str] = None
+    short_description: Optional[str] = None
     description: Optional[str] = None
     pillar_id: Optional[str] = None
     goal_id: Optional[str] = None
