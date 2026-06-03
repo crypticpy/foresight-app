@@ -22,6 +22,7 @@ Usage:
 import asyncio
 import json
 import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -447,6 +448,27 @@ def _clamp_score(value: Any, low: int = 0, high: int = 100) -> int:
         return max(low, min(high, int(value)))
     except (TypeError, ValueError):
         return 50  # Default mid-range
+
+
+def _coerce_similarity(value: Any) -> Optional[float]:
+    """Coerce a ``find_similar_cards`` similarity into a finite float, or None.
+
+    pgvector's cosine distance (``<=>``) returns NaN when a *stored* card
+    embedding is a zero/degenerate vector (e.g. a card whose embedding
+    generation failed and fell back to an all-zeros vector). The RPC computes
+    ``similarity = 1 - (embedding <=> query)``, so those rows come back as NaN
+    and — because JSON has no NaN literal — PostgREST serializes the float8
+    NaN as the JSON **string** ``"NaN"``. Formatting that string with ``:.2f``
+    raised ``ValueError: Unknown format code 'f'`` and killed the entire
+    signal-agent pillar batch before any LLM call (0 cards created on every
+    run). Returning None for non-finite/non-numeric values lets callers drop
+    these spurious matches — they are not valid similarities above threshold.
+    """
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 def _render_pillar_prior(pillar_id: str) -> str:
@@ -971,11 +993,24 @@ class SignalAgentService:
             )
 
             if match_result.data:
+                # Normalize similarity at the boundary and drop spurious
+                # NaN matches (zero-vector card embeddings — see
+                # _coerce_similarity). This keeps downstream formatting
+                # (`:.2f`) and dedup logic from crashing on the string "NaN".
+                related: List[Dict] = []
+                dropped = 0
+                for row in match_result.data:
+                    sim = _coerce_similarity(row.get("similarity"))
+                    if sim is None:
+                        dropped += 1
+                        continue
+                    row["similarity"] = sim
+                    related.append(row)
                 logger.debug(
-                    f"Signal agent: Prefetch found {len(match_result.data)} "
-                    f"related signals"
+                    f"Signal agent: Prefetch found {len(related)} related "
+                    f"signals ({dropped} dropped for non-finite similarity)"
                 )
-                return match_result.data
+                return related
 
         except Exception as e:
             logger.warning(f"Signal agent: Prefetch RPC failed: {e}")
@@ -1252,6 +1287,11 @@ class SignalAgentService:
             if matches:
                 results = []
                 for m in matches:
+                    # Drop spurious NaN matches (zero-vector card embeddings);
+                    # round(...) on the string "NaN" would otherwise raise.
+                    sim = _coerce_similarity(m.get("similarity"))
+                    if sim is None:
+                        continue
                     results.append(
                         {
                             "id": m.get("id"),
@@ -1259,7 +1299,7 @@ class SignalAgentService:
                             "summary": (m.get("summary") or "")[:300],
                             "pillar_id": m.get("pillar_id"),
                             "horizon": m.get("horizon"),
-                            "similarity": round(m.get("similarity", 0), 3),
+                            "similarity": round(sim, 3),
                         }
                     )
                 return {
