@@ -11,12 +11,22 @@
  */
 
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { FlaskConical, MessageSquarePlus, Sparkles, X } from "lucide-react";
 
 import { useAuthContext } from "../hooks/useAuthContext";
 import { buildBugReportHref } from "../lib/bug-report";
 
 const STORAGE_KEY = "pilot-welcome-dismissed";
+
+/**
+ * Routes whose page root fills the viewport (e.g. AskForesight's
+ * `h-[calc(100vh-4rem)]`). An in-flow banner above those would make the page
+ * taller than the viewport, dropping the bottom of the app-shell (the chat
+ * input) below the fold. Suppress the banner there — it still shows on every
+ * normal-scroll page, including the default landing route.
+ */
+const FULL_HEIGHT_ROUTES = ["/ask"];
 
 /** Local YYYY-MM-DD — the banner is keyed to the user's calendar day. */
 function todayKey(): string {
@@ -26,20 +36,27 @@ function todayKey(): string {
 
 export function PilotWelcomeBanner() {
   const { user } = useAuthContext();
+  const { pathname } = useLocation();
+  // Scope dismissal to the user so one person dismissing on a shared
+  // workstation doesn't hide the banner from the next person the same day.
+  const storageKey = `${STORAGE_KEY}-${user?.id ?? "anon"}`;
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) === todayKey();
+      return localStorage.getItem(storageKey) === todayKey();
     } catch {
       return false;
     }
   });
 
-  if (dismissed) return null;
+  const onFullHeightRoute = FULL_HEIGHT_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+  if (onFullHeightRoute || dismissed) return null;
 
   const dismiss = () => {
     setDismissed(true);
     try {
-      localStorage.setItem(STORAGE_KEY, todayKey());
+      localStorage.setItem(storageKey, todayKey());
     } catch {
       // localStorage may be unavailable (private window); dismiss for this
       // session only and let it reappear on the next visit.
