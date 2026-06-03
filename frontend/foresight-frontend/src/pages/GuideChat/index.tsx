@@ -123,6 +123,7 @@ export default function GuideChat() {
             alt="The Ask Foresight assistant answering a question about mobility signals, with a structured summary, recommendation, and the conversation history in the left sidebar."
             caption="Ask Foresight answers in plain English — grounded in your signals, with citations to check and a running conversation history."
             className="mt-0 mb-12"
+            eager
           />
 
           {/* ================================================================ */}

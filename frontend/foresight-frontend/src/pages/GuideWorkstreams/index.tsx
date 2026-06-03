@@ -127,6 +127,7 @@ export default function GuideWorkstreams() {
             alt="A workstream Kanban board with four columns — Inbox, Working, Ready, and Archived — holding signal cards, with a brief-backed card in the Ready column."
             caption="A workstream's Kanban board — signals flow from Inbox to Working, Ready, and Archived as you research them and prepare deliverables."
             className="mt-0 mb-12"
+            eager
           />
 
           {/* ================================================================ */}

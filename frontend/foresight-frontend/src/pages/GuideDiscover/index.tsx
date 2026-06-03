@@ -122,6 +122,7 @@ export default function GuideDiscover() {
             alt="The Discover page showing the search and filter panel above a grid of AI-curated signal cards across Austin's strategic pillars."
             caption="The Discover feed — AI-curated signals you can search semantically, filter by pillar and score, and follow to build your watchlist."
             className="mt-0 mb-14"
+            eager
           />
 
           {/* Quick Start */}

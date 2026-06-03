@@ -82,6 +82,7 @@ export default function GuideSignals() {
             alt="A signal's detail page showing the title, summary, action buttons, the Overview tab, and a multi-factor score panel with Impact, Relevance, Velocity, Novelty, and Opportunity ratings."
             caption="A signal's detail page — the summary, multi-factor scores, and every action you can take, from Deep Research to adding it to a workstream."
             className="mt-0 mb-12"
+            eager
           />
 
           <QuickStart />
