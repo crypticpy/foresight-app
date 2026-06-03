@@ -361,8 +361,14 @@ def _apply_run(run, assignment, existing_sources):
                     final_link[(card_id, url)] = free["id"]
                     repoints += 1
                     continue
-                except Exception:
-                    pass  # unique collision etc. -> fall through to insert
+                except Exception as e:
+                    # Unique collision etc. -> fall through to insert. Surface it
+                    # so a systematic failure can't masquerade as a clean run.
+                    print(
+                        f"WARN: repoint of source {free['id']} -> card {card_id} "
+                        f"failed, inserting fresh row instead: {e}",
+                        flush=True,
+                    )
             # Insert a fresh row. NOTE: production `sources` has no enforced
             # UNIQUE(card_id, url) (migration 001 declared it but duplicates
             # exist), so we can't upsert-on-conflict. Idempotency instead comes
@@ -382,6 +388,15 @@ def _apply_run(run, assignment, existing_sources):
             if ins:
                 final_link[(card_id, url)] = ins[0]["id"]
                 inserts += 1
+            else:
+                # Success response with no rows: the link wasn't established, so
+                # it's intentionally absent from final_link (Pass 3 skips it,
+                # Pass 4 counts only real rows). Surface it rather than hiding it.
+                print(
+                    f"WARN: source insert for card {card_id} url {cand.url!r} "
+                    f"returned no rows; link skipped",
+                    flush=True,
+                )
 
     # Pass 2: orphan surplus rows (run-card rows never reused)
     orphaned = 0
@@ -397,6 +412,7 @@ def _apply_run(run, assignment, existing_sources):
             "card_id", run_card_ids[i : i + 50]
         ).execute()
     junctions = 0
+    junction_failures = 0
     reasoning = "Relinked by content-similarity repair (signal-agent source-index scramble, PR #255)."
     # Rows were just deleted, so plain insert can't conflict. Batch the insert.
     rows = []
@@ -426,12 +442,34 @@ def _apply_run(run, assignment, existing_sources):
                 try:
                     sb.table("signal_sources").insert(r).execute()
                     junctions += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    junction_failures += 1
+                    print(
+                        f"WARN: signal_sources insert failed for card "
+                        f"{r['card_id']} source {r['source_id']}: {e}",
+                        flush=True,
+                    )
 
-    # Pass 4: refresh card.source_count
-    for card_id, lst in assignment.items():
-        sb.table("cards").update({"source_count": len(lst)}).eq(
+    # Pass 4: refresh card.source_count from the ACTUAL linked source rows
+    # (ground truth = count of sources.card_id, matching backfill_source_count.py),
+    # not the assignment size. A repoint that fell through or an insert that
+    # returned no rows leaves a card with fewer real rows than it was assigned,
+    # so len(lst) would overcount and re-create the very drift the backfill fixes.
+    actual_counts = {cid: 0 for cid in assignment}
+    for i in range(0, len(run_card_ids), 50):
+        linked = (
+            sb.table("sources")
+            .select("card_id")
+            .in_("card_id", run_card_ids[i : i + 50])
+            .execute()
+            .data
+        )
+        for r in linked:
+            cid = r.get("card_id")
+            if cid in actual_counts:
+                actual_counts[cid] += 1
+    for card_id, count in actual_counts.items():
+        sb.table("cards").update({"source_count": count}).eq(
             "id", card_id
         ).execute()
 
@@ -440,6 +478,7 @@ def _apply_run(run, assignment, existing_sources):
         "inserts": inserts,
         "orphaned": orphaned,
         "junctions": junctions,
+        "junction_failures": junction_failures,
     }
 
 
@@ -526,7 +565,8 @@ async def main():
           f"(FLOOR={FLOOR} MAX={MAX_PER_CARD})\n")
 
     agg = {"runs": 0, "cards": 0, "tier1": 0, "tier2": 0, "left_empty": 0,
-           "repoints": 0, "inserts": 0, "orphaned": 0, "junctions": 0}
+           "repoints": 0, "inserts": 0, "orphaned": 0, "junctions": 0,
+           "junction_failures": 0}
     for run in runs:
         rep = await process_run(run, args.apply, focus_titles=focus)
         if not rep:
@@ -539,7 +579,8 @@ async def main():
         else:
             agg["tier2"] += 1
         if "applied" in rep:
-            for k in ("repoints", "inserts", "orphaned", "junctions"):
+            for k in ("repoints", "inserts", "orphaned", "junctions",
+                      "junction_failures"):
                 agg[k] += rep["applied"][k]
         print(json.dumps(rep, indent=2))
         print("-" * 60)
