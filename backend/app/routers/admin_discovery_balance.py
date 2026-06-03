@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -67,6 +68,40 @@ BALANCE_MAX_QUERIES_PER_GOAL = 6  # Mirrors csp_goal_query_service.MAX_QUERIES.
 BALANCE_GLOBAL_QUERY_CAP = 20
 BALANCE_DEFAULT_CATEGORIES = ("rss", "web_search")
 
+# --- Priority (climate) weighting ------------------------------------------
+#
+# Some goals are strategically important but structurally under-fed: in the
+# drift ranking the canonical climate goal (CH.3 "Natural Resources & Climate
+# Mitigation") sits mid-pack, so the pure-starvation auto-picker rarely selects
+# it and climate-relevant cards stay scarce in the corpus. A small drift bonus
+# nudges priority goals up the starvation ranking so the balancer spends extra
+# energy on them when they are even mildly starved — without overriding a goal
+# that is genuinely empty.
+#
+# Both knobs are env-tunable so the operator can retarget (e.g. add CH.4
+# "Community Preparedness & Resiliency") or dial the strength without a deploy.
+# Codes are matched case-insensitively against ``csp_goals.code``.
+BALANCE_PRIORITY_GOAL_CODES = frozenset(
+    c.strip().upper()
+    for c in os.getenv("BALANCE_PRIORITY_GOAL_CODES", "CH.3").split(",")
+    if c.strip()
+)
+# Subtracted from a priority goal's drift score (lower = more starved = picked
+# first). The 0.35 default lifts a goal at ~-0.45 drift to ~-0.80, reliably
+# landing it in the top picks without always forcing it ahead of a goal that
+# has zero recent cards. A malformed env value falls back to the default rather
+# than crashing balancer dispatch.
+try:
+    BALANCE_PRIORITY_DRIFT_BONUS = float(
+        os.getenv("BALANCE_PRIORITY_DRIFT_BONUS", "0.35")
+    )
+except ValueError:
+    logger.warning(
+        "Invalid BALANCE_PRIORITY_DRIFT_BONUS=%r; falling back to 0.35",
+        os.getenv("BALANCE_PRIORITY_DRIFT_BONUS"),
+    )
+    BALANCE_PRIORITY_DRIFT_BONUS = 0.35
+
 
 class BalanceDispatchRequest(BaseModel):
     """Payload for the coverage-balance dispatcher.
@@ -106,6 +141,12 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
     but skips the priority-band bookkeeping — for dispatch we only need the
     ordering. Inlined here so this endpoint doesn't depend on the gap
     endpoint living in the same module.
+
+    Goals whose code is in ``BALANCE_PRIORITY_GOAL_CODES`` (default: the
+    climate goal CH.3) receive a ``BALANCE_PRIORITY_DRIFT_BONUS`` reduction to
+    their drift score so they surface in the starved set whenever they are
+    even mildly under-fed — this is the lever that keeps climate coverage from
+    quietly decaying because climate sits mid-pack in the raw drift ranking.
     """
     since_dt = datetime.now(timezone.utc) - timedelta(days=window_days)
 
@@ -146,10 +187,26 @@ async def _auto_pick_starved_goals(window_days: int) -> list[dict[str, Any]]:
     # Drift score: (actual - expected) / max(expected, 1) so a 0-count goal
     # against expected=12 yields -1.0 and sorts to the top.
     scored: list[tuple[float, dict[str, Any]]] = []
+    boosted: list[str] = []
     for gid, count in counts.items():
         drift_score = (count - expected) / max(expected, 1.0)
-        scored.append((drift_score, goal_index[gid]))
+        goal = goal_index[gid]
+        code = (goal.get("code") or "").strip().upper()
+        if code in BALANCE_PRIORITY_GOAL_CODES and BALANCE_PRIORITY_DRIFT_BONUS:
+            # Lower drift = more starved = sorts earlier. Subtracting nudges
+            # the priority goal up without pinning it ahead of a truly empty one.
+            drift_score -= BALANCE_PRIORITY_DRIFT_BONUS
+            boosted.append(code)
+        scored.append((drift_score, goal))
+    # Sort by the (boosted) drift only; equal scores keep insertion order
+    # (Python's sort is stable), so we never compare the unordered goal dicts.
     scored.sort(key=lambda x: x[0])
+    if boosted:
+        logger.info(
+            "Coverage balancer applied priority drift bonus %.2f to goals %s",
+            BALANCE_PRIORITY_DRIFT_BONUS,
+            sorted(set(boosted)),
+        )
     return [g for _score, g in scored[:BALANCE_MAX_GOALS]]
 
 
