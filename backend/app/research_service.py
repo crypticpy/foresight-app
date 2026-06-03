@@ -153,6 +153,11 @@ class ResearchResult:
     entities_extracted: int
     cost_estimate: float
     report_preview: Optional[str] = None
+    # Uncapped persistence of paid research output (see routers/research.py completion
+    # write -> research_tasks.raw_report / full_report). report_preview stays a capped
+    # UI preview; these hold the full text for recovery / re-embed.
+    raw_report: Optional[str] = None  # raw gpt-researcher report (all research types)
+    full_report: Optional[str] = None  # synthesized comprehensive report (deep only)
 
 
 # ============================================================================
@@ -918,7 +923,9 @@ class ResearchService:
                     else None
                 ),
                 "full_text": (
-                    processed.raw.content[:10000] if processed.raw.content else None
+                    # Raised from 10KB so we retain essentially full article text for
+                    # recovery / re-embed (we pay to fetch this).
+                    processed.raw.content[:100000] if processed.raw.content else None
                 ),
                 "ai_summary": (
                     processed.analysis.summary if processed.analysis else None
@@ -1532,7 +1539,8 @@ class ResearchService:
             cost_estimate=cost,
             report_preview=(
                 report[:10000] if report else None
-            ),  # Store up to 10KB of report
+            ),  # 10KB UI preview; full text persisted in raw_report below
+            raw_report=report,
         )
 
     async def execute_deep_research(
@@ -2124,7 +2132,9 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
             cost_estimate=cost,
             report_preview=(
                 comprehensive_report[:50000] if comprehensive_report else None
-            ),  # Full report with sources section
+            ),  # 50KB UI preview; full text persisted in raw_report/full_report below
+            raw_report=report,  # raw gpt-researcher detailed report (round 1)
+            full_report=comprehensive_report,  # synthesized strategic report, uncapped
         )
 
     async def execute_workstream_analysis(
@@ -2264,5 +2274,6 @@ Research analyzed {len(source_analyses)} sources related to {card["name"]}.
                 len(p.analysis.entities) for p in processed if p.analysis
             ),
             cost_estimate=cost,
-            report_preview=report[:10000] if report else None,  # Store full report
+            report_preview=report[:10000] if report else None,  # 10KB UI preview
+            raw_report=report,  # full text persisted uncapped
         )

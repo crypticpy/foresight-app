@@ -164,7 +164,9 @@ async def store_source_to_card(
                 else None
             ),
             "full_text": (
-                source.raw.content[:10000] if source.raw.content else None
+                # Raised from 10KB so we retain essentially full article text for
+                # recovery / re-embed (we pay to fetch this).
+                source.raw.content[:100000] if source.raw.content else None
             ),
             "ai_summary": (source.analysis.summary if source.analysis else None),
             "key_excerpts": (

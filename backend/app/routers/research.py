@@ -196,6 +196,10 @@ async def execute_research_task_background(
                     "status": "completed",
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                     "result_summary": result_summary,
+                    # Uncapped paid research output, kept for recovery / re-embed.
+                    # result_summary.report_preview remains a capped UI preview.
+                    "raw_report": result.raw_report,
+                    "full_report": result.full_report,
                 }
             )
             .eq("id", task_id)
