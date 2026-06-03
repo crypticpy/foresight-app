@@ -14,7 +14,7 @@ import app.ai_service as ai_service
 
 
 class _SingleCardQuery:
-    """Supports ``select().eq().single().execute()`` read and
+    """Supports ``select().eq().maybe_single().execute()`` read and
     ``update().eq().execute()`` write, capturing the update payload."""
 
     def __init__(self, row, captured):
@@ -33,6 +33,9 @@ class _SingleCardQuery:
         return self
 
     def single(self):
+        return self
+
+    def maybe_single(self):
         return self
 
     def execute(self):
@@ -115,3 +118,52 @@ def test_short_description_false_when_blurb_empty():
 
     assert ok is False
     assert "update" not in captured
+
+
+def test_short_description_skips_when_already_present():
+    """'Generated once': existing blurb -> no LLM call, no write, returns True."""
+    captured: Dict[str, Any] = {}
+    row = {
+        "name": "n",
+        "summary": "s",
+        "description": "d",
+        "short_description": "Already there. Don't pay again.",
+    }
+
+    with patch.object(
+        ai_service.AIService, "generate_short_description", new_callable=AsyncMock
+    ) as gen:
+        ok = asyncio.run(
+            ai_service.generate_and_store_short_description(
+                _single_card_supabase(row, captured), "c1"
+            )
+        )
+
+    assert ok is True
+    gen.assert_not_awaited()
+    assert "update" not in captured
+
+
+def test_short_description_force_regenerates_when_present():
+    """force=True overrides the 'generated once' skip and rewrites the blurb."""
+    captured: Dict[str, Any] = {}
+    row = {
+        "name": "n",
+        "summary": "s",
+        "description": "d",
+        "short_description": "Stale blurb.",
+    }
+
+    with patch.object(
+        ai_service.AIService, "generate_short_description", new_callable=AsyncMock
+    ) as gen:
+        gen.return_value = "Fresh blurb one. Fresh blurb two."
+        ok = asyncio.run(
+            ai_service.generate_and_store_short_description(
+                _single_card_supabase(row, captured), "c1", force=True
+            )
+        )
+
+    assert ok is True
+    gen.assert_awaited_once()
+    assert captured["update"]["short_description"] == "Fresh blurb one. Fresh blurb two."

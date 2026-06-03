@@ -1518,7 +1518,9 @@ Respond as JSON:
         return "\n".join(lines)
 
 
-async def generate_and_store_short_description(supabase, card_id: str) -> bool:
+async def generate_and_store_short_description(
+    supabase, card_id: str, *, force: bool = False
+) -> bool:
     """Generate a card's 2-sentence ``short_description`` and persist it.
 
     The single source of truth for "store a card's short blurb" — used by the
@@ -1527,21 +1529,32 @@ async def generate_and_store_short_description(supabase, card_id: str) -> bool:
     site stays a single line, mirroring
     ``embedding_backfill_service.refresh_card_embedding``.
 
+    "Generated once": if the card already has a ``short_description`` the call
+    is a no-op (returns True) unless ``force=True``. This keeps reruns of the
+    backfill and any profile-regeneration retry from spending another mini-tier
+    request and overwriting the stored blurb. Pass ``force=True`` to refresh a
+    blurb after the underlying profile has meaningfully changed.
+
     Non-fatal: logs a warning and returns False on any failure (missing row,
     empty name, LLM error) so it can't abort the creation flow.
     """
     try:
+        # maybe_single() returns data=None for a missing row; .single() would
+        # raise PGRST116 instead, so the guard below would never see it.
         result = await asyncio.to_thread(
             lambda: supabase.table("cards")
-            .select("name, summary, description")
+            .select("name, summary, description, short_description")
             .eq("id", card_id)
-            .single()
+            .maybe_single()
             .execute()
         )
-        if not result.data:
+        if not result or not result.data:
             return False
 
         card = result.data
+        if not force and (card.get("short_description") or "").strip():
+            return True  # already generated — don't pay to regenerate
+
         blurb = await AIService(azure_openai_client).generate_short_description(
             card.get("name") or "",
             card.get("summary") or "",
