@@ -20,6 +20,7 @@ class _Query:
 
     def __init__(self, rows):
         self._rows = rows
+        self._is_null_cols: list[str] = []
 
     def select(self, *_a, **_kw):
         return self
@@ -30,14 +31,23 @@ class _Query:
     def eq(self, *_a, **_kw):
         return self
 
-    def is_(self, *_a, **_kw):
+    def is_(self, column, value):
+        # Mirror PostgREST `.is_(col, "null")`: keep only rows whose column is
+        # null. Filtering for real (rather than a passthrough stub) lets tests
+        # verify the workstream_id IS NULL guard in _fetch_research actually
+        # excludes workstream-scoped deep-research rows from the badge.
+        if value in ("null", None):
+            self._is_null_cols.append(column)
         return self
 
     def order(self, *_a, **_kw):
         return self
 
     def execute(self):
-        return SimpleNamespace(data=list(self._rows))
+        rows = list(self._rows)
+        for col in self._is_null_cols:
+            rows = [r for r in rows if r.get(col) is None]
+        return SimpleNamespace(data=rows)
 
 
 class _Client:
@@ -141,3 +151,43 @@ def test_newest_pending_brief_set_when_no_failure_exists():
     artifacts = get_card_artifacts(client, ["c1"])
     assert artifacts["c1"].pending_brief is True
     assert artifacts["c1"].failed_brief is False
+
+
+def test_workstream_scoped_deep_research_excluded_from_badge():
+    # A completed deep_research row tagged with a workstream_id is owner-private
+    # (visible only via the owner arm of the research_tasks RLS policy) and must
+    # NOT light the card-level badge — otherwise the cross-user Deep Research tab
+    # would be empty while the badge claims a report. _fetch_research scopes the
+    # badge query to workstream_id IS NULL; this asserts that exclusion.
+    client = _Client(
+        research=[
+            {
+                "card_id": "c1",
+                "status": "completed",
+                "task_type": "deep_research",
+                "workstream_id": "ws-1",
+                "completed_at": "2026-06-03T00:00:00Z",
+            },
+        ]
+    )
+    artifacts = get_card_artifacts(client, ["c1"])
+    assert artifacts["c1"].has_deep_research is False
+
+
+def test_global_deep_research_counts_toward_badge():
+    # The mirror case: a global card report (workstream_id IS NULL) survives the
+    # filter and lights the badge, proving the exclusion above is the workstream
+    # scoping rather than the filter dropping every row.
+    client = _Client(
+        research=[
+            {
+                "card_id": "c1",
+                "status": "completed",
+                "task_type": "deep_research",
+                "workstream_id": None,
+                "completed_at": "2026-06-03T00:00:00Z",
+            },
+        ]
+    )
+    artifacts = get_card_artifacts(client, ["c1"])
+    assert artifacts["c1"].has_deep_research is True
