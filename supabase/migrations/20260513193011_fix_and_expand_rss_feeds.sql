@@ -1,0 +1,335 @@
+-- Migration: fix_and_expand_rss_feeds
+-- Created at: 2026-05-13
+--
+-- PURPOSE:
+--   Five feeds in our existing seeds (rss_feeds + discovery_sources_registry)
+--   are broken — either 404, redirect-to-404, return 200 with an empty
+--   <channel>, or return 200 with HTML instead of RSS. None of these failure
+--   modes are caught by the fetcher's HTTP error handling, so they silently
+--   produce zero discovered articles. This migration corrects the URLs and
+--   adds 10 new feeds that fill known gaps (Austin-local coverage, MC, HH).
+--
+-- VERIFICATION (every URL below was verified before this migration shipped):
+--   - HEAD probe returns 200 with Content-Type containing 'xml'
+--   - GET body parses as valid RSS/Atom and contains at least one <item> or
+--     <entry> element
+--   See PR description for the curl commands and outputs.
+--
+-- FIXES (5):
+--   Pew Trusts:    pewtrusts.org/en/rss/all   -> pewresearch.org/feed/
+--                  (pewtrusts.org redirects to pew.org which 404s on every
+--                  feed path. Pew Charitable Trusts no longer publishes RSS;
+--                  Pew Research Center is the closest credible substitute.)
+--   ICMA:          icma.org/feed              -> icma.org/rss.xml
+--                  (rss.xml is the URL ICMA itself advertises; matches the
+--                  URL already used in 20260512000005_..._public_safety_feeds.)
+--   City of Austin: austintexas.gov/rss.xml   -> austintexas.gov/site/news/rss.xml
+--                  (the old URL returns 200 with an empty <channel> body;
+--                  the /site/news/rss.xml path returns real press releases.)
+--   GovTech:       govtech.com/rss            -> govtech.com/index.rss
+--                  (the old URL returns 200 with HTML; /index.rss matches
+--                  the <link rel="alternate"> tag on the GovTech homepage.)
+--   Brookings:     brookings.edu/feed/        -> brookings.edu/feed/atom/
+--                  (the old URL 200s with HTML due to a vary-cache quirk on
+--                  /feed/; /feed/atom/ serves clean application/atom+xml.)
+--
+-- EXPANSION (10 new feeds aligned with Austin's strategic pillars):
+--   Austin-local (cross-pillar):
+--     - Austin Monitor       (austinmonitor.com/feed/)
+--     - KUT                  (kut.org/news.rss)
+--   Mobility & Critical Infrastructure (MC):
+--     - Smart Cities Dive    (smartcitiesdive.com/feeds/news/)
+--     - Streetsblog USA      (usa.streetsblog.org/feed)
+--     - NACTO                (nacto.org/feed/)
+--   Homelessness & Housing (HH):
+--     - NLIHC                (nlihc.org/rss.xml)
+--   Cross-pillar think-tanks:
+--     - Aspen Institute      (aspeninstitute.org/feed/)
+--     - RAND blog            (rand.org/blog.xml)
+--     - Pew Research short reads (pewresearch.org/short-reads/feed/)
+--   High-Performing Government (HG):
+--     - Government Executive (govexec.com/rss/all/)
+--
+-- IDEMPOTENCY:
+--   - URL fixes use UPDATE on `rss_feeds.url` and `discovery_sources_registry.url`,
+--     each guarded with `NOT EXISTS` against the target URL so a re-run (or an
+--     environment where both old and new URLs already coexist) cannot violate
+--     the unique constraints (`rss_feeds.url`, `discovery_sources_registry
+--     (category, url)`). A trailing DELETE cleans up any rows still keyed by the
+--     old URL when the guard skipped the UPDATE.
+--   - New rows use ON CONFLICT (...) DO NOTHING.
+--   Re-running is safe.
+--
+-- ROLLBACK:
+--   -- revert rss_feeds URL updates
+--   UPDATE rss_feeds
+--     SET url = 'https://www.pewtrusts.org/en/rss/all', name = 'Pew Trusts'
+--     WHERE url = 'https://www.pewresearch.org/feed/' AND name = 'Pew Research Center';
+--   UPDATE rss_feeds SET url = 'https://icma.org/feed'                 WHERE url = 'https://icma.org/rss.xml'              AND name = 'ICMA';
+--   UPDATE rss_feeds SET url = 'https://www.austintexas.gov/rss.xml'   WHERE url = 'https://www.austintexas.gov/site/news/rss.xml' AND name = 'City of Austin';
+--   UPDATE rss_feeds SET url = 'https://www.govtech.com/rss'           WHERE url = 'https://www.govtech.com/index.rss'    AND name = 'GovTech';
+--   UPDATE rss_feeds SET url = 'https://www.brookings.edu/feed/'       WHERE url = 'https://www.brookings.edu/feed/atom/' AND name = 'Brookings Institution';
+--   -- delete new rss_feeds rows
+--   DELETE FROM rss_feeds WHERE url IN (
+--     'https://www.austinmonitor.com/feed/', 'https://www.kut.org/news.rss',
+--     'https://smartcitiesdive.com/feeds/news/', 'https://usa.streetsblog.org/feed',
+--     'https://nacto.org/feed/', 'https://nlihc.org/rss.xml',
+--     'https://www.aspeninstitute.org/feed/', 'https://www.rand.org/blog.xml',
+--     'https://www.pewresearch.org/short-reads/feed/', 'https://www.govexec.com/rss/all/'
+--   );
+--   -- delete new discovery_sources_registry rows (same URLs)
+--   DELETE FROM discovery_sources_registry WHERE category = 'rss' AND url IN (
+--     'https://www.austinmonitor.com/feed/', 'https://www.kut.org/news.rss',
+--     'https://smartcitiesdive.com/feeds/news/', 'https://usa.streetsblog.org/feed',
+--     'https://nacto.org/feed/', 'https://nlihc.org/rss.xml',
+--     'https://www.aspeninstitute.org/feed/', 'https://www.rand.org/blog.xml',
+--     'https://www.pewresearch.org/short-reads/feed/', 'https://www.govexec.com/rss/all/'
+--   );
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Part 1: Fix broken URLs in `rss_feeds`
+-- ---------------------------------------------------------------------------
+-- For each fix we also reset error_count / last_error so the worker doesn't
+-- keep the row in a paused/error state on its next pass.
+--
+-- Each UPDATE is guarded with `AND NOT EXISTS (... new url ...)` to defend
+-- against the `rss_feeds.url` UNIQUE constraint on environments where both
+-- the old and new URLs already coexist (e.g. partial manual repairs or
+-- staggered deploys). In that case the row keyed by the old URL is left in
+-- place and the cleanup block at the end removes the duplicate.
+
+UPDATE public.rss_feeds
+SET url           = 'https://www.pewresearch.org/feed/',
+    name          = 'Pew Research Center',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.pewtrusts.org/en/rss/all'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.pewresearch.org/feed/'
+  );
+
+UPDATE public.rss_feeds
+SET url           = 'https://icma.org/rss.xml',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://icma.org/feed'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://icma.org/rss.xml'
+  );
+
+UPDATE public.rss_feeds
+SET url           = 'https://www.austintexas.gov/site/news/rss.xml',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.austintexas.gov/rss.xml'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.austintexas.gov/site/news/rss.xml'
+  );
+
+-- GovTech is split across two statements (one per legacy variant) because
+-- updating both `/rss` and `/rss/` rows to the same canonical URL in one
+-- statement would trip the `rss_feeds.url` UNIQUE check at statement end.
+-- The second statement is a no-op once the first succeeds (the canonical
+-- URL now exists, so its NOT EXISTS guard skips). Any leftover legacy row
+-- is removed by the trailing DELETE block.
+UPDATE public.rss_feeds
+SET url           = 'https://www.govtech.com/index.rss',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.govtech.com/rss'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.govtech.com/index.rss'
+  );
+
+UPDATE public.rss_feeds
+SET url           = 'https://www.govtech.com/index.rss',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.govtech.com/rss/'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.govtech.com/index.rss'
+  );
+
+UPDATE public.rss_feeds
+SET url           = 'https://www.brookings.edu/feed/atom/',
+    status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url = 'https://www.brookings.edu/feed/'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.rss_feeds f
+    WHERE f.url = 'https://www.brookings.edu/feed/atom/'
+  );
+
+-- Clean up any rows still keyed by the old broken URLs (only present when the
+-- guard above skipped because the new URL already existed). Without this the
+-- worker would keep polling the broken URL forever.
+DELETE FROM public.rss_feeds
+WHERE url IN (
+    'https://www.pewtrusts.org/en/rss/all',
+    'https://icma.org/feed',
+    'https://www.austintexas.gov/rss.xml',
+    'https://www.govtech.com/rss',
+    'https://www.govtech.com/rss/',
+    'https://www.brookings.edu/feed/'
+);
+
+-- Force-reset the failure state on the canonical rows. The per-URL UPDATEs
+-- above already do this when they move the legacy row to the canonical URL,
+-- but if the guard skipped (canonical row already existed), the canonical
+-- row may still be carrying status='error' / error_count > 0 from earlier
+-- failed polls — this final pass guarantees it is unpaused.
+UPDATE public.rss_feeds
+SET status        = 'active',
+    error_count   = 0,
+    last_error    = NULL,
+    next_check_at = NOW(),
+    updated_at    = NOW()
+WHERE url IN (
+    'https://www.pewresearch.org/feed/',
+    'https://icma.org/rss.xml',
+    'https://www.austintexas.gov/site/news/rss.xml',
+    'https://www.govtech.com/index.rss',
+    'https://www.brookings.edu/feed/atom/'
+);
+
+-- ---------------------------------------------------------------------------
+-- Part 2: Add new feeds to `rss_feeds`
+-- ---------------------------------------------------------------------------
+
+INSERT INTO public.rss_feeds (url, name, category) VALUES
+    ('https://www.austinmonitor.com/feed/',            'Austin Monitor',            'municipal'),
+    ('https://www.kut.org/news.rss',                   'KUT (Austin NPR)',          'news'),
+    ('https://smartcitiesdive.com/feeds/news/',        'Smart Cities Dive',         'gov_tech'),
+    ('https://usa.streetsblog.org/feed',               'Streetsblog USA',           'news'),
+    ('https://nacto.org/feed/',                        'NACTO',                     'municipal'),
+    ('https://nlihc.org/rss.xml',                      'NLIHC',                     'think_tank'),
+    ('https://www.aspeninstitute.org/feed/',           'Aspen Institute',           'think_tank'),
+    ('https://www.rand.org/blog.xml',                  'RAND Corporation',          'think_tank'),
+    ('https://www.pewresearch.org/short-reads/feed/',  'Pew Research Short Reads',  'think_tank'),
+    ('https://www.govexec.com/rss/all/',               'Government Executive',      'gov_tech')
+ON CONFLICT (url) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Part 3: Fix broken URLs in `discovery_sources_registry`
+-- ---------------------------------------------------------------------------
+-- ICMA: the 20260512000005 public-safety seed inserted icma.org/rss.xml. If an
+-- environment was bootstrapped earlier with icma.org/feed we update it here.
+-- Both rows can coexist in environments where 20260512000005 ran without first
+-- removing the legacy row, so guard the UPDATE with NOT EXISTS against the
+-- (category, url) unique constraint and delete any leftover legacy row.
+--
+-- GovTech: 20260509000001 inserted https://www.govtech.com/rss/ into the
+-- registry, but the rss_feeds table has https://www.govtech.com/rss (no
+-- trailing slash). build_discovery_config() overlays enabled registry rows on
+-- top of rss_feeds, so the broken URL still drives discovery polling until we
+-- fix it here too. Cover both variants the registry might hold.
+
+UPDATE public.discovery_sources_registry
+SET url        = 'https://icma.org/rss.xml',
+    enabled    = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at = NOW()
+WHERE category = 'rss'
+  AND url = 'https://icma.org/feed'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://icma.org/rss.xml'
+  );
+
+-- Same split as the rss_feeds GovTech UPDATE above: one statement per
+-- legacy variant so we never try to collapse both rows into the canonical
+-- URL inside a single statement.
+UPDATE public.discovery_sources_registry
+SET url        = 'https://www.govtech.com/index.rss',
+    enabled    = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at = NOW()
+WHERE category = 'rss'
+  AND url = 'https://www.govtech.com/rss/'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://www.govtech.com/index.rss'
+  );
+
+UPDATE public.discovery_sources_registry
+SET url        = 'https://www.govtech.com/index.rss',
+    enabled    = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at = NOW()
+WHERE category = 'rss'
+  AND url = 'https://www.govtech.com/rss'
+  AND NOT EXISTS (
+    SELECT 1 FROM public.discovery_sources_registry d
+    WHERE d.category = 'rss' AND d.url = 'https://www.govtech.com/index.rss'
+  );
+
+-- Clean up legacy rows that survived the NOT EXISTS guard above (only present
+-- when the canonical row already existed and the UPDATE was skipped).
+DELETE FROM public.discovery_sources_registry
+WHERE category = 'rss'
+  AND url IN (
+    'https://icma.org/feed',
+    'https://www.govtech.com/rss/',
+    'https://www.govtech.com/rss'
+  );
+
+-- Force-reset the failure state on the canonical registry rows (mirrors the
+-- rss_feeds normalization above so a previously-failed canonical row is
+-- guaranteed unpaused even when the guarded UPDATE skipped).
+UPDATE public.discovery_sources_registry
+SET enabled             = TRUE,
+    last_failure_at     = NULL,
+    last_failure_reason = NULL,
+    updated_at          = NOW()
+WHERE category = 'rss'
+  AND url IN (
+    'https://icma.org/rss.xml',
+    'https://www.govtech.com/index.rss'
+  );
+
+-- ---------------------------------------------------------------------------
+-- Part 4: Add the same 10 new feeds to `discovery_sources_registry`
+-- ---------------------------------------------------------------------------
+-- Mirrors the rss_feeds additions so the admin console + balancer can see
+-- them. Keep enabled=TRUE so the discovery pipeline picks them up immediately.
+
+INSERT INTO public.discovery_sources_registry (category, name, url, enabled, notes)
+VALUES
+    ('rss', 'Austin Monitor',            'https://www.austinmonitor.com/feed/',           TRUE, 'Austin-local: municipal government beat reporting (Council, planning, land use)'),
+    ('rss', 'KUT (Austin NPR)',          'https://www.kut.org/news.rss',                  TRUE, 'Austin-local: NPR affiliate, local + Texas politics'),
+    ('rss', 'Smart Cities Dive',         'https://smartcitiesdive.com/feeds/news/',       TRUE, 'MC: smart-city tech, infrastructure, urban planning'),
+    ('rss', 'Streetsblog USA',           'https://usa.streetsblog.org/feed',              TRUE, 'MC: transportation policy, active mobility, transit'),
+    ('rss', 'NACTO',                     'https://nacto.org/feed/',                       TRUE, 'MC: National Assoc. of City Transportation Officials — street design + transit policy'),
+    ('rss', 'NLIHC',                     'https://nlihc.org/rss.xml',                     TRUE, 'HH: National Low Income Housing Coalition — affordable-housing policy'),
+    ('rss', 'Aspen Institute',           'https://www.aspeninstitute.org/feed/',          TRUE, 'Think-tank: cross-pillar policy, economy, society'),
+    ('rss', 'RAND Corporation',          'https://www.rand.org/blog.xml',                 TRUE, 'Think-tank: cross-pillar policy research blog'),
+    ('rss', 'Pew Research Short Reads',  'https://www.pewresearch.org/short-reads/feed/', TRUE, 'Think-tank: short analytical pieces from Pew Research'),
+    ('rss', 'Government Executive',      'https://www.govexec.com/rss/all/',              TRUE, 'HG: federal + state/local government management')
+ON CONFLICT (category, url) DO NOTHING;
