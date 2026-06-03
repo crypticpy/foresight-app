@@ -79,8 +79,8 @@ ThirdSpaces/
 CHAT_UX_PLAN.md
 SYSTEM_EVOLUTION_PLAN.md
 
-# Claude context layer
-.claude/context-layer/
+# Claude Code local state (agents, skills, plans, context layer, PR babysit state)
+.claude/
 
 # Troubleshooting scripts & reports
 backend/audit_signals.py
@@ -93,10 +93,8 @@ supabase/.temp/
 # Git worktrees (for parallel feature development)
 .worktrees/
 test-users.txt
+new-user-credentials.txt
 .vercel
-
-# Claude Code local state
-.claude/scheduled_tasks.lock
 
 # Desloppify state
 .desloppify/
