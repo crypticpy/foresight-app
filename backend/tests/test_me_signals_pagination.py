@@ -49,6 +49,7 @@ class _Query:
         self._order: List[tuple] = []
         self._gte: Dict[str, Any] = {}
         self._lt: Dict[str, Any] = {}
+        self._is: Dict[str, Any] = {}
 
     def select(self, *_a, count: Optional[str] = None, **_kw):
         self._count_mode = count
@@ -78,6 +79,10 @@ class _Query:
         self._lt[key] = value
         return self
 
+    def is_(self, key, value):
+        self._is[key] = value
+        return self
+
     def range(self, lo, hi):
         self._range = (lo, hi)
         return self
@@ -92,6 +97,11 @@ class _Query:
             out = [r for r in out if (r.get(k) or "") >= threshold]
         for k, threshold in self._lt.items():
             out = [r for r in out if (r.get(k) or 0) < threshold]
+        for k, v in self._is.items():
+            if v == "null" or v is None:
+                out = [r for r in out if r.get(k) is None]
+            else:
+                out = [r for r in out if r.get(k) == v]
         return out
 
     def _apply_order(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
