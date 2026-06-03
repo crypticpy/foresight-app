@@ -1990,6 +1990,13 @@ class SignalAgentService:
                 .execute()
             )
 
+            # Re-embed now that the rich profile exists. Creation only embedded
+            # name + summary; without this the stored vector ignores the
+            # description entirely (see refresh_card_embedding).
+            from app.embedding_backfill_service import refresh_card_embedding
+
+            await refresh_card_embedding(self.supabase, card_id)
+
             await self._create_timeline_event(
                 card_id=card_id,
                 event_type="profile_generated",

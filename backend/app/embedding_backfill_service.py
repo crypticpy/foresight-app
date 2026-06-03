@@ -73,6 +73,51 @@ async def _embed_one(text: str) -> Optional[List[float]]:
         return None
 
 
+async def refresh_card_embedding(supabase, card_id: str) -> bool:
+    """Recompute and store a single card's embedding from its current text.
+
+    The single source of truth for "a card's text changed, re-embed it" on the
+    write paths. Uses the same ``name + summary + description`` composition as
+    the batch backfill (:func:`_build_card_text`) so a card embedded at creation
+    /enrichment time lives in the same semantic space as a backfilled one.
+
+    Card creation embeds ``name + summary`` only (the rich profile/description
+    doesn't exist yet); the profile is written asynchronously afterwards. Without
+    this refresh the stored vector never reflects the description, so hybrid
+    search scores cards on a fraction of their text. Callers invoke this right
+    after they persist the generated profile.
+
+    Non-fatal: logs a warning and returns False on any failure (missing row,
+    too-short text, embedding API error) so it can't abort the creation flow.
+    """
+    try:
+        result = await asyncio.to_thread(
+            lambda: supabase.table("cards")
+            .select("name, summary, description")
+            .eq("id", card_id)
+            .single()
+            .execute()
+        )
+        if not result.data:
+            return False
+
+        embedding = await _embed_one(_build_card_text(result.data))
+        if not embedding:
+            return False
+
+        await asyncio.to_thread(
+            lambda: supabase.table("cards")
+            .update({"embedding": embedding})
+            .eq("id", card_id)
+            .execute()
+        )
+        logger.info("Refreshed embedding for card %s after profile write", card_id)
+        return True
+    except Exception as exc:
+        logger.warning("refresh_card_embedding failed for %s: %s", card_id, exc)
+        return False
+
+
 _POSTGREST_PAGE_SIZE = 1000
 
 
