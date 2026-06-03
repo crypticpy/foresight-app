@@ -14,6 +14,7 @@ import type { AuthContextType, UserProfile } from "./hooks/useAuthContext";
 import { ToastProvider } from "./components/ui/Toast";
 import Header from "./components/Header";
 import { CostStatusBanner } from "./components/CostStatusBanner";
+import { PilotWelcomeBanner } from "./components/PilotWelcomeBanner";
 import { AuthContextProvider } from "./hooks/useAuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -183,6 +184,7 @@ function App() {
               {user && <Header />}
               <main id="main-content" className={user ? "pt-16" : ""}>
                 {user && <CostStatusBanner />}
+                {user && <PilotWelcomeBanner />}
                 <Routes>
                   {/* Login route - public, redirects to home if already authenticated */}
                   <Route path="/login" element={<LoginRoute user={user} />} />

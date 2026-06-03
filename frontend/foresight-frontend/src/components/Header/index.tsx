@@ -9,6 +9,7 @@ import { Menu, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { useAuthContext } from "../../hooks/useAuthContext";
+import { buildBugReportHref } from "../../lib/bug-report";
 import { useToast } from "../ui/Toast";
 
 import { buildNavigation } from "./navConfig";
@@ -16,14 +17,6 @@ import { DesktopNav } from "./DesktopNav";
 import { MobileNav } from "./MobileNav";
 import { UserMenu } from "./UserMenu";
 import { useHeaderState } from "./useHeaderState";
-
-function buildBugReportHref(email: string | null | undefined): string {
-  const subject = encodeURIComponent("Bug Report");
-  const body = encodeURIComponent(
-    `\n\n---\nPage: ${typeof window !== "undefined" ? window.location.href : ""}\nReporter: ${email ?? ""}\n`,
-  );
-  return `mailto:Christopher.Collins@austintexas.gov?subject=${subject}&body=${body}`;
-}
 
 const Header: React.FC = () => {
   const { user, profile, signOut } = useAuthContext();
