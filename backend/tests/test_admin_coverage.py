@@ -1478,16 +1478,26 @@ _UNDERFED_CORPUS = {
     "HG.1": 7,  # over-fed → raise expected to 2.25
 }
 
-# CH.3 is *over-fed* (4 cards vs expected ≈ 0.71 → drift > 0). The gate must
-# leave it unboosted so it can't displace a genuinely starved (empty) goal.
+# CH.3 is *over-fed* but only just (3 cards vs expected 2.5 → drift +0.2). This
+# is a genuine boundary case that *exercises* the gate: a 0.5 bonus, if it were
+# applied, would pull CH.3 to -0.3 and promote it past the boundary goal HH.3
+# (drift -0.2), displacing a more-starved goal from the top-5. The gate must
+# block that because CH.3 is at/above its expected share. (A corpus full of
+# empty goals would NOT exercise the gate — the over-fed goal sorts last with
+# or without the bonus, so the test would pass even if the gate were removed.)
+#
+# Counts → drift (expected = 20/8 = 2.5):
+#   MC.1=MC.2=0 → -1.0   PS.1=1 → -0.6   PS.2=HH.3=2 → -0.2
+#   CH.3=3 → +0.2 (6th, just outside)   EW.1=HG.1=6 → +1.4 (pull expected up)
 _OVERFED_CORPUS = {
     "MC.1": 0,
-    "MC.2": 0,
-    "PS.1": 0,
-    "PS.2": 0,
-    "HH.1": 0,  # 5 empties → fill the whole top-5
-    "CH.3": 4,  # over-fed climate → drift > 0
-    "EW.1": 1,
+    "MC.2": 0,  # 2 empties → drift -1.0
+    "PS.1": 1,  # drift -0.6
+    "PS.2": 2,
+    "HH.3": 2,  # boundary starved goals → drift -0.2 (HH.3 is the 5th pick)
+    "CH.3": 3,  # over-fed climate → drift +0.2 (6th, just outside the top-5)
+    "EW.1": 6,
+    "HG.1": 6,  # over-fed → raise expected to 2.5
 }
 
 
@@ -1511,9 +1521,11 @@ def test_auto_pick_priority_boost_promotes_underfed_climate_goal(monkeypatch):
 
 
 def test_auto_pick_priority_boost_skips_overfed_priority_goal(monkeypatch):
-    # CH.3 is above its expected share. The bonus must NOT promote it, so the
-    # picked set is byte-for-byte identical with and without the bonus — an
-    # over-fed climate goal can't crowd out a genuinely starved one.
+    # CH.3 is over-fed (drift +0.2). A 0.5 bonus, *if it were applied*, would
+    # pull it to -0.3 and promote it past the boundary goal HH.3 (drift -0.2),
+    # displacing a more-starved goal. The gate must prevent that: CH.3 stays
+    # out and HH.3 stays in. This pair fails if the `drift_score < 0` gate is
+    # removed, so the test actually exercises the gate.
     no_boost = _run_auto_pick(
         monkeypatch, counts=_OVERFED_CORPUS, priority_codes=set(), bonus=0.0
     )
@@ -1522,7 +1534,8 @@ def test_auto_pick_priority_boost_skips_overfed_priority_goal(monkeypatch):
     )
     assert "CH.3" not in no_boost
     assert "CH.3" not in with_boost
-    assert no_boost == with_boost
+    assert "HH.3" in with_boost  # the goal an ungated boost would displace
+    assert no_boost == with_boost  # gate makes the over-fed bonus a no-op
 
 
 def test_auto_pick_priority_boost_only_affects_listed_codes(monkeypatch):
