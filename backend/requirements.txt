@@ -1,35 +1,274 @@
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-gunicorn>=21.0.0
-supabase>=2.0.0
-openai>=1.3.0
-pydantic>=2.5.0
-python-multipart>=0.0.6
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-feedparser>=6.0.10
-newspaper3k>=0.2.8
-apscheduler>=3.10.0
-python-dateutil>=2.8.0
-aiohttp>=3.9.0
-httpx>=0.26.0
-python-dotenv>=1.0.0
+# =============================================================================
+# Foresight API - Python dependencies (FULLY PINNED LOCK)
+# =============================================================================
+# Every package is pinned to an exact version. This is a complete lock of the
+# dependency tree as installed in the production-verified image (Railway
+# deployment e8192e60, foresight-api, captured 2026-06-03 and confirmed healthy).
+#
+# WHY PINNED: the previous '>=' floors let each clean Docker build resolve to
+# whatever was newest that hour (e.g. gpt-researcher pulling a fresh langchain),
+# making builds non-reproducible and prone to spurious failures with no code
+# change. Pin == reproducible builds.
+#
+# TO UPGRADE: bump the relevant pin(s) in the Direct dependencies block, rebuild
+# in a clean venv (python3.11), run the test suite, then regenerate the lock:
+#     pip install -r requirements.txt && pip freeze > /tmp/freeze.txt
+# and reconcile the Transitive block below. Keep direct deps documented here.
+#
+# KNOWN ADVISORY (accepted risk, recheck 2026-12-03):
+#   ecdsa==0.19.2 — CVE-2024-23342 / GHSA-wj6h-64fc-37mp ("Minerva" timing attack
+#   on P-256). NO patched release exists: 0.19.2 is the latest on PyPI and OSV
+#   marks every version affected (introduced 0, no fixed event); upstream
+#   python-ecdsa declines to fix side-channel issues. Unreachable here: ecdsa is
+#   pulled only transitively by python-jose, and our code never imports
+#   jose/ecdsa — JWT verification is supabase.auth.get_user() (server-side), so
+#   no local ECDSA sign/verify ever runs. Revisit if we add local JWT crypto or
+#   a fixed ecdsa ships.
+# =============================================================================
+
+# ===== Direct dependencies =====
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+gunicorn==26.0.0
+supabase==2.30.1
+openai==2.40.0
+pydantic==2.13.4
+python-multipart==0.0.30
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+requests==2.33.1
+beautifulsoup4==4.14.3
+feedparser==6.0.12
+newspaper3k==0.2.8
+apscheduler==3.11.2
+python-dateutil==2.9.0.post0
+aiohttp==3.14.0
+httpx==0.28.1
+python-dotenv==1.2.2
 
 # Security middleware
-slowapi>=0.1.9
+slowapi==0.1.9
 
 # GPT Researcher for deep research functionality
 # Tavily/Firecrawl are decommissioned (see CLAUDE.md "Tech Stack" / "Web search
 # providers"). gpt-researcher and chat web_search both go through Serper +
 # self-hosted SearXNG. Do not re-add tavily-python or firecrawl-py.
-gpt-researcher>=0.9.0
+gpt-researcher==0.15.1
 
 # Export and reporting functionality
-python-pptx>=0.6.21
-reportlab>=4.0.0
-pandas>=2.0.0
-matplotlib>=3.8.0
-exa-py>=1.0.0
-trafilatura>=2.0.0
+python-pptx==1.0.2
+reportlab==4.5.1
+pandas==3.0.3
+matplotlib==3.10.9
+exa-py==2.13.0
+trafilatura==2.0.0
+
+# ===== Transitive dependencies (auto-resolved, pinned to the deployed set) =====
+aiofiles==25.1.0
+aiohappyeyeballs==2.6.2
+aiosignal==1.4.0
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.13.0
+arxiv==4.0.0
+attrs==26.1.0
+babel==2.18.0
+backoff==2.2.1
+bcrypt==5.0.0
+blis==1.3.3
+brotli==1.2.0
+cachetools==6.2.6
+catalogue==2.0.10
+certifi==2026.5.20
+cffi==2.0.0
+chardet==7.4.3
+charset_normalizer==3.4.7
+click==8.4.1
+cloudpathlib==0.24.0
+colorama==0.4.6
+confection==1.3.3
+contourpy==1.3.3
+courlan==1.4.0
+cryptography==48.0.0
+cssselect==1.4.0
+cssselect2==0.9.0
+cycler==0.12.1
+cymem==2.0.13
+dataclasses-json==0.6.7
+dateparser==1.4.0
+deprecated==1.3.1
+deprecation==2.1.0
+distro==1.9.0
+docopt==0.6.2
+duckduckgo-search==8.1.1
+ecdsa==0.19.2  # CVE-2024-23342 accepted risk (no fix exists) — see header "KNOWN ADVISORY"
+emoji==2.15.0
+fastuuid==0.14.0
+feedfinder2==0.0.4
+filelock==3.29.1
+filetype==1.2.0
+fonttools==4.63.0
+frozenlist==1.8.0
+fsspec==2026.4.0
+greenlet==3.5.1
+h11==0.16.0
+h2==4.3.0
+hf-xet==1.5.0
+hpack==4.1.0
+html5lib==1.1
+htmldate==1.10.0
+htmldocx==0.0.6
+httpcore==1.0.9
+httptools==0.8.0
+httpx-aiohttp==0.1.12
+httpx-sse==0.4.3
+huggingface-hub==1.17.0
+hyperframe==6.1.0
+idna==3.18
+importlib-metadata==8.9.0
+installer==0.7.0
+jieba3k==0.35.1
+jinja2==3.1.6
+jiter==0.15.0
+joblib==1.5.3
+json-repair==0.60.1
+json5==0.14.0
+jsonpatch==1.33
+jsonpointer==3.1.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+justext==3.0.2
+kiwisolver==1.5.0
+langchain==1.3.4
+langchain-classic==1.0.7
+langchain-community==0.4.2
+langchain-core==1.4.0
+langchain-ollama==1.1.0
+langchain-openai==1.2.2
+langchain-protocol==0.0.16
+langchain-text-splitters==1.1.2
+langdetect==1.0.9
+langgraph==1.2.4
+langgraph-checkpoint==4.1.1
+langgraph-cli==0.4.27
+langgraph-prebuilt==1.1.0
+langgraph-sdk==0.4.2
+langsmith==0.8.9
+limits==5.8.0
+litellm==1.87.0
+llvmlite==0.47.0
+loguru==0.7.3
+lxml==6.1.1
+lxml_html_clean==0.4.5
+markdown==3.10.2
+markdown-it-py==4.2.0
+markdown2==2.5.5
+markupsafe==3.0.3
+marshmallow==3.26.2
+mcp==1.27.2
+md2pdf==3.1.1
+mdurl==0.1.2
+mistune==3.2.1
+mmh3==5.2.1
+multidict==6.7.1
+murmurhash==1.0.15
+mypy-extensions==1.1.0
+nest-asyncio==1.6.0
+nltk==3.9.4
+numba==0.65.1
+numpy==2.2.6
+olefile==0.47
+ollama==0.6.2
+orjson==3.11.9
+ormsgpack==1.12.2
+packaging==26.2
+pathspec==1.1.1
+Pillow==12.2.0
+postgrest==2.30.1
+preshed==3.0.13
+primp==1.3.1
+propcache==0.5.2
+psutil==7.2.2
+pyasn1==0.6.3
+pycparser==3.0
+pydantic-core==2.46.4
+pydantic-settings==2.14.1
+pydyf==0.12.1
+pygments==2.20.0
+pyiceberg==0.11.1
+pyjwt==2.13.0
+pymdown-extensions==10.21.3
+pymupdf==1.27.2.3
+pyparsing==3.3.2
+pypdf==6.12.2
+pypdfium2==5.9.0
+pyphen==0.17.2
+pyroaring==1.1.0
+python-docx==1.2.0
+python-frontmatter==1.3.0
+python-iso639==2026.4.20
+python-magic==0.4.27
+python-oxmsg==0.0.2
+pytz==2026.2
+PyYAML==6.0.3
+rapidfuzz==3.14.5
+realtime==2.30.1
+referencing==0.37.0
+regex==2026.5.9
+requests-file==3.0.1
+requests-toolbelt==1.0.0
+rich==14.3.4
+rpds-py==2026.5.1
+rsa==4.9.1
+sgmllib3k==1.0.0
+shellingham==1.5.4
+six==1.17.0
+smart-open==7.6.1
+sniffio==1.3.1
+soupsieve==2.8.4
+spacy==3.8.14
+spacy-legacy==3.0.12
+spacy-loggers==1.0.5
+sqlalchemy==2.0.50
+srsly==2.5.3
+sse-starlette==3.4.4
+starlette==1.2.1
+storage3==2.30.1
+strenum==0.4.15
+strictyaml==1.7.3
+supabase-auth==2.30.1
+supabase-functions==2.30.1
+tenacity==9.1.4
+thinc==8.3.13
+tiktoken==0.13.0
+tinycss2==1.5.1
+tinyhtml5==2.1.0
+tinysegmenter==0.3
+tld==0.13.2
+tldextract==5.3.1
+tokenizers==0.23.1
+tqdm==4.67.3
+typer==0.25.1
+typing-extensions==4.15.0
+typing-inspect==0.9.0
+typing-inspection==0.4.2
+tzlocal==5.3.1
+unstructured==0.22.31
+unstructured-client==0.44.1
+urllib3==2.7.0
+uuid-utils==0.16.0
+uvloop==0.22.1
+wasabi==1.1.3
+watchfiles==1.2.0
+weasel==1.0.0
+weasyprint==69.0
+webencodings==0.5.1
+websockets==15.0.1
+win32-setctime==1.2.0
+wrapt==2.2.1
+XlsxWriter==3.2.9
+xxhash==3.7.0
+yarl==1.24.2
+zipp==4.1.0
+zopfli==0.4.2
+zstandard==0.25.0
