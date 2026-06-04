@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
-  "installCommand": "pnpm install --prefer-offline",
+  "installCommand": "pnpm install --frozen-lockfile --prefer-offline",
   "framework": "vite",
   "rewrites": [
     {
