@@ -14,6 +14,16 @@
 # in a clean venv (python3.11), run the test suite, then regenerate the lock:
 #     pip install -r requirements.txt && pip freeze > /tmp/freeze.txt
 # and reconcile the Transitive block below. Keep direct deps documented here.
+#
+# KNOWN ADVISORY (accepted risk, recheck 2026-12-03):
+#   ecdsa==0.19.2 — CVE-2024-23342 / GHSA-wj6h-64fc-37mp ("Minerva" timing attack
+#   on P-256). NO patched release exists: 0.19.2 is the latest on PyPI and OSV
+#   marks every version affected (introduced 0, no fixed event); upstream
+#   python-ecdsa declines to fix side-channel issues. Unreachable here: ecdsa is
+#   pulled only transitively by python-jose, and our code never imports
+#   jose/ecdsa — JWT verification is supabase.auth.get_user() (server-side), so
+#   no local ECDSA sign/verify ever runs. Revisit if we add local JWT crypto or
+#   a fixed ecdsa ships.
 # =============================================================================
 
 # ===== Direct dependencies =====
@@ -91,7 +101,7 @@ deprecation==2.1.0
 distro==1.9.0
 docopt==0.6.2
 duckduckgo-search==8.1.1
-ecdsa==0.19.2
+ecdsa==0.19.2  # CVE-2024-23342 accepted risk (no fix exists) — see header "KNOWN ADVISORY"
 emoji==2.15.0
 fastuuid==0.14.0
 feedfinder2==0.0.4
